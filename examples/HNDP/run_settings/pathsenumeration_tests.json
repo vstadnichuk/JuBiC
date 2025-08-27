@@ -1,0 +1,12 @@
+{
+  "users": [1],
+  "nruns": 50,
+  "betas": [1.0, 0.75, 0.5, 0.25],
+  "hsolver": ["CP"],
+  "bigMsetting": ["F"],
+  "time_limit": 3600,
+  "time_enum_hybrid": 300,
+  "partial_decomposition": false,
+  "cycle_free_GBC": false,
+  "debug_mode": false
+}

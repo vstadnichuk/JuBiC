@@ -1,0 +1,12 @@
+{
+  "users": [5],
+  "nruns": 1,
+  "betas": [0.75],
+  "hsolver": ["GBC", "BlC", "CA", "CP", "CH"],
+  "bigMsetting": ["F"],
+  "time_limit": 100,
+  "time_enum_hybrid": 20,
+  "partial_decomposition": false,
+  "cycle_free_GBC": true,
+  "debug_mode": true
+}

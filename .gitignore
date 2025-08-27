@@ -1,0 +1,10 @@
+run_number.txt
+output/
+TODO JuBiC.rtf
+Manifest.toml
+docs/build/
+logs/
+.vscode/
+mibs_errors.txt
+mibs_output.txt
+examples/data/smkp
