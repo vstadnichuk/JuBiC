@@ -293,8 +293,7 @@ If multiple solvers are passed, solve instance with each.
 - 'cyclefreeGBC': A list containing true or false (or both). If true, use basic BlC when solving pricing problem to obtain only bilevel optimal solutions.
 - 'LCinGBC': A list containing true or false (or both). If true, when solving ConnectorLP use a second ConnectorLP to compute the big M coefficients needed for Bilevel Lagrangian cuts.  
 """
-function #test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time_limit=3600, partial_decomposition=false, two_stage=false, constrac_cost=0)
-     test_HNDPwC_from_json(json_path::String)
+function test_HNDPwC(json_path::String)
     # parse passed json file
     cfg = JSON.parsefile(json_path)
 
@@ -334,7 +333,7 @@ function #test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time
         create_folder_if_not_exists(myfolderGBC)
         for (u, al, nr, stabopt, wstart, cyclef, LCsub) in Base.product(users, alphas, 1:nruns, stabilizationGBC_options, warmstartGBC, cyclefreeGBC, LCinGBC)
             # create output folder
-            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)"
+            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_$(stabopt)_W$(wstart)_C$(cyclef)_LC$(LCsub)"
             create_folder_if_not_exists(myfolderrun)
 
             # create instance
@@ -389,7 +388,7 @@ function #test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time
 
                     # create instance
                     hndpt = hndps[u, al, nr]
-                    inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()))
+                    inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); MIPsubsolver=mip_sub)
                     blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
 
                     # set parameter of instance
@@ -397,6 +396,7 @@ function #test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time
                     new_stat!(get_stats(blc_param), "alpha", al)
                     new_stat!(get_stats(blc_param), "constructioncost", constrac_cost)
                     new_stat!(get_stats(blc_param), "seed", nr)
+                    new_stat!(get_stats(blc_param), "mip_subsolver", mip_sub)
                     new_stat!(get_stats(blc_param), "debug_mode", debug_mode)
 
                     # save generated and continue

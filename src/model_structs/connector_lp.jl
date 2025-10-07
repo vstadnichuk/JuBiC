@@ -100,7 +100,8 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
     if !params.warmstart
         # okay, I understand that these tests are kind of interesting, BUT I never felt so stupid implementing a feature
         @debug "As requested cleaning up connectorLP $(name(subLP.sub_solver)) by removing all generated constraints."
-        for cref in all_constraints(subLP.lp)
+        for cref in all_constraints(subLP.lp; include_variable_in_set_constraints=false)
+            @debug "Now deleting constraint $cref from ConnectorLP $(name(subLP.sub_solver))."
             delete(subLP.lp, cref)
         end
     end
