@@ -1,0 +1,16 @@
+{
+  "users": [5],
+  "alphas": [0.1, 0.5, 0.9],
+  "nruns": 5,
+  "hsolver": ["GBC", "BlC"],
+  "time_limit": 7200,
+  "partial_decomposition": true,
+  "two_stage": false,
+  "debug_mode": false,
+  "constrac_cost": 0,
+  "mip_sub": true,
+  "warmstartGBC": [true, false],
+  "stabilizationGBC": [true],
+  "cyclefreeGBC": [true, false],
+  "LCinGBC": [false, true]
+}

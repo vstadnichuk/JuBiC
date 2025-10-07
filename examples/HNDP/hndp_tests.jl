@@ -276,22 +276,51 @@ end
 """
     test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time_limit=3600, partial_decomposition=false)
 
-Basic test for the Sioux Falls network Hazmat Network Design Problem with Capacity Constraints.
-Test all combinations of the following parameters.
+Basic test for the Sioux Falls network Hazmat Network Design Problem with Capacity Constraints. 
+You should path a .json file with the following parameter lists. All combinations of the parameter contained in the lsits will be tested. 
 - 'users': A list with the number of users for the individual runs.
 - 'alphas': The different alpha values that may appear. The alpha should be a parameter between 0 and 1, and sets the capacity limit for the test instance. 0 indicates very tight bounds, and 1 that there is no capacity limit. 
 - 'nruns': Number of runs with different seed for each instance.
 - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver and "BlC" for the BlCSolver. 
 If multiple solvers are passed, solve instance with each. 
 - 'time_limit': The time limit set on (each) solver (in sec).
-- 'partial_decomposition': If true, apply partial decomposition where applicable, i.e., when using our GBCSolver
 - 'two_stage': If true, use same objective function for risk and cost, i.e., both levels cooperate to find cost-minimal paths 
 - 'constrac_cost': The cost for including an arc are generated randomly within 0:constructioncost
+- 'mip_sub': If true, use the basic MIP model to solve the subproblem. 
+- 'partial_decomposition': A list containing true or false (or both). If true, apply partial decomposition where applicable, i.e., when using our GBCSolver
+- 'warmstartGBC': A list containing true or false (or both). If false, ConnectorLP is reset after each iteration (what is very stupid, so only use this for test purpose)
+- 'stabilizationGBC': A list containing true or false (or both). If true, use Pareto optimal cuts for both optimality and feasibility cuts is used.
+- 'cyclefreeGBC': A list containing true or false (or both). If true, use basic BlC when solving pricing problem to obtain only bilevel optimal solutions.
+- 'LCinGBC': A list containing true or false (or both). If true, when solving ConnectorLP use a second ConnectorLP to compute the big M coefficients needed for Bilevel Lagrangian cuts.  
 """
-function test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time_limit=3600, partial_decomposition=false, two_stage=false, constrac_cost=0)
+function #test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time_limit=3600, partial_decomposition=false, two_stage=false, constrac_cost=0)
+     test_HNDPwC_from_json(json_path::String)
+    # parse passed json file
+    cfg = JSON.parsefile(json_path)
+
+    users                 = cfg["users"]
+    alphas                = cfg["alphas"]
+    nruns                 = cfg["nruns"]
+    hsolver               = get(cfg, "hsolver", ["GBC", "BlC"])
+    time_limit            = get(cfg, "time_limit", 3600)
+    partial_decomposition = get(cfg, "partial_decomposition", false)
+    two_stage             = get(cfg, "two_stage", false)
+    constrac_cost         = get(cfg, "constrac_cost", 0)
+    mip_sub               = get(cfg, "mip_sub", true)
+    warmstartGBC          = get(cfg, "warmstartGBC", [true])
+    stabilizationGBC      = get(cfg, "stabilizationGBC", [true])
+    cyclefreeGBC          = get(cfg, "cyclefreeGBC", [false])
+    LCinGBC               = get(cfg, "LCinGBC", [false])
+    debug_mode            = get(cfg, "debug_mode", false)
+
+
+    # init folder and lists
     myfolder = init_logging_folder()
     instances = []
     parameters = []
+    stabilizationGBC_options = vcat(
+    (true  in stabilizationGBC ? [PARETO_OPTIMALITY_AND_FEASIBILITY] : []),
+    (false in stabilizationGBC ? [PARETO_NONE]                   : []) )
 
     # generate the underlying HNDPwC instances
     hndps = Dict(
@@ -303,41 +332,47 @@ function test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time_
     if "GBC" in hsolver
         myfolderGBC = myfolder * "/GBCSolver"
         create_folder_if_not_exists(myfolderGBC)
-        for u in users
-            for al in alphas
-                for nr = 1:nruns
-                    # create output folder
-                    myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)"
-                    create_folder_if_not_exists(myfolderrun)
+        for (u, al, nr, stabopt, wstart, cyclef, LCsub) in Base.product(users, alphas, 1:nruns, stabilizationGBC_options, warmstartGBC, cyclefreeGBC, LCinGBC)
+            # create output folder
+            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)"
+            create_folder_if_not_exists(myfolderrun)
 
-                    # create instance
-                    hndpt = hndps[u, al, nr]
-                    inst = to_GBCInstance(
-                        hndpt,
-                        GurobiSolver(Gurobi.Env());
-                        partial_dec=partial_decomposition,
-                    )
-                    gbc_param = GBCparam(
-                        GurobiSolver(Gurobi.Env()),
-                        false,
-                        myfolderrun,
-                        "lp",
-                        PARETO_OPTIMALITY_ONLY,
-                        time_limit,
-                    )
+            # create instance
+            hndpt = hndps[u, al, nr]
+            inst = to_GBCInstance(
+                hndpt,
+                GurobiSolver(Gurobi.Env());
+                partial_dec=partial_decomposition,
+                MIPsubsolver = mip_sub,
+                cycle_free_sub = cyclef
+            )
+            gbc_param = GBCparam(
+                GurobiSolver(Gurobi.Env()),
+                debug_mode,
+                myfolderrun,
+                "lp",
+                stabopt,
+                wstart,
+                LCsub,
+                time_limit,
+            )
 
-                    # set parameter of instance
-                    new_stat!(get_stats(gbc_param), "U", u)
-                    new_stat!(get_stats(gbc_param), "alpha", al)
-                    new_stat!(get_stats(gbc_param), "constructioncost", constrac_cost)
-                    new_stat!(get_stats(gbc_param), "partial_decomposition", partial_decomposition)
-                    new_stat!(get_stats(gbc_param), "seed", nr)
+            # set parameter of instance
+            new_stat!(get_stats(gbc_param), "U", u)
+            new_stat!(get_stats(gbc_param), "alpha", al)
+            new_stat!(get_stats(gbc_param), "constructioncost", constrac_cost)
+            new_stat!(get_stats(gbc_param), "partial_decomposition", partial_decomposition)
+            new_stat!(get_stats(gbc_param), "seed", nr)
+            new_stat!(get_stats(gbc_param), "mip_subsolver", mip_sub)
+            new_stat!(get_stats(gbc_param), "stabopt", stabopt)
+            new_stat!(get_stats(gbc_param), "warmstart", wstart)
+            new_stat!(get_stats(gbc_param), "cycle_free_sub", cyclef)
+            new_stat!(get_stats(gbc_param), "debug_mode", debug_mode)
+            new_stat!(get_stats(gbc_param), "bigMwithLC", LCsub)
 
-                    # save generated and continue
-                    push!(instances, inst)
-                    push!(parameters, gbc_param)
-                end
-            end
+            # save generated and continue
+            push!(instances, inst)
+            push!(parameters, gbc_param)
         end
     end
 
@@ -355,13 +390,14 @@ function test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time_
                     # create instance
                     hndpt = hndps[u, al, nr]
                     inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()))
-                    blc_param = BLCparam(GurobiSolver(Gurobi.Env()), false, myfolderrun, "lp", time_limit)
+                    blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
 
                     # set parameter of instance
                     new_stat!(get_stats(blc_param), "U", u)
                     new_stat!(get_stats(blc_param), "alpha", al)
                     new_stat!(get_stats(blc_param), "constructioncost", constrac_cost)
                     new_stat!(get_stats(blc_param), "seed", nr)
+                    new_stat!(get_stats(blc_param), "debug_mode", debug_mode)
 
                     # save generated and continue
                     push!(instances, inst)

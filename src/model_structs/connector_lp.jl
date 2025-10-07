@@ -97,6 +97,13 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         delete(subLP.lp, fix_g_constraint)
     end
     pareto_optimal_decomposition_cleanup(subLP)
+    if !params.warmstart
+        # okay, I understand that these tests are kind of interesting, BUT I never felt so stupid implementing a feature
+        @debug "As requested cleaning up connectorLP $(name(subLP.sub_solver)) by removing all generated constraints."
+        for cref in all_constraints(subLP.lp)
+            delete(subLP.lp, cref)
+        end
+    end
     @debug "Finished solving connectLP $(name(subLP.sub_solver))."
     return feas, cut, pobj
 end
