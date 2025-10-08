@@ -261,6 +261,48 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
     return SubSolution(is_violate, r, c, as)
 end
 
+
+function separation_BlC!(sub_solver::SubSolver, sval, kvals::Dict, param::SolverParam, time_limit)
+    # TODO: we use hard coded numeric tolerances here...
+    obj_tolerance = 4 # 10e-4
+    var_non_zero_tolerance = 10e-4
+
+    # set new objective function
+    k_term = sum([kvals[a] * sol.link_varsC[a] for a in sol.A]) 
+    new_obj = sol.c_objterm - k_term
+    @objective(sol.mip_model, Max, new_obj)
+
+    # Solve sub_problem (and print it in debbug mode)
+    try 
+        if should_debbug_print(params)
+            write_to_file(
+                sol.mip_model,
+                "$(params.output_folder_path)/sub_$(sol.name).$(params.file_format_output)",
+            )
+        end
+    catch err
+        @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
+    end
+    solve_mip(sol, time_limit)
+
+    # check if optimal solution found and otherwise handle exceptions
+    check_solution_status(sol)
+
+    # construct return value 
+    opt_obj = objective_value(sol.mip_model)
+    @debug "Optimal solution of sub " * sol.name * " is " * string(opt_obj)
+
+    is_violate = Bool(!(sval > opt_obj - var_non_zero_tolerance))
+    @debug "The violated status of sub $(sol.name) is $(is_violate) as sval=$(sval) and found obj=$(opt_obj)."
+    # TODO: this rounding can be dangerous (but without code also breaks)...
+    r = round(value(sol.r_objterm); digits=obj_tolerance)
+    c = round(value(sol.c_objterm); digits=obj_tolerance)
+    as = [a for a in sol.A if value(sol.y_vars[a]) > var_non_zero_tolerance]  
+    return SubSolution(is_violate, r, c, as)
+end
+
+
+
 function set_nthreads(sol::SubSolverJuMP, n)
     set_attribute(sol.mip_model, MOI.NumberOfThreads(), n)
 end

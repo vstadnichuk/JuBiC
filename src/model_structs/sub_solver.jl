@@ -92,6 +92,29 @@ function separation!(sub_solver::SubSolver, sval, gvals, kvals::Dict, param::Sol
     error("You need to implement the separation procedure for your own SubSolver!")
 end
 
+
+"""
+    separation_BlC!(sub_solver::SubSolver, sval, gvals, kvals::Dict, param::SolverParam, time_limit)
+
+Solves the separation problem for the Benders-like sub_problem in BlC generation. 
+This involves finding the feasible solution that maximizes 'obj_second_level - sum kvals'. 
+When implementing the function, you can assume that 'kvals' are non negative. 
+
+# Arguments
+
+- 'svals::SubSolver': The current value of the estimation for the objective term in master.
+- 'kvals': Mapping of resource to price.
+- 'param::SolverParam': Parameters passed down from the main solver.
+- 'time_limit': The time limit for this subroutine. If exceeded, throws a 'TimeoutException'.
+
+# Returns
+- 'sub_solver': The SubSolution found
+"""
+function separation_BlC!(sub_solver::SubSolver, sval, kvals::Dict, param::SolverParam, time_limit)
+    error("You need to implement the separation procedure for your own SubSolver!")
+end
+
+
 """
     set_nthreads(sub_solver::SubSolver, n)
 
