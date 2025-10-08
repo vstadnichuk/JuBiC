@@ -317,8 +317,11 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
             @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
         end
 
+        # evaluate first-level objective
+        osol_L1 = value(sol.r_objterm, sol.mip_model)
+
         # return found solution
-        return true, osol, y_vals
+        return true, osol, osol_L1, y_vals
     finally
         # cleanup
         for a in sol.A # TODO: can we implement this faster?

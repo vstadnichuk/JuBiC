@@ -38,11 +38,11 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP $(name(subLP.sub_solver))."
 
-    foundfeas, optL2, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, time_limit)
+    foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, time_limit)
     new_obj = subLP.lp[:s] - optL2 * subLP.lp[:g]
     new_obj +=
         -sum([
-            round(capacity_linking(subLP.sub_solver, a, params) * link_vals[a]) * subLP.lp[:k][a]  # Todo: lets see if rounding helps numerics
+            round(capacity_linking(subLP.sub_solver, a, params) * link_vals[a]) * subLP.lp[:k][a]  # TODO: lets see if rounding helps numerics
             for a in subLP.A
         ])
     @objective(subLP.lp, Max, new_obj)

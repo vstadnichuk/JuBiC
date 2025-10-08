@@ -352,7 +352,7 @@ function solve_sub_for_x(sol::AStarSolver, xvals, params::SolverParam, time_limi
     # check if solution was found
     if result.status == LS_NO_SOLUTION
         @debug "No path found for sub_problem $(sol.name) using L2 objective function with x=$(xvals)."
-        return false, 0, Dict()
+        return false, 0, 0, Dict()
     elseif result.status == LS_TIMEOUT
         # we treat time out the same as no feasible path found
         @debug "No path found due to 'timeout' for sub_problem $(sol.name) using L2 objective function with x=$(xvals)."
@@ -371,10 +371,11 @@ function solve_sub_for_x(sol::AStarSolver, xvals, params::SolverParam, time_limi
         )
     else
         rpvalue = path_cost_subs(rpath, sol)
-        @debug "Using L2 objective function with x=$(xvals), we found for sub_problem $(sol.name) the solution value $(rpvalue) with path $(rpath)."
+        path_risk_value = path_risk(rpath, sol)
+        @debug "Using L2 objective function with x=$(xvals), we found for sub_problem $(sol.name) the solution value $(rpvalue) with path $(rpath). The risk value of the path is $(path_risk_value)."
         rip = resources_in_path(rpath, sol.A, sol.structure)
         rmap = Dict(a => (a in rip ? 1 : 0) for a in sol.A)
-        return true, rpvalue, rmap
+        return true, rpvalue, path_risk_value, rmap
     end
 end
 

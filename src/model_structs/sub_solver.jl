@@ -75,6 +75,7 @@ end
     separation!(sub_solver::SubSolver, sval, gvals, kvals::Dict, param::SolverParam, time_limit)
 
 Solves the sub_problem as separation problem for the Benders sub_problem in GBC generation.
+When implementing the function, you can assume that 'gvals' and 'kvals' are non negative. 
 
 # Arguments
 
@@ -117,7 +118,8 @@ Solves the sub_problem for given solution of master variables.
 
 # Returns
 - 'exists:Bool': True if solution was found. Otherwise, false. Note that time out causes a 'TimeoutException'.
-- 'osol': The optimal objective value.
+- 'osol': The optimal objective value (w.r.t. second-level function)
+- 'osol_L1': The objective value (w.r.t. the first-level function) for found solution
 - 'y_sol': Is the solution of the second level y (interdiction) variables (as dict mapping resource to value).
 
 If no solution exists, return false, 0, Dict()

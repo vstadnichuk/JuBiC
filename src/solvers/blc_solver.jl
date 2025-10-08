@@ -123,7 +123,7 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
                     feasible = false
                     subopt = -1
                     y_vals = Dict()
-                    feasible, subopt, y_vals = solve_sub_for_x(sub, x_vals, parameter, parameter.runtime)
+                    feasible, subopt, risksubopt, y_vals = solve_sub_for_x(sub, x_vals, parameter, parameter.runtime)
                     # in case of timeout within one subsolver, one of the Submodels run for timelimit time. We let this result in a timeout error 
                     
                     if !feasible
