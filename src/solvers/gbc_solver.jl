@@ -205,8 +205,14 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     # set computed lower bound for sub_problem objective variables
     set_lower_bound(subObjvar, lbm)
 
+    # add generator for BlC cuts if better cuts are requested
+    blc_generator = nothing
+    if parameter.bigMwithLC
+        blc_generator = ConnectorLP_BlC(parameter.solver, parameter.infinity_num, sub.A, link_vars_master, sub)
+    end
+
     # build ConnectorLP obj
-    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm)
+    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator)
 end
 
 

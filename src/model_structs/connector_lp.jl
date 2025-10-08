@@ -9,6 +9,8 @@ struct ConnectorLP{T}
     link_vars::Dict{T,VariableRef}  # The linking variables (from master) as dict. Keys=A
     sub_solver::SubSolver  # The sub_solver that is used to solve the sub_problem
     lower_bound_obj_contribution::Number  # The lower bound on the contribution to the first level objective function
+
+    blc_cut_generator::Union{ConnectorLP_BlC, Nothing}  # subroutine for generating BlC cut coefficients required for better GBC cut coefficients
 end
 
 function name(clp::ConnectorLP)
@@ -88,7 +90,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         end
 
         #build opt cut
-        cut = build_opt_cut(subLP, optL2, y_vals, params)
+        cut = build_opt_cut(subLP, optL2, y_vals, link_vals, params, time_limit_pareto)
         pobj = value(new_obj)
     end
 
@@ -110,7 +112,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
 end
 
 
-function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, params::GBCparam)
+function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCparam, timelimit)
     master_vars = subLP.link_vars
 
     # s term of the cut
@@ -119,16 +121,39 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, params::GBCparam)
 
     # g term of the cut
     gval = value(subLP.lp[:g])
+    ## build bound (called bigM-term)
     bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution
     @debug "We use big_m=$(bigMterm) for this optimality cut"
-    theta_xXg =
-        optL2 * gval + sum(bigMterm * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient 
-    cut -= theta_xXg
-
+    if bigMterm < 0
+        throw(ArgumentError("The big M $(bigMterm) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
+    end
+    ## generate cut from bound or by solving Lagrangian dual fpr BlC
+    if params.bigMwithLC
+        # solve subroutine approximating 
+        _, cutcoeff_BlC = genBenderslike_cut!(subLP.sub_solver, x_vals, params, timelimit)  # if we get a timeout error, we just let it through
+        
+        # build GBC cut, i.e., Bilevel Lagrangian cut, coefficients for theta terms
+        cut += optL2 * gval 
+        for (a, coefa) in cutcoeff_BlC
+            if params.trim_coeff
+                cut += min(coefa * y_vals[a], bigMterm) * (1-master_vars[a]) 
+            else
+                cut += coefa * (1-master_vars[a]) * y_vals[a]
+            end
+        end
+    else
+        theta_xXg =
+            optL2 * gval + sum(bigMterm * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient 
+        cut -= theta_xXg
+    end
 
     # k term of the cut
     kvals = value.(subLP.lp[:k])
-    cut -= sum(kvals[a] * master_vars[a] for a in subLP.A)
+    if params.trim_coeff
+        cut -= sum(min(kvals[a], bigMterm) * master_vars[a] for a in subLP.A)
+    else
+        cut -= sum(kvals[a] * master_vars[a] for a in subLP.A)
+    end
     return cut
 end
 
@@ -277,7 +302,7 @@ function iterate_subsolver_recursive(subLP::ConnectorLP, params::GBCparam)
         value(subLP.lp[:s]),
         value(subLP.lp[:g]),
         kvals,
-        params,
+        params
     )
 
     # if we found a violated constraint, add it and resolve

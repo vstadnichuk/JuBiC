@@ -46,9 +46,9 @@ We solve the Lagrangian dual corresponding to the Benders-like cut and return th
 
 # Returns
 
-- 'feas::Bool': True iff we need a feasibility cut.
 - 'cut': The left-hand (i.e., non-trivial) side of the cut.
 - 'pobj': The contribution of the cut to the objective for the current solution (0 if feasibility cut).
+- 'cutcoeff': A dict mapping ressource a to the coeff. of its variable (in case you want to build the cut yourself).
 """
 function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
     # adjust sub_problem by setting new objective
@@ -75,7 +75,7 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     end
 
     #build opt cut
-    cut = build_opt_cut_BlC(subLP, optL2, y_vals, params)
+    cut, cutcoeff = build_opt_cut_BlC(subLP, optL2, y_vals, params)
     pobj = value(new_obj)
 
     # clean up and return
@@ -92,7 +92,7 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
         end
     end
     @debug "Finished solving ConnectorLP_BlC $(name(subLP.sub_solver))."
-    return feas, cut, pobj
+    return cut, pobj, cutcoeff
 end
 
 function build_opt_cut_BlC(subLP::ConnectorLP_BlC, optL2, y_vals, params::GBCparam)
@@ -105,7 +105,7 @@ function build_opt_cut_BlC(subLP::ConnectorLP_BlC, optL2, y_vals, params::GBCpar
     # k term of the cut
     kvals = value.(subLP.lp[:k])
     cut = sum(kvals[a] * master_vars[a] for a in subLP.A)
-    return cut
+    return cut, kvals
 end
 
 
