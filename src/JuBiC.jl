@@ -13,6 +13,7 @@ include("model_structs/blc_master.jl")
 include("model_structs/mip_master.jl")
 include("model_structs/mibs_master.jl")
 include("model_structs/instance.jl")
+include("mibs_parser/mibs_input_reader.jl")
 
 include("solvers/sub_solvers/sub_solver_mip.jl")
 include("solvers/gbc_solver.jl")
