@@ -3,7 +3,7 @@ A single problem instance consisting of a master and (multiple independent) subp
 Note that an instance is independent of a solver.
 """
 struct Instance
-    master::Union{Master,BlCMaster,MIPMaster,MibSMaster}  # Master, BlCMaster, MIPmaster or MibSMaster instance
+    master::Union{Master,BlCMaster,BlCLagMaster,MIPMaster,MibSMaster}  # Master, BlCMaster, MIPmaster or MibSMaster instance
     subproblems  # List of subproblems (typically Vector{SubSolver}). Set to nothing for MIPMaster
 end
 

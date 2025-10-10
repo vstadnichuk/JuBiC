@@ -340,7 +340,7 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
     cgsol = value(subLP.lp[:g])
 
     # The 0.1 term -> you still want to minimize the g
-    bigMterm = (cssol - g_obj_coef * cgsol - subLP.lower_bound_obj_contribution) + 0.1 # this is just an educated guess 
+    bigMterm = (cssol - g_obj_coef * cgsol - subLP.lower_bound_obj_contribution) + 0.1 # this is just an educated guess, i.e., heuristic pareto-optimal cut generation
     if bigMterm < 0
         error(
             "We got a negative big_m in ConnectorLP $(name(subLP)) because s=$(cssol), g=$(cgsol), gcoef=$(g_obj_coef), and bound=$(subLP.lower_bound_obj_contribution).",

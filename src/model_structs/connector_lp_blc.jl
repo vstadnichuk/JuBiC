@@ -41,7 +41,7 @@ We solve the Lagrangian dual corresponding to the Benders-like cut and return th
 # Arguments
 - 'subLP::ConnectorLP_BlC{T}': The LP(-wrapper) that must be solved for the sub_problem. Note that the LP is modified during the solving process.
 - 'link_vals::Dict{T, Float64}': The mapping of resource to values of the linking variables from the master.
-- 'params::GBCparam': Parameters passed down from the main solver. We respect the 'pareto' and 'warmstart' parameters.  
+- 'params::Union{GBCparam, BlCLagparam}': Parameters passed down from the main solver. We respect the 'pareto' and 'warmstart' parameters. Can be either BlCLagparam for the big M generation of BlC directly or as subroutine of GBCSolver. 
 - 'time_limit': The time limit for this subroutine. If exceeded, throws a 'TimeoutException'.
 
 # Returns
@@ -50,7 +50,7 @@ We solve the Lagrangian dual corresponding to the Benders-like cut and return th
 - 'pobj': The contribution of the cut to the objective for the current solution (0 if feasibility cut).
 - 'cutcoeff': A dict mapping ressource a to the coeff. of its variable (in case you want to build the cut yourself).
 """
-function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
+function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float64}, params::Union{GBCparam, BlCLagparam}, time_limit) where T
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP_BlC $(name(subLP.sub_solver))."
 

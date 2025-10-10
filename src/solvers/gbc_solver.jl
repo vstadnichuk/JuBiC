@@ -268,7 +268,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             push!(lazy, cutfeas)
                         else
                             # add opt cut only if required, i.e., it truly cuts of solution 
-                            if subObj_val[name(con)] + 1e-6 < pobj
+                            if subObj_val[name(con)] + 1e-6 < pobj  #TODO: again, hard coded numeric
                                 cutopt = @build_constraint(cut <= subObj[name(con)])
                                 @debug "Adding optimality cut $(cutopt) to the master problem for sub $(name(con.sub_solver))."
                                 add_stat!(parameter.stats, "NOptCuts", 1)

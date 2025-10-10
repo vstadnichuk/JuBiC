@@ -35,7 +35,7 @@ function should_debbug_print(param::SolverParam)
     )
 end
 
-###### Parameters for JuMP based solver ######
+###### Parameters for GBCsolver, i.e., the generation of Bilevel Lagrangian Cuts ######
 
 @enum ParetoCut begin
     PARETO_NONE  # No Pareto cuts used
@@ -105,6 +105,41 @@ function output_file_path(param::BLCparam)
 end
 
 function should_debbug_print(param::BLCparam)
+    return param.debbug_out
+end
+
+
+
+###### Parameter for Benders-like Cuts Solver where we solve the Lagrangian dual (BlCSLagsolver) ######
+struct BlCLagparam <: SolverParam
+    solver::SolverWrapper
+    debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
+    output_folder_path::Any  # path to where to store output files 
+    file_format_output::Any  # the ending for the file format to write models to file, e.g."lp" or "mps". 
+    stats::RunStats  # Store statistics of the run here
+
+    runtime::Number  # the maximal runtime of the master MIP (in seconds)
+    threads_master::Integer # number of threads used in the master MIP problem
+    threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
+
+    pareto::ParetoCut  # setting for pareto optimality cuts
+    warmstart::Bool  # if false, reset ConnectorLP after each iteration
+
+    infinity_num::Any  # Number used in subroblems to add sufisticated lower and upper bounds. Set it to some positiv value that can be considered infinity in your problem
+end
+
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, true, 1e9)
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, warmstart, 1e9)
+
+function get_stats(param::BlCLagparam)
+    return param.stats
+end
+
+function output_file_path(param::BlCLagparam)
+    return param.output_folder_path
+end
+
+function should_debbug_print(param::BlCLagparam)
     return param.debbug_out
 end
 
