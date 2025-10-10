@@ -6,6 +6,8 @@ struct BlCLagMaster{T}
     A::Vector{T}  # Iterable of common resources
     link_vars::Dict{T,VariableRef}  # Linking variables as dict. Keys=A
     sub_names::Vector{String}  # List of sub_problem names
+
+    second_level_obj::Dict{String, AffExpr}  # name subproblem -> the second level objective function (stated in the HPR variables)
 end
 
 

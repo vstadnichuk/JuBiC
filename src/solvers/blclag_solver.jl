@@ -34,6 +34,9 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     @debug "Start with initialization of BlCLagSolver."
     names = [name(sub) for sub in subs]
     subObj = @variable(master.model, subObj[names])
+    for name in names
+        @constraint(master.model, subObj[name] == inst.master.second_level_obj, base_name="L2obj_$(name)")
+    end
 
     # debbug output
     try

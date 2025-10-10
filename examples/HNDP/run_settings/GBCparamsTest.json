@@ -4,13 +4,13 @@
   "nruns": 1,
   "hsolver": ["GBC", "BlC"],
   "time_limit": 3600,
-  "partial_decomposition": true,
+  "partial_decomposition": [true],
   "two_stage": false,
   "debug_mode": true,
   "constrac_cost": 0,
-  "mip_sub": true,
-  "warmstartGBC": [true, false],
+  "mip_sub": [true],
+  "warmstartGBC": [true],
   "stabilizationGBC": [true],
-  "cyclefreeGBC": [true, false],
-  "LCinGBC": [false, true]
+  "cyclefreeGBC": [true],
+  "LCinGBC": [false]
 }

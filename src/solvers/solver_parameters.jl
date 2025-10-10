@@ -43,6 +43,18 @@ end
     PARETO_OPTIMALITY_AND_FEASIBILITY  # Pareto cuts used for both optimality and feasibility
 end
 
+function Base.string(po::ParetoCut)
+    if po == PARETO_NONE
+        return "None"
+    elseif po == PARETO_OPTIMALITY_ONLY
+        return "OPT"
+    elseif po == PARETO_OPTIMALITY_AND_FEASIBILITY
+        return "Both"
+    else
+        throw(ArgumentError("Unknown type of ParetoCut $(po)."))
+    end
+end
+
 struct GBCparam <: SolverParam
     solver::SolverWrapper
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)

@@ -101,8 +101,9 @@ Generate a new Benders-like Decomposition model from the passed HNDPwC instance.
     - 'partial_dec=true': If true, employs partial decomposition approach by adding flow constraints to master
     - 'MIPsubsolver=false': If true, use MIP formulation for subproblems instead of Labeling solver. Use this in case first-level objective contains negative values.
     - 'fixedBigM': If 'true', try to generate smart big M based on a path in fixed network. If not possible, use default big M. 
+    - 'lagrangian': If 'true', use Lagrangian cuts for generating the big M coefficients. 
 """
-function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false, fixedBigM=true)
+function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false, fixedBigM=true, lagrangian=false)
     @info "Starting generation of BlCSolver for passed HNDP instance" 
     A = [(src(e), dst(e)) for e in edges(hndp.mygraph)]
     unames = [user.uname for user in hndp.users]
@@ -138,12 +139,16 @@ function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false,
     @variable(hpr, construction_cost_var)
     @constraint(hpr, constructioncost == construction_cost_var, base_name="constructioncost")
 
-    # create Benders-like cuts master 
+    # create Benders-like cuts master (with big M or Lagrangian cuts)
     @objective(hpr, Min, construction_cost_var + sum(values(master_objs)))
     xdec_dict = Dict(a => x[a] for a in hndp.edgeA)
-    master = BlCMaster(hpr, hndp.edgeA, xdec_dict, derive_bigM_function(hndp, A, fixedBigM), unames, sub_objs)
+    if lagrangian 
+        master = BlCLagMaster(hpr, hndp.edgeA, xdec_dict, unames, sub_objs)
+    else
+        master = BlCMaster(hpr, hndp.edgeA, xdec_dict, derive_bigM_function(hndp, A, fixedBigM), unames, sub_objs)
+    end
 
-    # build subproblems with A*-search solvers 
+    # build subproblems with A*-search or MIP solver
     usolvers = []
     for user in hndp.users
         if !MIPsubsolver
@@ -156,7 +161,7 @@ function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false,
         push!(usolvers, solver_user)
     end
 
-    # build instance
+    # build instance 
     @info "Finished generation of BlCSolver for passed HNDP instance" 
     rV = Instance(master, usolvers)
     return rV
