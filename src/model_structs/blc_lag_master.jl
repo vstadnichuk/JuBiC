@@ -7,8 +7,8 @@ struct BlCLagMaster{T}
     link_vars::Dict{T,VariableRef}  # Linking variables as dict. Keys=A
     sub_names::Vector{String}  # List of sub_problem names
 
-    second_level_obj::Dict{String, AffExpr}  # name subproblem -> the second level objective function (stated in the HPR variables)
-end
+    second_level_obj::Dict{String, <:JuMP.AbstractJuMPScalar}  # name subproblem -> the second level objective function (stated in the HPR variables)
+end 
 
 
 """

@@ -35,7 +35,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     names = [name(sub) for sub in subs]
     subObj = @variable(master.model, subObj[names])
     for name in names
-        @constraint(master.model, subObj[name] == inst.master.second_level_obj, base_name="L2obj_$(name)")
+        @constraint(master.model, subObj[name] == inst.master.second_level_obj[name], base_name="L2obj_$(name)")
     end
 
     # debbug output
@@ -50,7 +50,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     end
 
     # build the sub LPs for Benders subroutine 
-    clps, runtime_init = init_connectorLPs(subs, master.link_vars, subObj, param) 
+    clps, runtime_init = init_connectorLPBlCs(subs, master.link_vars, param) 
     new_stat!(param.stats, "runtime_preprocessingGBC", runtime_init)
 
     # set time limit and number of threads
@@ -63,7 +63,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
 
     # add callback to master and solve 
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
-    @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
+    @debug "Finished model construction. Now proceeding to optimization process witfh solving using BlC with Langrangian cut coef. Remaining runtime is $true_runtime"
     set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> blclag_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, param))
 
     try 
@@ -77,7 +77,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
             new_stat!(param.stats, "BlCLagStatus", "Terminate")
-            #rethrow(e)
+            rethrow(e) #TODO: comment out
         end
     else
         # print solution and collected data
@@ -120,18 +120,18 @@ Init all the ConnectorLP instances.
     - The build list of ConnectorLP objects
     - The overall time needed to init all ConnectorLP. In case of time out return 'param.runtime'.
 """
-function init_connectorLPs(subs, link_vars, param::BlCLagparam) 
+function init_connectorLPBlCs(subs, link_vars, param::BlCLagparam) 
     @debug "Beginn building LPs for each subproblems required for Benders steps."
     connectors = []
     time_s = @elapsed for s in subs
-        con = ConnectorLP_BlC(param.solver, param.infinity_num, sub.A, link_vars, s)
+        con = ConnectorLP_BlC(param.solver, param.infinity_num, s.A, link_vars, s)
         push!(connectors, con)
     end
-    return connectors, param.runtime - time_s
+    return connectors, (param.runtime - time_s)
 end
 
 
-function blclag_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, parameter::GBCparam)
+function blclag_callback_function(cb_data, master::BlCLagMaster, sub_names, clps, subObj, msol_cuts_mapping::Dict, parameter::BlCLagparam)
     # x are the linking variables and clps the connectorLP_BlC (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
 

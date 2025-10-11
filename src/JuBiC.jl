@@ -7,6 +7,7 @@ include("solvers/solver_parameters.jl")
 include("Auxilliaries.jl")
 
 include("model_structs/sub_solver.jl")
+include("model_structs/connector_lp_blc.jl")
 include("model_structs/connector_lp.jl")
 include("model_structs/master.jl")
 include("model_structs/blc_master.jl")

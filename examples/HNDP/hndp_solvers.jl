@@ -92,7 +92,7 @@ end
 
 ########## Build an Instance for the BlCSolver ##########
 """
-    to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver = false, fixedbigM=true)
+    to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false, fixedBigM=true, lagrangian=false)
 
 Generate a new Benders-like Decomposition model from the passed HNDPwC instance. 
 # Arguments:
@@ -121,7 +121,7 @@ function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false,
 
     # create sub_problem constraints and variables
     master_objs = Dict()
-    sub_objs = Dict()
+    sub_objs = Dict{String, AffExpr}()
     for user in hndp.users
         oL1, oL2, f = make_user_constraints(user, hpr, hndp, A, x, false)
 

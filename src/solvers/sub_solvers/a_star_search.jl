@@ -337,7 +337,7 @@ function separation!(sol::AStarSolver, sval, gvals, kvals::Dict, param::SolverPa
     end
 end
 
-function separation_BlC!(sub_solver::SubSolver, sval, kvals::Dict, param::SolverParam, time_limit)
+function separation_BlC!(sub_solver::AStarSolver, sval, kvals::Dict, param::SolverParam, time_limit)
     error("The A-Star search currently does not support separation of BlC as we cannot efficiently address negative cycles. ")
 end
 

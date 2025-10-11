@@ -63,7 +63,7 @@ Solve the passed insatnce with our BlCLagSolver employing Benders-like decomposi
 function solve_instance!(inst::Instance, params::BlCLagparam)
     logger = new_file_logger(params.output_folder_path * "/debuglogBlCLag.txt", params.debbug_out)
     with_logger(logger) do
-        solve_with_BLC!(inst, params)
+        solve_with_BlCLag!(inst, params)
     end
     return params.stats
 end

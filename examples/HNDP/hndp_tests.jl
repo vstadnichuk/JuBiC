@@ -32,7 +32,7 @@ function testrun!(instances, parameters, logfolder)
         catch err
             @error "When solving instance number $ind we incurred the error $err. Continue solving other instances. "
             @error stacktrace()
-            #rethrow(err)
+            rethrow(err)  #TODO: comment out
         end
     end
 
@@ -41,11 +41,11 @@ end
 
 
 """
-    test_toy_HNDPwC(hsolver =["GBC", "BlC"], time_limit=3600, partial_decomposition = false)
+    test_toy_HNDPwC(hsolver =["GBC", "BlC", "BlCLag"], time_limit=3600, partial_decomposition = false)
 
 Create and solve a simple HNDPwC instance. Mainly intended as test instance which can be verified by hand. 
 """
-function test_toy_HNDPwC(hsolver=["GBC", "BlC"], time_limit=3600, partial_decomposition=false)
+function test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag"], time_limit=3600, partial_decomposition=false)
     instances = []
     parameters = []
 
@@ -99,6 +99,36 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC"], time_limit=3600, partial_decomp
             # save generated and continue
             push!(instances, inst)
             push!(parameters, blc_param)
+        end
+
+        if "BlCLag" in hsolver
+            myfolderBlCLag = myfolder * "/BlCLagSolver"
+            create_folder_if_not_exists(myfolderBlCLag)
+
+            # create instance
+            inst = to_BlCInstance(
+                hndpt,
+                GurobiSolver(Gurobi.Env());
+                MIPsubsolver=true,
+                lagrangian=true
+            )
+            blclag_param = BlCLagparam(
+                GurobiSolver(Gurobi.Env()),
+                true,
+                myfolderBlCLag,
+                "lp",
+                PARETO_OPTIMALITY_ONLY,
+                true,
+                time_limit
+            )
+
+            # set parameter of instance
+            new_stat!(get_stats(blclag_param), "seed", 42)
+            new_stat!(get_stats(blclag_param), "MIPsubsolver", true)
+
+            # save generated and continue
+            push!(instances, inst)
+            push!(parameters, blclag_param)
         end
     end # end logger
 

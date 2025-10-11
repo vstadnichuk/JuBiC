@@ -10,13 +10,12 @@ struct ConnectorLP_BlC{T}
     sub_solver::SubSolver  # The sub_solver that is used to solve the sub_problem
 end
 
-function (::Type{ConnectorLP_BlC{T}})(
-    solver, infinity_num, A::Vector{T}, link_vars::Dict{T,VariableRef}, sub_solver::SubSolver
-) where T
+function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_vars::Dict{<:Any, VariableRef}, sub_solver::SubSolver)
+    T = eltype(A)
     # build LP
     myLP = Model(() -> get_next_optimizer(solver))
-    @variable(myLP, s <= infinity_num)
-    @variable(myLP, k[sub.A] >= 0)
+    @variable(myLP, s >= infinity_num)
+    @variable(myLP, k[sub_solver.A] >= 0)
     @variable(myLP, 0 <= g <= infinity_num)
 
     # build my struct
@@ -24,6 +23,7 @@ function (::Type{ConnectorLP_BlC{T}})(
       myLP, A, link_vars, sub_solver
     )
 end
+
 
 function name(clp::ConnectorLP_BlC)
     return name(clp.sub_solver)
@@ -71,17 +71,14 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     if params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
         time_limit_pareto = time_limit - time_iterate
         @debug "Start pareto-optimal Benders cut generation procedure for ConnectorLP_BlC $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-        pareto_optimal_decomposition_BlC(subLP, new_obj, optL2, params, time_limit_pareto)
+        pareto_optimal_decomposition_BlC(subLP, new_obj, params, time_limit_pareto)
     end
 
     #build opt cut
-    cut, cutcoeff = build_opt_cut_BlC(subLP, optL2, y_vals, params)
+    cut, cutcoeff = build_opt_cut_BlC(subLP, params)
     pobj = value(new_obj)
 
     # clean up and return
-    if feas
-        delete(subLP.lp, fix_g_constraint)
-    end
     pareto_optimal_decomposition_cleanup(subLP)
     if !params.warmstart
         # okay, I understand that these tests are kind of interesting, BUT I never felt so stupid implementing a feature
@@ -95,7 +92,7 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     return cut, pobj, cutcoeff
 end
 
-function build_opt_cut_BlC(subLP::ConnectorLP_BlC, optL2, y_vals, params::GBCparam)
+function build_opt_cut_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLagparam})
     master_vars = subLP.link_vars
 
     # s term of the cut
@@ -119,7 +116,7 @@ In case the separation takes longer that the set time limit, throw an exception.
 # Return
     The time it required to execute this function
 """
-function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::GBCparam, time_limit)
+function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLagparam}, time_limit)
     # this part of the solver can run into quite some nasty infinity loops. To prevent the software just freezing (or seeming to freeze for the user),
     ## we stop the separation process in case we reach the timelimit set in the parameters (what still can take long, but at least the user is expected to wait this long) 
     current_time = time()
@@ -177,7 +174,7 @@ end
 
 
 """
-    pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, g_obj_coef, params::GBCparam)
+    pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, params::GBCparam)
 
 When called after LP was solved to optimality, transforms the LP to generate a pareto-optimal cut and then resolves it.
 
@@ -188,7 +185,7 @@ When called after LP was solved to optimality, transforms the LP to generate a p
 - 'params::GBCparam': The parameters
 - 'time_limit': The runtime limit for this subroutine. In case of time out, throw an 'TimeoutException'
 """
-function pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, g_obj_coef, params::GBCparam, time_limit)
+function pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, params::Union{GBCparam, BlCLagparam}, time_limit)
     # resolve the subLP with steps necessary for pareto-optimal cuts
     cssol = value(subLP.lp[:s])
 
@@ -234,12 +231,12 @@ Check if our connector LP model terminated with an optimal solution
 function check_solution_status_LP(me::ConnectorLP_BlC)
     status = termination_status(me.lp) 
     if status == MOI.TIME_LIMIT
-        @debug "We hit the time limit while solving the ConnectorLP of user $(name(me))"
-        throw(TimeoutException( "We hit the time limit while ConnectorLP of user $(name(me))" ))
+        @debug "We hit the time limit while solving the ConnectorLP_BlC of user $(name(me))"
+        throw(TimeoutException( "We hit the time limit while ConnectorLP_BlC of user $(name(me))" ))
     end
 
     if status == MOI.INFEASIBLE
-        @debug "The ConnectorLP $(name(me)) is infeasible. Starting computations of IIS. But most of the time this is implied by numerical issues."
+        @debug "The ConnectorLP_BlC $(name(me)) is infeasible. Starting computations of IIS. But most of the time this is implied by numerical issues."
         compute_conflict!(me.lp)
         @debug "IIS computed, now printing it"
         iis_model, _ = copy_conflict(me.lp)
@@ -248,7 +245,7 @@ function check_solution_status_LP(me::ConnectorLP_BlC)
         else
             @debug "The IIS was not computed succesfully??? Most likely numerics??"
         end
-        error("ConnectorLP $(name(me)) was infeasible. Computed IIS but stopping solution process (as it is clearly a bug). Most likely, it was caused by numerical issues.")
+        error("ConnectorLP_BlC $(name(me)) was infeasible. Computed IIS but stopping solution process (as it is clearly a bug). Most likely, it was caused by numerical issues.")
     elseif status == MOI.DUAL_INFEASIBLE
         error("The ConnectorLP_BlC $(name(me)) was unbounded what violates the way we handle its. Because we add significantly large bounds, we avoid unboundnes; so, this should not have happended.")
     end
