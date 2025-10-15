@@ -1,11 +1,11 @@
 using JuMP, BilevelJuMP
 
 """
-    transform_JuBiC_to_MibS(instance::Instance) -> Instance
+    transform_GBC_to_MibS(instance::Instance) -> Instance
 
-Transforms a JuBiC instance into a MiBS instance.
+Transforms a GBC instance into a MiBS instance.
 """
-function transform_JuBiC_to_MibS(instance::Instance)
+function transform_GBC_to_MibS(instance::Instance)
     @assert length(instance.subproblems) == 1 "Model is not a bilevel problem (there are $(length(instance.subproblems)) != 1 subproblems)."
     @assert instance.master isa Master "Model is not a bilevel problem (master is not of type Master)."
     @assert instance.subproblems[1] isa SubSolverJuMP "The transformation is currently only implemented for SubSolverJuMP subproblems."  # TODO: Add support for different subproblem types

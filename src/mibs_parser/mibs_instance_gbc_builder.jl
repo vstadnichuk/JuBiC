@@ -1,11 +1,11 @@
 const VARIABLE_AUX_SUFFIX = "_JuBiCaux"
 
 """
-    get_JuBiC_instance(mps_file_path::String, aux_file_path::String, optimizer) -> Instance
+    get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer) -> Instance
 
 Builds an instance from the given MPS and AUX files.
 """
-function get_JuBiC_instance(mps_file_path::String, aux_file_path::String, optimizer)
+function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer)
     mps_data = _read_mps(mps_file_path)
     aux_data = _read_aux(aux_file_path)
 
