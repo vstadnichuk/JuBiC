@@ -194,6 +194,9 @@ struct MibSparam <: SolverParam
     stats::RunStats  # Store statistics of the run here
 end
 
+MibSparam(debbug_out, output_folder_path) = MibSparam(debbug_out, output_folder_path, RunStats())
+
+
 function get_stats(param::MibSparam)
     return param.stats
 end
