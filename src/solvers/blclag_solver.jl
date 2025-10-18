@@ -127,7 +127,7 @@ function init_connectorLPBlCs(subs, link_vars, param::BlCLagparam)
         con = ConnectorLP_BlC(param.solver, param.infinity_num, s.A, link_vars, s)
         push!(connectors, con)
     end
-    return connectors, (param.runtime - time_s)
+    return connectors, time_s
 end
 
 
@@ -180,6 +180,8 @@ function blclag_callback_function(cb_data, master::BlCLagMaster, sub_names, clps
                             @debug "Adding BlC cut $(cutopt) generated from Lagrangian dual to the master problem for sub $(name(con.sub_solver))."
                             add_stat!(parameter.stats, "NBlCuts", 1)
                             push!(lazy, cutopt)
+                        else
+                            @debug "No cut generated from Lagrangian dual to the master problem for sub $(name(con.sub_solver)) as current L2obj=$(subObj_val[name(con)]) and cut value=$pobj."
                         end
                     end
                     add_stat!(parameter.stats, "SepaTimeCut", cuttime)

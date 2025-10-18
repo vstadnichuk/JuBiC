@@ -138,18 +138,19 @@ end
 
 
 """
-    test_negative_HNDP(hsolver=["GBC", "BlC", "CA", "CP", "CH"], time_limit=3600, partial_decomposition=false, cycle_free_GBC=false)
+    test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], time_limit=3600, partial_decomposition=false, cycle_free_GBC=false)
 
 Test the algorithm for a toy example of the HNDP with negative cycle according to first-level objective.
 # Arguments
-    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, 
-        "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
+    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver 
+        where Lagrangian cuts are used for BlCuts, "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
         If multiple solvers are passed, solve instance with each. 
     - 'time_limit': Time limit for the solvers.
     - 'partial_decomposition': If true, employ partial decomposition for GBCSolver.
     - 'cycle_free_GBC': If true, additionaly generate Benders-like cuts within the MIP subproblem for GBCSolver. Has no effect on other solvers.
+    - 'withweights': If true, the HNDP instance will contain an additional weight knapsack constraint. It will throw an exception if used with a solver who does not support this setting.
 """
-function test_negative_HNDP(hsolver=["GBC", "BlC", "CA", "CP", "CH"], time_limit=3600, partial_decomposition=false, cycle_free_GBC=true)
+function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
     instances = []
     parameters = []
 
@@ -208,8 +209,30 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "CA", "CP", "CH"], time_limit
             push!(parameters, blc_param)
         end
 
+        # build BlCLag
+        if "BlCLag" in hsolver
+            myfolderBlCLag = myfolder * "/BlCLagSolver"
+            create_folder_if_not_exists(myfolderBlCLag)
+
+            # create instance
+            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); MIPsubsolver = true, lagrangian=true) # we need MIP subsolver for negative cycles right now
+            blclag_param =
+                BlCLagparam(GurobiSolver(Gurobi.Env()), true, myfolderBlCLag, "lp", time_limit)
+
+            # set parameter of instance
+            new_stat!(get_stats(blclag_param), "seed", 42)
+
+            # save generated and continue
+            push!(instances, inst)
+            push!(parameters, blclag_param)
+        end
+
         # build arc compact solver instance
         if "CA" in hsolver
+            if withweights
+                throw(ArgumentError("Solver CA does not support weights on the second level as then the second level is non-convex."))
+            end
+
             myfolderCA = myfolder * "/CASolver"
             create_folder_if_not_exists(myfolderCA)
 
@@ -237,6 +260,10 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "CA", "CP", "CH"], time_limit
     
         # build arc compact solver instance
         if "CP" in hsolver
+            if withweights
+                throw(ArgumentError("Solver CP does not support weights on the second level as the path enumeration algorithm was not tested for thissetting yet."))
+            end
+
             myfolderCP = myfolder * "/CPSolver"
             create_folder_if_not_exists(myfolderCP)
 
@@ -267,6 +294,10 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "CA", "CP", "CH"], time_limit
 
         # build arc compact solver instance
         if "CH" in hsolver
+            if withweights
+                throw(ArgumentError("Solver CH does not support weights on the second level as then the second level is non-convex."))
+            end
+
             myfolderCP = myfolder * "/CHSolver"
             create_folder_if_not_exists(myfolderCP)
 
@@ -496,7 +527,8 @@ Test all combinations of the following parameters, which should be passed over t
     - 'nruns': Number of runs with different seed for each instance.
     - 'betas': A list of beta vaölues employed when generating instances 
 
-    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, 
+    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver
+    where Benders-like cut coeff. are computed by solving a Lagrangian dual,
     "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
     If multiple solvers are passed, solve instance with each. 
     - 'bigMsetting': A list of setting to try for generating different kinds of big M. Only considered if model uses big M's. Options are ["F", "FB", "C", "CB", "I", "IFB", "ICB"]:
@@ -512,6 +544,7 @@ Test all combinations of the following parameters, which should be passed over t
     - 'partial_decomposition': If true, apply partial decomposition where applicable, i.e., when using our GBCSolver
     - 'cycle_free_GBC': If true, additionaly generate Benders-like cuts within the MIP subsolver of the GBC solver. Has no effect on other solvers.
     - 'debug_mode': If true, debug output is enabled for all solvers. 
+    - 'withweights': If true, add weights to second level. Note that this results in non-convex subproblem. As some solvers do not support them, it will throw an exception if used in combination.
 """
 function test_HNDPfix(json_file_path)
     
@@ -525,13 +558,14 @@ function test_HNDPfix(json_file_path)
     betas  = params["betas"]
 
     # Extract optional parameters with default fallbacks.
-    hsolver             = get(params, "hsolver", ["GBC", "BlC", "CA", "CP", "CH"])
+    hsolver             = get(params, "hsolver", ["GBC", "BlC", "BlCLag", "CA", "CP", "CH"])
     bigMsetting         = get(params, "bigMsetting", ["F", "C"])
     time_limit          = get(params, "time_limit", 3600)
     time_enum_hybrid    = get(params, "time_enum_hybrid", 300)
     partial_decomposition = get(params, "partial_decomposition", false)
     cycle_free_GBC      = get(params, "cycle_free_GBC", false)
     debug_mode          = get(params, "debug_mode", false)
+    withweights          = get(params, "withweights", false)
 
      # Optionally, print the loaded parameters for confirmation.
     println("Executing test_HNDPfix with the following parameters:")
@@ -545,6 +579,7 @@ function test_HNDPfix(json_file_path)
     println("  partial_decomposition: ", partial_decomposition)
     println("  cycle_free_GBC: ", cycle_free_GBC)
     println("  debug_mode: ", debug_mode)
+    println("  withweights: ", withweights)
     
     # start main part of function
     instances = []
@@ -556,7 +591,7 @@ function test_HNDPfix(json_file_path)
     @info "This debuger only contains information on the generation of the HNDP graphs used in the function 'test_HNDPfix'. For loggers of the different model runs, look in the respective folders."
     hndps = with_logger(logger) do
         hndps = Dict(
-            (u, nr, be) => build_random_layer_SiouxFalls(u, 0; seed=nr, beta=be) for
+            (u, nr, be) => build_random_layer_SiouxFalls(u, 0; seed=nr, beta=be, withweight=true) for
             (u, nr, be) in Base.product(users, 1:nruns, betas)
         )
     end
@@ -582,7 +617,7 @@ function test_HNDPfix(json_file_path)
                             GurobiSolver(Gurobi.Env());
                             partial_dec=partial_decomposition,
                             MIPsubsolver = true,
-                            cycle_free_sub = cycle_free_GBC
+                            cycle_free_sub = cycle_free_GBC, 
                         )
                         gbc_param = GBCparam(
                             GurobiSolver(Gurobi.Env()),
@@ -664,6 +699,10 @@ function test_HNDPfix(json_file_path)
             for nr = 1:nruns
                 for be in betas
                     for bm in bigMsetting
+                        if withweights
+                            throw(ArgumentError("Solver CA does not support weights on the second level as then the second level is non-convex."))
+                        end
+
                         # transform big M setting to boolean parameters
                         fixBigM = false
                         if occursin("F", bm)
@@ -727,6 +766,10 @@ function test_HNDPfix(json_file_path)
         for u in users
             for nr = 1:nruns
                 for be in betas
+                    if withweights
+                        throw(ArgumentError("Solver CP does not support weights on the second level as the poath enumeration was not tested for this setting yet."))
+                    end
+
                     # create output folder
                     myfolderrun = myfolderCP * "/S$(u)_$(nr)_$be"
                     create_folder_if_not_exists(myfolderrun)
@@ -781,6 +824,10 @@ function test_HNDPfix(json_file_path)
         for u in users
             for nr = 1:nruns
                 for be in betas
+                    if withweights
+                        throw(ArgumentError("Solver CH does not support weights on the second level as then the second level is non-convex."))
+                    end
+
                     # create output folder
                     myfolderrun = myfolderCH * "/S$(u)_$(nr)_$(be)"
                     create_folder_if_not_exists(myfolderrun)

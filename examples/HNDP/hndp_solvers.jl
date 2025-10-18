@@ -152,11 +152,14 @@ function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false,
     usolvers = []
     for user in hndp.users
         if !MIPsubsolver
+            if lagrangian
+                throw(ArgumentError("It was requested that BlC are generated with Lagrangian cuts. However, this option is not supported by labeling solver rigth now. "))
+            end
             @info "Adding A*search subsolver for user $(user.uname)"
             solver_user = build_Astar_user(user, hndp, A)
         else
             @info "Adding MIP subsolver for user $(user.uname)"
-            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver)
+            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=true) # we need to use cycle free solutions as generating BlC requires Lagrangian subproblem to operate on L2-optimal solutions only
         end
         push!(usolvers, solver_user)
     end

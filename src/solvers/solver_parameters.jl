@@ -140,8 +140,10 @@ struct BlCLagparam <: SolverParam
     infinity_num::Any  # Number used in subroblems to add sufisticated lower and upper bounds. Set it to some positiv value that can be considered infinity in your problem
 end
 
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, PARETO_OPTIMALITY_ONLY, true, 1e9)
 BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, true, 1e9)
 BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, warmstart, 1e9)
+
 
 function get_stats(param::BlCLagparam)
     return param.stats

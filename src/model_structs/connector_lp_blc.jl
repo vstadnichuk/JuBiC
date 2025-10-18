@@ -14,9 +14,11 @@ function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_v
     T = eltype(A)
     # build LP
     myLP = Model(() -> get_next_optimizer(solver))
-    @variable(myLP, s >= infinity_num)
+    @variable(myLP, infinity_num >= s >= -infinity_num)
     @variable(myLP, k[sub_solver.A] >= 0)
-    @variable(myLP, 0 <= g <= infinity_num)
+
+    # disable output of LP
+    set_silent(myLP)
 
     # build my struct
     ConnectorLP_BlC{T}(
@@ -32,7 +34,7 @@ end
 
 ### Cut Generation ###
 """
-    genBenderslike_cut!(subLP::ConnectorLP, link_vals::Dict{Tuple{Int64, Int64}, Float64}, params::GBCparam, time_limit)
+    genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float64}, params::Union{GBCparam, BlCLagparam}, time_limit)
 
 Generate a Benders-like optimality cut. 
 We assume that this function will only be called for a first-level solution for which the second level is feasible. 
@@ -58,7 +60,7 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     new_obj = subLP.lp[:s]
     new_obj +=
         sum([
-            round(capacity_linking(subLP.sub_solver, a, params) * link_vals[a]) * subLP.lp[:k][a]  # TODO: lets see if rounding helps numerics
+            round(capacity_linking(subLP.sub_solver, a, params) * (1-link_vals[a])) * subLP.lp[:k][a]  # TODO: lets see if rounding helps numerics
             for a in subLP.A
         ])
     @objective(subLP.lp, Min, new_obj)
@@ -101,7 +103,7 @@ function build_opt_cut_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLa
 
     # k term of the cut
     kvals = value.(subLP.lp[:k])
-    cut = sum(kvals[a] * master_vars[a] for a in subLP.A)
+    cut += sum(kvals[a] * (1-master_vars[a]) for a in subLP.A)
     return cut, kvals
 end
 

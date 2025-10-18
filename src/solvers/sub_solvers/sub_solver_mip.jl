@@ -11,7 +11,7 @@ struct SubSolverJuMP{T} <: SubSolver
     mip_model::JuMP.Model
     A::Vector{T}  # Iterable of resources
     link_varsC::Any  # A list of linking variables (copy within sub_problem). Keys=A
-    y_vars::Any  # Dict of sub_problem variables appearing in the interdiction constraints. Keys=A
+    y_vars::Any  # Dict of sub_problem variables appearing in the interdiction constraints. Keys=A. NOTE: We essentially assume that y-vars are binary. You are free to ignore it, but it can lead to undefined behavior
     link_constraints_capacities::Dict{T,<:Number}  # the capacity parameters in the interdiction linking constraints. I would recommend to set it to 1 und use y_vars as indicator variables sub_problem formulation!
     r_objterm::AffExpr  # The objective function term within the master problem, i.e., the contribution to the cost in master (should be generated with sub_problem variables)
     c_objterm::AffExpr  # the objective function of the original sub_problem (should be generated with sub_problem variables)
@@ -262,13 +262,13 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
 end
 
 
-function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, param::SolverParam, time_limit)
+function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::SolverParam, time_limit)
     # TODO: we use hard coded numeric tolerances here...
     obj_tolerance = 4 # 10e-4
     var_non_zero_tolerance = 10e-4
 
     # set new objective function
-    k_term = sum([kvals[a] * sub_solver.link_varsC[a] for a in sub_solver.A]) 
+    k_term = sum([kvals[a] * (1-sub_solver.y_vars[a]) for a in sub_solver.A])  #TODO: think about replacing yvars and xcvars, or at least make a comment somewhere
     new_obj = sub_solver.c_objterm - k_term
     @objective(sub_solver.mip_model, Max, new_obj)
 
@@ -297,11 +297,10 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, param::So
     # TODO: this rounding can be dangerous (but without code also breaks)...
     r = round(value(sub_solver.r_objterm); digits=obj_tolerance)
     c = round(value(sub_solver.c_objterm); digits=obj_tolerance)
-    as = [a for a in sub_solver.A if value(sub_solver.y_vars[a]) > var_non_zero_tolerance]  
+    as = [a for a in sub_solver.A if value(sub_solver.y_vars[a]) < 1 - var_non_zero_tolerance] # Note that we need the ressources that were NOT used
+    #@debug "The x-solution of sub $(sub_solver.name) is $([(a, value(sub_solver.y_vars[a])) for a in sub_solver.A])." 
     return SubSolution(is_violate, r, c, as)
 end
-
-
 
 function set_nthreads(sol::SubSolverJuMP, n)
     set_attribute(sol.mip_model, MOI.NumberOfThreads(), n)
@@ -360,7 +359,7 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
         end
 
         # evaluate first-level objective
-        osol_L1 = value(sol.r_objterm, sol.mip_model)
+        osol_L1 = value(sol.r_objterm)
 
         # return found solution
         return true, osol, osol_L1, y_vals
