@@ -41,11 +41,11 @@ end
 
 
 """
-    test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS"], time_limit=3600, partial_decomposition=false)
+    test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"], time_limit=3600, partial_decomposition=false)
 
 Create and solve a simple HNDPwC instance. Mainly intended as test instance which can be verified by hand. 
 """
-function test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS"], time_limit=3600, partial_decomposition=false)
+function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"], time_limit=3600, partial_decomposition=false)
     instances = []
     parameters = []
 
@@ -81,6 +81,41 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS"], time_li
             # save generated and continue
             push!(instances, inst)
             push!(parameters, gbc_param)
+        end
+
+        # build Hierarchical Decomposition model with Lagrangian cuts 
+        if "GBCLag" in hsolver
+            myfolderGBCLag = myfolder * "/GBCLagSolver"
+            create_folder_if_not_exists(myfolderGBCLag)
+
+            # create instance
+            subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
+            inst = to_GBCInstance(
+                hndpt,
+                GurobiSolver(Gurobi.Env());
+                partial_dec=partial_decomposition, 
+                subtype = subsolvertype
+            )
+            gbclag_param = GBCparam(
+                GurobiSolver(Gurobi.Env()),
+                true,
+                myfolderGBCLag,
+                "lp",
+                PARETO_OPTIMALITY_ONLY,
+                true, # warm start
+                true,  # use Lagrangian cuts for big M
+                true, # trim big M coef
+                time_limit
+            )
+
+            # set parameter of instance
+            new_stat!(get_stats(gbclag_param), "solver", "GBCLag")
+            new_stat!(get_stats(gbclag_param), "seed", 42)
+            new_stat!(get_stats(gbclag_param), "subsolver", subsolvertype)
+
+            # save generated and continue
+            push!(instances, inst)
+            push!(parameters, gbclag_param)
         end
 
         # build BlC
@@ -166,12 +201,12 @@ end
 
 
 """
-    test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
+    test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
 
 Test the algorithm for a toy example of the HNDP with negative cycle according to first-level objective.
 # Arguments
-    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver 
-        where Lagrangian cuts are used for BlCuts, "BlCLagMiBS" if the Lagragian subproblem should be solved with MiBS,
+    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "GBCLag" is the GBCSolver but Lagrian cuts are used for generating big M constants in coef.,
+        "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver where Lagrangian cuts are used for BlCuts, "BlCLagMiBS" if the Lagragian subproblem should be solved with MiBS,
         "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
         If multiple solvers are passed, solve instance with each. 
     - 'time_limit': Time limit for the solvers.
@@ -179,7 +214,7 @@ Test the algorithm for a toy example of the HNDP with negative cycle according t
     - 'cycle_free_GBC': If true, additionaly generate Benders-like cuts within the MIP subproblem for GBCSolver. Has no effect on other solvers.
     - 'withweights': If true, the HNDP instance will contain an additional weight knapsack constraint. It will throw an exception if used with a solver who does not support this setting.
 """
-function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
+function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
     instances = []
     parameters = []
 
@@ -219,6 +254,42 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS", "CA",
             # save generated and continue
             push!(instances, inst)
             push!(parameters, gbc_param)
+        end
+
+        # build Hierarchical Decomposition model with Lagrangian cuts 
+        if "GBCLag" in hsolver
+            myfolderGBCLag = myfolder * "/GBCLagSolver"
+            create_folder_if_not_exists(myfolderGBCLag)
+
+            # create instance
+            subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
+            inst = to_GBCInstance(
+                hndpt,
+                GurobiSolver(Gurobi.Env());
+                partial_dec=partial_decomposition, 
+                subtype = subsolvertype
+            )
+            gbclag_param = GBCparam(
+                GurobiSolver(Gurobi.Env()),
+                true,
+                myfolderGBCLag,
+                "lp",
+                PARETO_OPTIMALITY_ONLY,
+                true, # warm start
+                true,  # use Lagrangian cuts for big M
+                true, # trim big M coef
+                time_limit,
+                
+            )
+
+            # set parameter of instance
+            new_stat!(get_stats(gbclag_param), "solver", "GBCLag")
+            new_stat!(get_stats(gbclag_param), "seed", 42)
+            new_stat!(get_stats(gbclag_param), "subsolver", subsolvertype)
+
+            # save generated and continue
+            push!(instances, inst)
+            push!(parameters, gbclag_param)
         end
 
         # build BlC

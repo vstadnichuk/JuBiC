@@ -335,7 +335,7 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
         status = termination_status(sol.mip_model)
         if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
             @debug "The Subproblem $(sol.name) was infeasible"
-            return false, 0, Dict()
+            return false, 0, 0, Dict()
         end
 
         # check if optimal solution found and otherwise handle exceptions

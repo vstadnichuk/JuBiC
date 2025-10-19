@@ -77,7 +77,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
             new_stat!(param.stats, "BlCLagStatus", "Terminate")
-            rethrow(e) #TODO: comment out
+            #rethrow(e) 
         end
     else
         # print solution and collected data

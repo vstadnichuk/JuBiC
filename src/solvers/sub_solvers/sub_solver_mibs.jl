@@ -190,7 +190,7 @@ function solve_sub_for_x(sol::SubSolverMiBS, xvals, params::SolverParam, time_li
         
         if !solution.status
             @debug "The Subproblem $(sol.name) was infeasible"
-            return false, 0, Dict()
+            return false, 0, 0, Dict()
         end
 
         # evaluate solution

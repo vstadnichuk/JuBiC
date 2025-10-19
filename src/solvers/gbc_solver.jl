@@ -28,6 +28,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "NSub", length(subs))
     new_stat!(param.stats, "NFeasCuts", 0)
     new_stat!(param.stats, "NOptCuts", 0)
+    new_stat!(param.stats, "NBigMlagCuts", 0)  # number of Lagrangian cuts computed to obtain better big M coef. 
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "SepaTimeCut", 0)  # time spend in separator for generating cuts only
 
@@ -93,7 +94,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
             new_stat!(param.stats, "GBCStatus", "Terminate")
-            #rethrow(e)
+            rethrow(e)  # TODO: comment out
         end
     else
         # print solution and collected data
@@ -212,7 +213,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     end
 
     # build ConnectorLP obj
-    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator)
+    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}())
 end
 
 

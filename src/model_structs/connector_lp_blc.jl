@@ -3,11 +3,18 @@
 
 
 ### Constructor and basic functions ###
+struct ConSubsolCut
+    res::AbstractVector  # List of ressources used by solution
+    objL2::Number  # L2 solution value, i.e, cost
+    objL1::Number  # L1 solution value, i.e., risk
+end
+
 struct ConnectorLP_BlC{T}
     lp::Model  # The lp model. Variables should be registered as :s and :k[A]
     A::Vector{T}  # Iterable of resources
     link_vars::Dict{T,VariableRef}  # The linking variables (from master) as dict. Keys=A
     sub_solver::SubSolver  # The sub_solver that is used to solve the sub_problem
+    my_subsolutions_blc::AbstractVector{ConSubsolCut}  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
 end
 
 function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_vars::Dict{<:Any, VariableRef}, sub_solver::SubSolver)
@@ -22,7 +29,7 @@ function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_v
 
     # build my struct
     ConnectorLP_BlC{T}(
-      myLP, A, link_vars, sub_solver
+      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut}()
     )
 end
 
@@ -49,7 +56,7 @@ We solve the Lagrangian dual corresponding to the Benders-like cut and return th
 # Returns
 
 - 'cut': The left-hand (i.e., non-trivial) side of the cut.
-- 'pobj': The contribution of the cut to the objective for the current solution (0 if feasibility cut).
+- 'pobj': The contribution of the cut to the objective for the current solution
 - 'cutcoeff': A dict mapping ressource a to the coeff. of its variable (in case you want to build the cut yourself).
 """
 function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float64}, params::Union{GBCparam, BlCLagparam}, time_limit) where T
@@ -102,7 +109,8 @@ function build_opt_cut_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLa
     cut = sval
 
     # k term of the cut
-    kvals = value.(subLP.lp[:k])
+    # TODO: round coefficients?
+    kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
     cut += sum(kvals[a] * (1-master_vars[a]) for a in subLP.A)
     return cut, kvals
 end
@@ -157,6 +165,10 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
             c = @constraint(subLP.lp, new_const_left >= sub_solver.obj_second_level)
             @debug "We added an violated constraint $(c) for ConnectorLP_BlC $(name(subLP.sub_solver)). Continue separation."
 
+            # save found solution to our internal storage
+            csc = ConSubsolCut(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level)
+            push!(subLP.my_subsolutions_blc, csc)
+
             # check for time limit
             if current_time + params.runtime < time() 
                 @error "We reached the time limit when solving ConnectorLP_BlC $(name(subLP.sub_solver)). Terminating cut generation process."
@@ -195,7 +207,7 @@ function pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, params
     current_obj = objective_value(subLP.lp)
     pBd_obj = sum(subLP.lp[:k])
     @objective(subLP.lp, Min, pBd_obj)
-    @constraint(subLP.lp, pBd_const, lp_obj == current_obj)
+    @constraint(subLP.lp, pBd_const, lp_obj == current_obj) #TODO: Strange things happen if s is only term in objective. Maybe for BlC version, we could just set s to the value of the current L2-solution?
 
     # print pareto adjusted model to file in debbug mode 
     if params.debbug_out
