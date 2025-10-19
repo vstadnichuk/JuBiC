@@ -1,23 +1,37 @@
 # Transfer HNDP instances into Instance objects for different solvers
 using JuBiC
-using JuMP
+using JuMP, BilevelJuMP
 include("hndp_instances.jl")
 include("hdnp_astar_wrapper.jl")
 
+########## Enums and Structs ##########
+@enum SGBC_Solver begin
+    SGBC_LABEL  # Labeling algorithms
+    SGBC_MIP  # MIP model as subsolver
+    SGBC_MIP_CYCLEFREE  # The MIP subsolver uses only bilevel feasible solutions in the Lagrangian subproblem. Add BlC cuts to this end. 
+    SGBC_MiBS  # Use MiBS as a subsolver to automatically solve the Lagrangian subproblem with only feasible solutions.
+end
+
+
+@enum SBlC_Solver begin
+    SBlC_LABEL  # Labeling algorithms and heuristic big M
+    SBlC_MIP  # MIP model as subsolver and heuristic big M
+    SBlCLAG_MIP_CYCLEFREE  # The MIP subsolver uses only bilevel feasible solutions in the Lagrangian subproblem. Add BlC cuts to this end. 
+    SBlCLAG_MiBS  # Use MiBS as a subsolver to automatically solve the Lagrangian subproblem with only feasible solutions.
+end
 
 ########## Build an Instance for the GBCSolver ##########
 """
-    to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, MIPsubsolver=false)
+    to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, subtype::SGBC_Solver=SGBC_MIP)
 
 Generate a new Hierarchical Decomposition model from the passed HNDPwC instance. 
 # Arguments:
     - 'hndp::HNDPwC': The instance of the HNDPwC.
     - 'solver::SolverWrapper': The MIP solver to use, e.g., Gurobi
     - 'partial_dec=true': If true, employs partial decomposition approach by adding flow constraints to master
-    - 'MIPsubsolver=false': If true, use MIP formulation for subproblems instead of Labeling solver. Use this in case first-level objective contains negative values.
-    - 'cycle_free_sub=false': If true, additionally add Benders-like cuts to subproblem to ensure that found solutions are cycle free.  
+    - 'subtype::S_Solver=SGBC_LABEL': The subproblem subsolver that should be used.
 """
-function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, MIPsubsolver=false, cycle_free_sub=false)
+function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, subtype::SGBC_Solver=SGBC_MIP)
     @info "Starting generation of GBCSolver for passed HNDP instance" 
     A = [(src(e), dst(e)) for e in edges(hndp.mygraph)]
     unames = [user.uname for user in hndp.users]
@@ -69,16 +83,25 @@ function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, M
     # build subproblems with A*-search solvers 
     usolvers = []
     for user in hndp.users
-        if !MIPsubsolver
+        if subtype == SGBC_LABEL
             @info "Adding A*search subsolver for user $(user.uname)"
             #solver_user = build_Astar_user(user, hndp, A)
             # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
             solver_user = build_Astar_user(user, hndp, hndp.edgeA)
-        else
+        elseif subtype == SGBC_MIP
             @info "Adding MIP subsolver for user $(user.uname)"
-            #solver_user = build_MIP_user(user, hndp, A, solver)
             # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
-            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=cycle_free_sub)
+            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=false)
+        elseif subtype == SGBC_MIP_CYCLEFREE
+            @info "Adding MIP subsolver with cyclebreakers for user $(user.uname)"
+            # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
+            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=true)
+        elseif subtype == SGBC_MiBS
+            @info "Adding MiBS subsolver for user $(user.uname)"
+            # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
+            solver_user = build_MiBS_user(user, hndp, A, hndp.edgeA, solver)
+        else
+            @error "The passed subsolver tyope $subtype is not supported!"
         end
         push!(usolvers, solver_user)
     end
@@ -92,18 +115,17 @@ end
 
 ########## Build an Instance for the BlCSolver ##########
 """
-    to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false, fixedBigM=true, lagrangian=false)
+    to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; subsolver::SBlC_Solver=SBlC_MIP, fixedBigM=true)
 
 Generate a new Benders-like Decomposition model from the passed HNDPwC instance. 
 # Arguments:
     - 'hndp::HNDPwC': The HNDPwC instance.
     - 'solver::SolverWrapper': The MIP solver to use, e.g., Gurobi
     - 'partial_dec=true': If true, employs partial decomposition approach by adding flow constraints to master
-    - 'MIPsubsolver=false': If true, use MIP formulation for subproblems instead of Labeling solver. Use this in case first-level objective contains negative values.
-    - 'fixedBigM': If 'true', try to generate smart big M based on a path in fixed network. If not possible, use default big M. 
-    - 'lagrangian': If 'true', use Lagrangian cuts for generating the big M coefficients. 
+    - 'subsolver::SBlC_Solver=SBlC_MIP': Which version of the subsolver was used to generate the big M? 
+    - 'fixedBigM': If "true," try generating a smart big M based on a path in the fixed network. If that is not possible, use the default big M, but only if the cuts are not generated by solving Lagrangean duals.
 """
-function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false, fixedBigM=true, lagrangian=false)
+function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; subsolver::SBlC_Solver=SBlC_MIP, fixedBigM=true)
     @info "Starting generation of BlCSolver for passed HNDP instance" 
     A = [(src(e), dst(e)) for e in edges(hndp.mygraph)]
     unames = [user.uname for user in hndp.users]
@@ -142,7 +164,7 @@ function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false,
     # create Benders-like cuts master (with big M or Lagrangian cuts)
     @objective(hpr, Min, construction_cost_var + sum(values(master_objs)))
     xdec_dict = Dict(a => x[a] for a in hndp.edgeA)
-    if lagrangian 
+    if subsolver==SBlCLAG_MiBS || subsolver==SBlCLAG_MIP_CYCLEFREE 
         master = BlCLagMaster(hpr, hndp.edgeA, xdec_dict, unames, sub_objs)
     else
         master = BlCMaster(hpr, hndp.edgeA, xdec_dict, derive_bigM_function(hndp, A, fixedBigM), unames, sub_objs)
@@ -151,15 +173,20 @@ function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; MIPsubsolver=false,
     # build subproblems with A*-search or MIP solver
     usolvers = []
     for user in hndp.users
-        if !MIPsubsolver
-            if lagrangian
-                throw(ArgumentError("It was requested that BlC are generated with Lagrangian cuts. However, this option is not supported by labeling solver rigth now. "))
-            end
-            @info "Adding A*search subsolver for user $(user.uname)"
+        if subsolver==SBlC_LABEL
+            @info "Adding A*search subsolver for BlCSolver for user $(user.uname)"
             solver_user = build_Astar_user(user, hndp, A)
-        else
-            @info "Adding MIP subsolver for user $(user.uname)"
+        elseif subsolver==SBlC_MIP
+            @info "Adding MIP subsolver for BlCSolver for user $(user.uname)"
+            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=false) 
+        elseif subsolver==SBlCLAG_MIP_CYCLEFREE
+            @info "Adding MIP subsolver with cyclebreaks for BlCSolver for user $(user.uname)"
             solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=true) # we need to use cycle free solutions as generating BlC requires Lagrangian subproblem to operate on L2-optimal solutions only
+        elseif subsolver==SBlCLAG_MiBS
+            @info "Adding MiBS subsolver for BlCSolver for user $(user.uname)"
+            solver_user = build_MiBS_user(user, hndp, A, hndp.edgeA, solver)
+        else
+            throw(ArgumentError("The subsolver type $subsolver is not suppported for BlC instances."))
         end
         push!(usolvers, solver_user)
     end
@@ -657,6 +684,45 @@ function build_MIP_user(user::User, hndp::HNDPwC, A, Adec, solver::SolverWrapper
     return subS
 end
 
+"""
+    build_MiBS_user(user::User, hndp::HNDPwC, A, Adec, solver::SolverWrapper)
+
+Generate a Subsolver that solves the passed users subproblem by using MiBS. hence, we only consider bilevel feasible solutions in Lagrangian subproblem. 
+# Arguments
+    - 'user': The user whose subproblem we consider
+    - 'hndp::HNDPwC': The HNDP instance.
+    - 'A': The set of arcs in the network
+    - 'Adec': The subset of arcs that are decision arcs. Most algorithms that use subsolvers can take advantage if only a subset of arcs are part of the first-level decision space. 
+    - 'solver::SolverWrapper': The MIP solver to use
+"""
+function build_MiBS_user(user::User, hndp::HNDPwC, A, Adec, solver::SolverWrapper)
+    # set up sub MIP (min-cost flow for passed user)
+    sub = BilevelModel()
+    #set_optimizer(sub, () -> get_next_optimizer(solver))
+    oL1, oL2, f = make_user_constraints(user, Lower(sub), hndp, A, nothing, false; l2binary=true) 
+    @objective(Upper(sub), Min, oL2)
+
+    # additionally, fix non-decision arc variables in sub to 1
+    for et in A
+        if !(et in Adec)
+            @constraint(Lower(sub), xc[et] == 1, base_name = "nondec$(et))")
+        end
+    end 
+
+    # build Subsolver instance
+    subS = SubSolverMiBS(
+        user.uname,
+        sub,
+        Adec,
+        f[Adec],
+        oL1,
+        oL2
+    )
+    return subS
+end
+
+
+
 
 
 ########## Auxiliary functions for generating first and second level constraints ##########
@@ -672,7 +738,7 @@ If you want to use dual constraints, please also provide a function 'bigM_functi
     - 'hpr': The JuMP model to which we add cuts.
     - 'hndp': The HNDP instance
     - 'A': The set of arcs (both decision and non-decision arcs)
-    - 'xvars': The first-level linking variables.
+    - 'xvars': The first-level linking variables. You can pass 'nothing' to not add any corresponding constraints. But this will result in error if dual constraints should be added.
     - 'dualconst': If true, add also dual constraints to the MIP
 
 # Optional:
@@ -720,8 +786,12 @@ function make_user_constraints(user::User, hpr, hndp::HNDPwC, A, xvars, dualcons
     end
 
     # link first and second level
-    for a in A
-        @constraint(hpr, f[a] <= xvars[a], base_name = "link$(user.uname)_$a")
+    if !isnothing(xvars)
+        for a in A
+            @constraint(hpr, f[a] <= xvars[a], base_name = "link$(user.uname)_$a")
+        end
+    else
+        @info "No linking variables addded for user $(user.uname) as none were requested (xvars passed as 'nothing')."
     end
 
     # build contribution to master objective
@@ -735,6 +805,9 @@ function make_user_constraints(user::User, hpr, hndp::HNDPwC, A, xvars, dualcons
         @debug "adding dual constraints with settings indicatorconst=$indicatorconst and with_var_bounds=$with_var_bounds"
         if isnothing(bigM_function)
             throw(ArgumentError("There was no big M function provided to generate dual constraints of arc-based model."))
+        end
+        if isnothing(xvars)
+            throw(ArgumentError("No x-variable copies added to second level but dual constraints require them!."))
         end
         
         # generate variables

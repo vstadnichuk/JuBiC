@@ -129,6 +129,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
     end
     ## generate cut from bound or by solving Lagrangian dual fpr BlC
     if params.bigMwithLC
+        # TODO: check if we have g^*=0?
         # solve subroutine approximating 
         _, cutcoeff_BlC = genBenderslike_cut!(subLP.sub_solver, x_vals, params, timelimit)  # if we get a timeout error, we just let it through
         

@@ -66,7 +66,7 @@ function create_graph_from_edges_SiouxFalls(edge_list)
 end
 
 """
-    build_random_SiouxFalls(nusers, alpha;seed=25, max_cost=100, maxrisk=100, maxweight=100)
+    build_random_SiouxFalls(nusers, alpha; seed=25, max_cost=100, maxrisk=100, maxweight=100, constructioncost=0, two_stage=false)
 
 Generate a random instance of the 'HNDPwC' with the Sioux Falls network. 
 Note that the arc parameters are not symmetric, e.g., cost(i, j) != cost(j,i).

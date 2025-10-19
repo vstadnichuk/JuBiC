@@ -41,11 +41,11 @@ end
 
 
 """
-    test_toy_HNDPwC(hsolver =["GBC", "BlC", "BlCLag"], time_limit=3600, partial_decomposition = false)
+    test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS"], time_limit=3600, partial_decomposition=false)
 
 Create and solve a simple HNDPwC instance. Mainly intended as test instance which can be verified by hand. 
 """
-function test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag"], time_limit=3600, partial_decomposition=false)
+function test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS"], time_limit=3600, partial_decomposition=false)
     instances = []
     parameters = []
 
@@ -109,8 +109,7 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag"], time_limit=3600, part
             inst = to_BlCInstance(
                 hndpt,
                 GurobiSolver(Gurobi.Env());
-                MIPsubsolver=true,
-                lagrangian=true
+                subsolver=SBlCLAG_MIP_CYCLEFREE
             )
             blclag_param = BlCLagparam(
                 GurobiSolver(Gurobi.Env()),
@@ -124,11 +123,40 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "BlCLag"], time_limit=3600, part
 
             # set parameter of instance
             new_stat!(get_stats(blclag_param), "seed", 42)
-            new_stat!(get_stats(blclag_param), "MIPsubsolver", true)
+            new_stat!(get_stats(blclag_param), "MIPsubsolver", SBlCLAG_MIP_CYCLEFREE)
 
             # save generated and continue
             push!(instances, inst)
             push!(parameters, blclag_param)
+        end
+
+        if "BlCLagMiBS" in hsolver
+            myfolderBlCLagMiBS = myfolder * "/BlCLagMiBSSolver"
+            create_folder_if_not_exists(myfolderBlCLagMiBS)
+
+            # create instance
+            inst = to_BlCInstance(
+                hndpt,
+                GurobiSolver(Gurobi.Env());
+                subsolver=SBlCLAG_MiBS
+            )
+            blclagmibs_param = BlCLagparam(
+                GurobiSolver(Gurobi.Env()),
+                true,
+                myfolderBlCLagMiBS,
+                "lp",
+                PARETO_OPTIMALITY_ONLY,
+                true,
+                time_limit
+            )
+
+            # set parameter of instance
+            new_stat!(get_stats(blclagmibs_param), "seed", 42)
+            new_stat!(get_stats(blclagmibs_param), "MIPsubsolver", SBlCLAG_MiBS)
+
+            # save generated and continue
+            push!(instances, inst)
+            push!(parameters, blclagmibs_param)
         end
     end # end logger
 
@@ -138,19 +166,20 @@ end
 
 
 """
-    test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], time_limit=3600, partial_decomposition=false, cycle_free_GBC=false)
+    test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
 
 Test the algorithm for a toy example of the HNDP with negative cycle according to first-level objective.
 # Arguments
     - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver 
-        where Lagrangian cuts are used for BlCuts, "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
+        where Lagrangian cuts are used for BlCuts, "BlCLagMiBS" if the Lagragian subproblem should be solved with MiBS,
+        "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
         If multiple solvers are passed, solve instance with each. 
     - 'time_limit': Time limit for the solvers.
     - 'partial_decomposition': If true, employ partial decomposition for GBCSolver.
     - 'cycle_free_GBC': If true, additionaly generate Benders-like cuts within the MIP subproblem for GBCSolver. Has no effect on other solvers.
     - 'withweights': If true, the HNDP instance will contain an additional weight knapsack constraint. It will throw an exception if used with a solver who does not support this setting.
 """
-function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
+function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
     instances = []
     parameters = []
 
@@ -167,12 +196,12 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], 
             create_folder_if_not_exists(myfolderGBC)
 
             # create instance
+            subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
             inst = to_GBCInstance(
                 hndpt,
                 GurobiSolver(Gurobi.Env());
                 partial_dec=partial_decomposition, 
-                MIPsubsolver = true, # we need MIP subsolver for negative cycles right now
-                cycle_free_sub = cycle_free_GBC
+                subtype = subsolvertype
             )
             gbc_param = GBCparam(
                 GurobiSolver(Gurobi.Env()),
@@ -185,6 +214,7 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], 
 
             # set parameter of instance
             new_stat!(get_stats(gbc_param), "seed", 42)
+            new_stat!(get_stats(gbc_param), "subsolver", subsolvertype)
 
             # save generated and continue
             push!(instances, inst)
@@ -197,12 +227,13 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], 
             create_folder_if_not_exists(myfolderBlC)
 
             # create instance
-            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); MIPsubsolver = true) # we need MIP subsolver for negative cycles right now
+            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP) # we need MIP subsolver for negative cycles right now
             blc_param =
                 BLCparam(GurobiSolver(Gurobi.Env()), true, myfolderBlC, "lp", time_limit)
 
             # set parameter of instance
             new_stat!(get_stats(blc_param), "seed", 42)
+            new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
 
             # save generated and continue
             push!(instances, inst)
@@ -215,12 +246,14 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], 
             create_folder_if_not_exists(myfolderBlCLag)
 
             # create instance
-            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); MIPsubsolver = true, lagrangian=true) # we need MIP subsolver for negative cycles right now
+            subsolvertype = if cycle_free_GBC SBlCLAG_MIP_CYCLEFREE else SGBC_MiBS end
+            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver=subsolvertype) 
             blclag_param =
                 BlCLagparam(GurobiSolver(Gurobi.Env()), true, myfolderBlCLag, "lp", time_limit)
 
             # set parameter of instance
             new_stat!(get_stats(blclag_param), "seed", 42)
+            new_stat!(get_stats(blclag_param), "subsolver", subsolvertype)
 
             # save generated and continue
             push!(instances, inst)
@@ -334,6 +367,7 @@ function test_negative_HNDP(hsolver=["GBC", "BlC", "BlCLag", "CA", "CP", "CH"], 
 end
 
 
+
 """
     test_HNDPwC(users, alphas, nruns::Number; hsolver=["GBC", "BlC"], time_limit=3600, partial_decomposition=false)
 
@@ -351,8 +385,8 @@ If multiple solvers are passed, solve instance with each.
 - 'partial_decomposition': A list containing true or false (or both). If true, apply partial decomposition where applicable, i.e., when using our GBCSolver
 - 'warmstartGBC': A list containing true or false (or both). If false, ConnectorLP is reset after each iteration (what is very stupid, so only use this for test purpose)
 - 'stabilizationGBC': A list containing true or false (or both). If true, use Pareto optimal cuts for both optimality and feasibility cuts is used.
-- 'cyclefreeGBC': A list containing true or false (or both). If true, use basic BlC when solving pricing problem to obtain only bilevel optimal solutions.
-- 'LCinGBC': A list containing true or false (or both). If true, when solving ConnectorLP use a second ConnectorLP to compute the big M coefficients needed for Bilevel Lagrangian cuts.  
+- 'subsolvertype': This is a list of solver types. The currently supported types are "MIP" for a simple MIP solver, "MIP_CYCLE" for feasible solutions only, and "MiBS" for MiBS. Note that this setting only affects GBC and BlC solvers.
+- 'LCinGBC': A list containing true or false (or both). If true, when solving ConnectorLP for GBCSolver, use a second ConnectorLP to compute the big M coefficients needed for Bilevel Lagrangian cuts.  
 """
 function test_HNDPwC(json_path::String)
     # parse passed json file
@@ -361,17 +395,16 @@ function test_HNDPwC(json_path::String)
     users                 = cfg["users"]
     alphas                = cfg["alphas"]
     nruns                 = cfg["nruns"]
-    hsolver               = get(cfg, "hsolver", ["GBC", "BlC", ["BlCLag"]])
+    hsolver               = get(cfg, "hsolver", ["GBC", "BlC", "BlCLag"])
     time_limit            = get(cfg, "time_limit", 3600)
     partial_decomposition = get(cfg, "partial_decomposition", [true])
     two_stage             = get(cfg, "two_stage", false)
     constrac_cost         = get(cfg, "constrac_cost", 0)
-    mip_sub               = get(cfg, "mip_sub", [true])
     warmstartGBC          = get(cfg, "warmstartGBC", [true])
     stabilizationGBC      = get(cfg, "stabilizationGBC", [true])
-    cyclefreeGBC          = get(cfg, "cyclefreeGBC", [false])
+    subsolvertype         = get(cfg, "subsolvertype", ["MIP", "MIP_CYCLE", "MiBS"])
     LCinGBC               = get(cfg, "LCinGBC", [false])
-    trim_coeff_opt          = get(cfg, "trim_coeff", [true])
+    trim_coeff_opt        = get(cfg, "trim_coeff", [true])
     debug_mode            = get(cfg, "debug_mode", false)
 
 
@@ -393,19 +426,27 @@ function test_HNDPwC(json_path::String)
     if "GBC" in hsolver
         myfolderGBC = myfolder * "/GBCSolver"
         create_folder_if_not_exists(myfolderGBC)
-        for (u, al, nr, mips, partdec, stabopt, wstart, cyclef, LCsub, trim) in Base.product(users, alphas, 1:nruns, mip_sub, partial_decomposition, stabilizationGBC_options, warmstartGBC, cyclefreeGBC, LCinGBC, trim_coeff_opt)
+        for (u, al, nr, partdec, stabopt, wstart, st, LCsub, trim) in Base.product(users, alphas, 1:nruns, partial_decomposition, stabilizationGBC_options, warmstartGBC, subsolvertype, LCinGBC, trim_coeff_opt)
             # create output folder
-            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_$MIP(mips)_$P(partdec)_$(stabopt)_W$(wstart)_C$(cyclef)_LC$(LCsub)_T$(trim)"
+            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_$P(partdec)_$(stabopt)_W$(wstart)_$(st)_LC$(LCsub)_T$(trim)"
             create_folder_if_not_exists(myfolderrun)
 
+            # find out solver type
+            if st == "MIP"
+                solvertype = SGBC_MIP
+            elseif st == "MIP_CYCLE"
+                solvertype = SGBC_MIP_CYCLEFREE
+            elseif st == "MiBS"
+                solvertype = SGBC_MiBS
+            end
+            
             # create instance
             hndpt = hndps[u, al, nr]
             inst = to_GBCInstance(
                 hndpt,
                 GurobiSolver(Gurobi.Env());
                 partial_dec=partdec,
-                MIPsubsolver = mips,
-                cycle_free_sub = cyclef
+                subtype = solvertype
             )
             gbc_param = GBCparam(
                 GurobiSolver(Gurobi.Env()),
@@ -428,7 +469,7 @@ function test_HNDPwC(json_path::String)
             new_stat!(get_stats(gbc_param), "mip_subsolver", mips)
             new_stat!(get_stats(gbc_param), "stabopt", stabopt)
             new_stat!(get_stats(gbc_param), "warmstart", wstart)
-            new_stat!(get_stats(gbc_param), "cycle_free_sub", cyclef)
+            new_stat!(get_stats(gbc_param), "solvertype", solvertype)
             new_stat!(get_stats(gbc_param), "debug_mode", debug_mode)
             new_stat!(get_stats(gbc_param), "bigMwithLC", LCsub)
             new_stat!(get_stats(gbc_param), "trim_coef", trim)
@@ -450,7 +491,7 @@ function test_HNDPwC(json_path::String)
 
             # create instance
             hndpt = hndps[u, al, nr]
-            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); MIPsubsolver=mips, fixedBigM=false, lagrangian=false)
+            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver=mips, fixedBigM=false)
             blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
 
             # set parameter of instance
@@ -476,14 +517,23 @@ function test_HNDPwC(json_path::String)
             myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_MIP$(mips)_$(stabopt)_W$(wstart)_C$(cyclef)"
             create_folder_if_not_exists(myfolderrun)
 
+            # find out solver type
+            if st == "MIP"
+                continue # we require bilevel feasible subproblem
+            elseif st == "MIP_CYCLE"
+                solvertype = SBlCLAG_MIP_CYCLEFREE
+            elseif st == "MiBS"
+                solvertype = SBlCLAG_MiBS
+            else
+                @error "unsupported subsolver type $(st)"
+            end
+
             # create instance
             hndpt = hndps[u, al, nr]
             inst = to_BlCInstance(
                 hndpt, 
                 GurobiSolver(Gurobi.Env()); 
-                MIPsubsolver=mips,
-                fixedBigM = false,
-                lagrangian=true
+                subsolver = subsolvertype
             )
             blclag_param = BlCLagparam(
                 GurobiSolver(Gurobi.Env()),
@@ -503,7 +553,7 @@ function test_HNDPwC(json_path::String)
             new_stat!(get_stats(blclag_param), "mip_subsolver", mips)
             new_stat!(get_stats(blclag_param), "stabopt", stabopt)
             new_stat!(get_stats(blclag_param), "warmstart", wstart)
-            new_stat!(get_stats(blclag_param), "cycle_free_sub", cyclef)
+            new_stat!(get_stats(blclag_param), "subsolver", subsolvertype)
             new_stat!(get_stats(blclag_param), "debug_mode", debug_mode)
 
             # save generated and continue
@@ -591,7 +641,7 @@ function test_HNDPfix(json_file_path)
     @info "This debuger only contains information on the generation of the HNDP graphs used in the function 'test_HNDPfix'. For loggers of the different model runs, look in the respective folders."
     hndps = with_logger(logger) do
         hndps = Dict(
-            (u, nr, be) => build_random_layer_SiouxFalls(u, 0; seed=nr, beta=be, withweight=true) for
+            (u, nr, be) => build_random_layer_SiouxFalls(u, 0; seed=nr, beta=be) for
             (u, nr, be) in Base.product(users, 1:nruns, betas)
         )
     end
@@ -612,12 +662,12 @@ function test_HNDPfix(json_file_path)
                     with_logger(loggerGBC) do
                         # create instance
                         hndpt = hndps[u, nr, be]
+                        subsolvertype = if cycle_free_GBC SGBC_MIP_CYCLEFREE else SGBC_MIP end
                         inst = to_GBCInstance(
                             hndpt,
                             GurobiSolver(Gurobi.Env());
                             partial_dec=partial_decomposition,
-                            MIPsubsolver = true,
-                            cycle_free_sub = cycle_free_GBC, 
+                            subtype = subsolvertype
                         )
                         gbc_param = GBCparam(
                             GurobiSolver(Gurobi.Env()),
@@ -633,6 +683,7 @@ function test_HNDPfix(json_file_path)
                         new_stat!(get_stats(gbc_param), "partial dec", partial_decomposition)
                         new_stat!(get_stats(gbc_param), "seed", nr)
                         new_stat!(get_stats(gbc_param), "beta", be)
+                        new_stat!(get_stats(gbc_param), "subsolver", subsolvertype)
 
                         # save generated and continue
                         push!(instances, inst)
@@ -671,7 +722,7 @@ function test_HNDPfix(json_file_path)
                         with_logger(loggerBlC) do
                             # create instance
                             hndpt = hndps[u, nr, be]
-                            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); MIPsubsolver = true, fixedBigM=fixBigM)
+                            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP)
                             @debug "Time limit is set to $time_limit"
                             blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
 
@@ -680,6 +731,8 @@ function test_HNDPfix(json_file_path)
                             new_stat!(get_stats(blc_param), "seed", nr)
                             new_stat!(get_stats(blc_param), "TypeBigM", bm)
                             new_stat!(get_stats(blc_param), "beta", be)
+                            new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
+
 
                             # save generated and continue
                             push!(instances, inst)

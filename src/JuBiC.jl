@@ -18,6 +18,7 @@ include("model_structs/instance.jl")
 include("mibs_parser/mibs_input_reader.jl")
 
 include("solvers/sub_solvers/sub_solver_mip.jl")
+include("solvers/sub_solvers/sub_solver_mibs.jl")
 include("solvers/gbc_solver.jl")
 include("solvers/blc_solver.jl")
 include("solvers/blclag_solver.jl")
@@ -28,7 +29,7 @@ include("solvers/sub_solvers/labeling.jl")
 include("solvers/sub_solvers/a_star_search.jl")
 
 
-export Master, Instance, SubSolverJuMP, BlCMaster, BlCLagMaster, MIPMaster, MibSMaster
+export Master, Instance, SubSolverJuMP, SubSolverMiBS, BlCMaster, BlCLagMaster, MIPMaster, MibSMaster
 export extra_cuts_benderslike_JuMP
 export GBCparam, BLCparam, BlCLagparam, MIPparam, MibSparam, SolverParam, CostStructure, AStarSolver, get_next_optimizer, new_stat!, add_stat!, get_stats, output_file_path, should_debbug_print
 export GurobiSolver, SolverWrapper

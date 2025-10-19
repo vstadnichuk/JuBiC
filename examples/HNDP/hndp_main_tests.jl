@@ -4,7 +4,7 @@ include("hndp_tests.jl")
 include("../logging.jl")
 
 # Tests for simple instances checking basic functionalities
-test_toy_HNDPwC()
+test_toy_HNDPwC(["BlCLagMiBS"])
 #test_negative_HNDP()
 
 # Test for GBC and blc solvers

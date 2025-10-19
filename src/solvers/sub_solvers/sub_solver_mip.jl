@@ -13,8 +13,8 @@ struct SubSolverJuMP{T} <: SubSolver
     link_varsC::Any  # A list of linking variables (copy within sub_problem). Keys=A
     y_vars::Any  # Dict of sub_problem variables appearing in the interdiction constraints. Keys=A. NOTE: We essentially assume that y-vars are binary. You are free to ignore it, but it can lead to undefined behavior
     link_constraints_capacities::Dict{T,<:Number}  # the capacity parameters in the interdiction linking constraints. I would recommend to set it to 1 und use y_vars as indicator variables sub_problem formulation!
-    r_objterm::AffExpr  # The objective function term within the master problem, i.e., the contribution to the cost in master (should be generated with sub_problem variables)
-    c_objterm::AffExpr  # the objective function of the original sub_problem (should be generated with sub_problem variables)
+    r_objterm::GenericAffExpr  # The objective function term within the master problem, i.e., the contribution to the cost in master (should be generated with sub_problem variables)
+    c_objterm::GenericAffExpr  # the objective function of the original sub_problem (should be generated with sub_problem variables)
 
     # extra functionalities
     extra_cuts::Function # Adds additional cuts in a branch and check manner. Called after 'mip_model' is solved to optimality. Should add the cut to the MIP itself. Input is only the time limit for this function. Then MIP is resolved. Return (b, time) where b is Bool if resolving should be used and time the runtime spend within the function
@@ -376,7 +376,7 @@ end
 
 ####### Auxiliary functions #######
 """
-    check_solution_status()
+    check_solution_status(sol::SubSolverJuMP)
 
 Check if model terminated due to finding an optimal solution. If not, throw an error. For timeouts, throw 'TimeoutException'.
 """

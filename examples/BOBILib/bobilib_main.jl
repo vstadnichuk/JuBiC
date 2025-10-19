@@ -3,9 +3,9 @@ using JuBiC, JuMP, Gurobi, BilevelJuMP
 include("../logging.jl")
 
 optimizer = Gurobi.Optimizer
-const instances_dir = "./examples/BOBILib/instances/"
-const instances_to_solve = []
-const test_gbc = true
+const instances_dir = "./examples/BOBILib/instances"
+const instances_to_solve = ["K5010W07.KNP"]
+const test_gbc = false
 const test_mibs = true
 const test_mibs_transform = false
 
@@ -57,7 +57,7 @@ function main()
         aux_path = joinpath(instances_dir, instance * ".aux")
 
         if !isfile(mps_path) || !isfile(aux_path)
-            @warn "Instance files for $instance not found. Skipping."
+            @warn "Instance files for $instance not found under path $instances_dir. Skipping."
             continue
         end
 
