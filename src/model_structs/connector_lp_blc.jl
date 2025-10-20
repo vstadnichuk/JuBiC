@@ -166,7 +166,8 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
             @debug "We added an violated constraint $(c) for ConnectorLP_BlC $(name(subLP.sub_solver)). Continue separation."
 
             # save found solution to our internal storage
-            csc = ConSubsolCut(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level)
+            A_used = [a for a in subLP.A if !(a in sub_solver.A_sub)] # inverse A_sub set as it contains non-used elements in cut 
+            csc = ConSubsolCut(A_used, sub_solver.obj_second_level, sub_solver.obj_first_level)
             push!(subLP.my_subsolutions_blc, csc)
 
             # check for time limit

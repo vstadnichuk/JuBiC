@@ -91,8 +91,8 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         end
 
         #build opt cut
-        cut = build_opt_cut(subLP, optL2, y_vals, link_vals, params, time_limit_pareto)
         pobj = value(new_obj)
+        cut = build_opt_cut(subLP, optL2, y_vals, link_vals, params, time_limit_pareto)
     end
 
     # clean up and return
@@ -129,8 +129,9 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
         throw(ArgumentError("The big M $(bigMterm) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
     end
     ## generate cut from bound or by solving Lagrangian dual fpr BlC
-    blc_subroutine = params.bigMwithLC && gval > 0
+    blc_subroutine = params.bigMwithLC && gval > 0 
     if blc_subroutine
+        @debug "The conditions are met s.t. we generate a BlC for obtaining better big M coef. It is g=$gval "
         # If g=0, investing computational efford into generating a Lagrangian cut is just waste of computational ressources
         # solve subroutine approximating 
         synchronize_blc(subLP, subLP.blc_cut_generator)  # update ConnectorLP_BlC s.t. we preserve the subsolver solutions we found till now
@@ -398,13 +399,15 @@ Synchronize the subsolver solutions and constraints from ConnectorLP to its BlC 
 function synchronize_blc(con::ConnectorLP{T}, con_blc::ConnectorLP_BlC{T}) where T
     for scs in con.my_subsolutions
         if !(scs in con_blc.my_subsolutions_blc)
-            @debug "Added solution $scs and corresponding constraint from ConnectorLP to its BlC counterpart."
             # add solution to list 
             push!(con_blc.my_subsolutions_blc, scs)
 
             # add constraint
-            new_const_left = con_blc.lp[:s] + sum(con_blc.lp[:k][a] for a in scs.res; init=0)
-            @constraint(con_blc.lp, new_const_left >= scs.objL2)
+            A_inv = [a for a in con.A if !(a in scs.res)] # inverse A_sub set as it contains non-used elements in cut 
+            new_const_left = con_blc.lp[:s] + sum(con_blc.lp[:k][a] for a in A_inv; init=0)
+            @constraint(con_blc.lp, new_const_left >= scs.objL2, base_name="synchro")
+
+            @debug "Added solution $scs and corresponding constraint from ConnectorLP to its BlC counterpart."
         end
     end
 end
@@ -415,16 +418,18 @@ end
     
 Synchronize the subsolver solutions and constraints from ConnectorLP to its BlC counterpart. 
 """
-function synchronize_gbc(con_blc::ConnectorLP_BlC{T}, con::ConnectorLP{T}) where T
+function synchronize_gbc(con_blc::ConnectorLP_BlC{T}, con::ConnectorLP{T}) where T 
     for scs in con_blc.my_subsolutions_blc
         if !(scs in con.my_subsolutions)
-            @debug "Added solution $scs and corresponding constraint from ConnectorLP_BlC to its GBC counterpart."
             # add solution to list 
             push!(con.my_subsolutions, scs)
 
             # add constraint
-            new_const_left = con.lp[:s] + sum(con.lp[:k][a] for a in scs.res; init=0)
-            @constraint(con.lp, new_const_left >= scs.objL2)
+            new_const_left =
+                con.lp[:s] - sum(con.lp[:k][a] for a in scs.res; init=0) - scs.objL2 * con.lp[:g]
+            @constraint(con.lp, new_const_left <= scs.objL2, base_name="synchro")
+            
+            @debug "Added solution $scs and corresponding constraint from ConnectorLP_BlC to its GBC counterpart."
         end
     end
 end

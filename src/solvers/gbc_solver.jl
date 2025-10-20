@@ -94,7 +94,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
             new_stat!(param.stats, "GBCStatus", "Terminate")
-            rethrow(e)  # TODO: comment out
+            #rethrow(e)  
         end
     else
         # print solution and collected data

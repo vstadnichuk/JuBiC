@@ -32,7 +32,7 @@ function testrun!(instances, parameters, logfolder)
         catch err
             @error "When solving instance number $ind we incurred the error $err. Continue solving other instances. "
             @error stacktrace()
-            rethrow(err)  #TODO: comment out
+            #rethrow(err)  
         end
     end
 
@@ -89,7 +89,7 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
             create_folder_if_not_exists(myfolderGBCLag)
 
             # create instance
-            subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
+            subsolvertype = SGBC_MIP_CYCLEFREE 
             inst = to_GBCInstance(
                 hndpt,
                 GurobiSolver(Gurobi.Env());
@@ -261,35 +261,41 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
             myfolderGBCLag = myfolder * "/GBCLagSolver"
             create_folder_if_not_exists(myfolderGBCLag)
 
-            # create instance
-            subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
-            inst = to_GBCInstance(
-                hndpt,
-                GurobiSolver(Gurobi.Env());
-                partial_dec=partial_decomposition, 
-                subtype = subsolvertype
-            )
-            gbclag_param = GBCparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderGBCLag,
-                "lp",
-                PARETO_OPTIMALITY_ONLY,
-                true, # warm start
-                true,  # use Lagrangian cuts for big M
-                true, # trim big M coef
-                time_limit,
-                
-            )
+            # we need to generate bilevel feasible solutions for the big M generation of BlC cuts
+            if cycle_free_GBC
+                # create instance
+                subsolvertype = SGBC_MIP_CYCLEFREE
+                inst = to_GBCInstance(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env());
+                    partial_dec=partial_decomposition, 
+                    subtype = subsolvertype
+                )
+                gbclag_param = GBCparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderGBCLag,
+                    "lp",
+                    PARETO_OPTIMALITY_ONLY,
+                    true, # warm start
+                    true,  # use Lagrangian cuts for big M
+                    true, # trim big M coef
+                    time_limit
+                )
 
-            # set parameter of instance
-            new_stat!(get_stats(gbclag_param), "solver", "GBCLag")
-            new_stat!(get_stats(gbclag_param), "seed", 42)
-            new_stat!(get_stats(gbclag_param), "subsolver", subsolvertype)
+                # set parameter of instance
+                new_stat!(get_stats(gbclag_param), "solver", "GBCLag")
+                new_stat!(get_stats(gbclag_param), "seed", 42)
+                new_stat!(get_stats(gbclag_param), "subsolver", subsolvertype)
 
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, gbclag_param)
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, gbclag_param)
+            else
+                @info "We scip GBCLag solver because we need cycle breaking constraints in the subsolver which is not given by current settings."
+            end
+
+            
         end
 
         # build BlC
