@@ -202,7 +202,7 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
             # add constraints
-            @debug "For ConnectorLP_BlC $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and uses resources $(sub_solver.A_sub)."
+            @debug "For ConnectorLP_BlC $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and does not use resources $(sub_solver.A_sub)."
             new_const_left = subLP.lp[:s] + sum(subLP.lp[:k][a] for a in sub_solver.A_sub; init=0)
             c = @constraint(subLP.lp, new_const_left >= sub_solver.obj_second_level)
             @debug "We added an violated constraint $(c) for ConnectorLP_BlC $(name(subLP.sub_solver)). Continue separation."

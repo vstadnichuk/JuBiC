@@ -472,6 +472,7 @@ function test_HNDPwC(json_path::String)
     fixnetwork            = get(cfg, "fixnetwork", true)
     users                 = cfg["users"]
     alphas                = cfg["alphas"]
+    beta                  = get(cfg, "beta", 1)
     nruns                 = cfg["nruns"]
     hsolver               = get(cfg, "hsolver", ["GBC", "BlC", "BlCLag"])
     time_limit            = get(cfg, "time_limit", 3600)
@@ -497,7 +498,7 @@ function test_HNDPwC(json_path::String)
     # generate the underlying HNDPwC instances
     if fixnetwork
         hndps = Dict(
-            (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr, beta=0.5, withweight=true) for
+            (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr, beta=beta, withweight=true) for
             (u, al, nr) in Base.product(users, alphas, 1:nruns)
         )
     else
@@ -559,6 +560,7 @@ function test_HNDPwC(json_path::String)
             new_stat!(get_stats(gbc_param), "fixnetwork", fixnetwork)
             new_stat!(get_stats(gbc_param), "U", u)
             new_stat!(get_stats(gbc_param), "alpha", al)
+            if fixnetwork new_stat!(get_stats(gbc_param), "beta", beta) end
             new_stat!(get_stats(gbc_param), "constructioncost", constrac_cost)
             new_stat!(get_stats(gbc_param), "partial_decomposition", partdec)
             new_stat!(get_stats(gbc_param), "seed", nr)
@@ -594,6 +596,7 @@ function test_HNDPwC(json_path::String)
             new_stat!(get_stats(blc_param), "fixnetwork", fixnetwork)
             new_stat!(get_stats(blc_param), "U", u)
             new_stat!(get_stats(blc_param), "alpha", al)
+            if fixnetwork new_stat!(get_stats(blc_param), "beta", beta) end
             new_stat!(get_stats(blc_param), "constructioncost", constrac_cost)
             new_stat!(get_stats(blc_param), "seed", nr)
             new_stat!(get_stats(blc_param), "mip_subsolver", SBlC_MIP)
@@ -647,6 +650,7 @@ function test_HNDPwC(json_path::String)
             new_stat!(get_stats(blclag_param), "fixnetwork", fixnetwork)
             new_stat!(get_stats(blclag_param), "U", u)
             new_stat!(get_stats(blclag_param), "alpha", al)
+            if fixnetwork new_stat!(get_stats(blclag_param), "beta", beta) end
             new_stat!(get_stats(blclag_param), "constructioncost", constrac_cost)
             new_stat!(get_stats(blclag_param), "seed", nr)
             new_stat!(get_stats(blclag_param), "stabopt", stabopt)
