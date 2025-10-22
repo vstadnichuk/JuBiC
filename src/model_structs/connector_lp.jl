@@ -400,13 +400,9 @@ function synchronize_blc(con::ConnectorLP{T}, con_blc::ConnectorLP_BlC{T}) where
     for scs in con.my_subsolutions
         if !(scs in con_blc.my_subsolutions_blc)
             # add solution to list 
-            push!(con_blc.my_subsolutions_blc, scs)
+            #push!(con_blc.my_subsolutions_blc, scs)
 
-            # add constraint
-            A_inv = [a for a in con.A if !(a in scs.res)] # inverse A_sub set as it contains non-used elements in cut 
-            new_const_left = con_blc.lp[:s] + sum(con_blc.lp[:k][a] for a in A_inv; init=0)
-            @constraint(con_blc.lp, new_const_left >= scs.objL2, base_name="synchro")
-
+            add_cut_from_scs_blc(con_blc, scs; synchro=true)
             @debug "Added solution $scs and corresponding constraint from ConnectorLP to its BlC counterpart."
         end
     end

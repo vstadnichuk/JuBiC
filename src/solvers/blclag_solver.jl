@@ -19,7 +19,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     new_stat!(param.stats, "Solver", "BlCLagSolver")
     new_stat!(param.stats, "time_limit", param.runtime)
     new_stat!(param.stats, "NSub", length(subs))
-    new_stat!(param.stats, "NBlCuts", 0)
+    new_stat!(param.stats, "BlCLagCuts", 0)
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "SepaTimeCut", 0)  # time spend in separator for generating cuts only
 
@@ -178,7 +178,7 @@ function blclag_callback_function(cb_data, master::BlCLagMaster, sub_names, clps
                         if subObj_val[name(con)] - 1e-6 > pobj  # TODO: again, hard coded numeric
                             cutopt = @build_constraint( subObj[name(con)] <= cut)
                             @debug "Adding BlC cut $(cutopt) generated from Lagrangian dual to the master problem for sub $(name(con.sub_solver))."
-                            add_stat!(parameter.stats, "NBlCuts", 1)
+                            add_stat!(parameter.stats, "BlCLagCuts", 1)
                             push!(lazy, cutopt)
                         else
                             @debug "No cut generated from Lagrangian dual to the master problem for sub $(name(con.sub_solver)) as current L2obj=$(subObj_val[name(con)]) and cut value=$pobj."

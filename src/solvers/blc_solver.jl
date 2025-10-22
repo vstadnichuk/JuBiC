@@ -8,7 +8,7 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     new_stat!(param.stats, "Solver", "BlCSolver")
     new_stat!(param.stats, "time_limit", param.runtime)
     new_stat!(param.stats, "NSub", length(inst.subproblems))
-    new_stat!(param.stats, "Blcuts", 0)
+    new_stat!(param.stats, "BlCuts", 0)
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
 
     # do some initial checks for master and sub solvers
@@ -143,7 +143,7 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
                         blcm.sub_objectives[name(sub)] <= subopt + bigMterms
                     )
                     @debug "Adding Benders-like cut $(cutopt) to the master problem for sub $(name(sub))."
-                    add_stat!(parameter.stats, "Blcuts", 1)
+                    add_stat!(parameter.stats, "BlCuts", 1)
                     push!(lazy, cutopt)
                 end
 
@@ -156,7 +156,7 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
 
             # output cuts to file in case of debbug mode
             if should_debbug_print(parameter)
-                outfilecut = parameter.output_folder_path * "/Blcuts.txt"
+                outfilecut = parameter.output_folder_path * "/BlCuts.txt"
                 append_constraintlist_to_file(lazy, outfilecut)
             end
         end

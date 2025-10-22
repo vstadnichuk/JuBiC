@@ -9,6 +9,23 @@ struct ConSubsolCut
     objL1::Number  # L1 solution value, i.e., risk
 end
 
+function Base.:(==)(scs1::ConSubsolCut, scs2::ConSubsolCut)
+    if scs1.objL2 == scs2.objL2 && scs1.objL1 == scs2.objL1
+        for r1 in scs1.res
+            if !(r1 in scs2.res)
+                return false
+            end
+        end
+        for r2 in scs2.res
+            if !(r2 in scs1.res)
+                return false
+            end
+        end
+        return true
+    end
+    return false
+end
+
 struct ConnectorLP_BlC{T}
     lp::Model  # The lp model. Variables should be registered as :s and :k[A]
     A::Vector{T}  # Iterable of resources
@@ -72,6 +89,17 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
         ])
     @objective(subLP.lp, Min, new_obj)
 
+    # we solve the subproblem for current x s.t. we obtain a value for s 
+    foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, time_limit)
+    if !foundfeas
+        throw(ErrorException("Found infeasible second-level when generating big M coef. for BlC cuts using Lagrangian dual. The master values are: $link_vals"))
+    end
+    csc = ConSubsolCut([a for a in subLP.A if y_vals[a] > 0.5], optL2, optL2_risk)
+    if !(csc in subLP.my_subsolutions_blc)
+        add_cut_from_scs_blc(subLP, csc)
+    end
+    fixs_c = @constraint(subLP.lp, subLP.lp[:s] >= optL2, base_name="Fix_s")
+
     # solve sub LP for new master
     @debug "Start iterative solution procedure for ConnectorLP_BlC $(name(subLP.sub_solver))."
     time_iterate = iterate_subsolver_BlC(subLP, params, time_limit)
@@ -97,8 +125,22 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
             delete(subLP.lp, cref)
         end
     end
+    delete(subLP.lp, fixs_c)
+    unregister(subLP.lp, :fixs_c)
     @debug "Finished solving ConnectorLP_BlC $(name(subLP.sub_solver))."
     return cut, pobj, cutcoeff
+end
+
+
+function add_cut_from_scs_blc(subLP::ConnectorLP_BlC, scs::ConSubsolCut; synchro=false)
+    # add constraint
+    A_inv = [a for a in subLP.A if !(a in scs.res)] # inverse A_sub set as it contains non-used elements in cut 
+    new_const_left = subLP.lp[:s] + sum(subLP.lp[:k][a] for a in A_inv; init=0)
+    cname = if synchro "synchro" else "C" end
+    @constraint(subLP.lp, new_const_left >= scs.objL2, base_name=cname)
+
+    # save constraint in internal list
+    push!(subLP.my_subsolutions_blc, scs)
 end
 
 function build_opt_cut_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLagparam})

@@ -23,7 +23,11 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
 
     # register solver
     @debug "Starting setup of the GBC solver."
-    new_stat!(param.stats, "Solver", "GBCSolver")
+    if param.bigMwithLC
+        new_stat!(param.stats, "Solver", "GBCLagSolver")  # Set other name as essentially a new solver
+    else
+        new_stat!(param.stats, "Solver", "GBCSolver")
+    end
     new_stat!(param.stats, "time_limit", param.runtime)
     new_stat!(param.stats, "NSub", length(subs))
     new_stat!(param.stats, "NFeasCuts", 0)
