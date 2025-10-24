@@ -2,8 +2,9 @@
   "fixnetwork": true,
   "users": [3],
   "alphas": [0.1],
+  "beta": 1,
   "nruns": 1,
-  "hsolver": ["BlC", "BlCLag"],
+  "hsolver": ["GBC", "BlC"],
   "time_limit": 60,
   "partial_decomposition": [true],
   "two_stage": false,
@@ -13,5 +14,5 @@
   "warmstartGBC": [true],
   "stabilizationGBC": [true],
   "subsolvertype": ["MIP_CYCLE"],
-  "LCinGBC": [true]
+  "LCinGBC": [false]
 }

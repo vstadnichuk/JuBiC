@@ -133,11 +133,15 @@ end
 
 
 function add_cut_from_scs_blc(subLP::ConnectorLP_BlC, scs::ConSubsolCut; synchro=false)
-    # add constraint
+    # add constraints
+    cname = if synchro "synchro" else "C" end
     A_inv = [a for a in subLP.A if !(a in scs.res)] # inverse A_sub set as it contains non-used elements in cut 
     new_const_left = subLP.lp[:s] + sum(subLP.lp[:k][a] for a in A_inv; init=0)
-    cname = if synchro "synchro" else "C" end
-    @constraint(subLP.lp, new_const_left >= scs.objL2, base_name=cname)
+    for a in A_inv
+        new_const_left = subLP.lp[:s] + subLP.lp[:k][a]
+        c = @constraint(subLP.lp, new_const_left >= scs.objL2, base_name=cname)
+        @debug "We added an violated constraint $(c) for ConnectorLP_BlC $(name(subLP.sub_solver))."
+    end
 
     # save constraint in internal list
     push!(subLP.my_subsolutions_blc, scs)
@@ -201,16 +205,14 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
 
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
-            # add constraints
-            @debug "For ConnectorLP_BlC $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and does not use resources $(sub_solver.A_sub)."
-            new_const_left = subLP.lp[:s] + sum(subLP.lp[:k][a] for a in sub_solver.A_sub; init=0)
-            c = @constraint(subLP.lp, new_const_left >= sub_solver.obj_second_level)
-            @debug "We added an violated constraint $(c) for ConnectorLP_BlC $(name(subLP.sub_solver)). Continue separation."
-
             # save found solution to our internal storage
             A_used = [a for a in subLP.A if !(a in sub_solver.A_sub)] # inverse A_sub set as it contains non-used elements in cut 
             csc = ConSubsolCut(A_used, sub_solver.obj_second_level, sub_solver.obj_first_level)
-            push!(subLP.my_subsolutions_blc, csc)
+            #push!(subLP.my_subsolutions_blc, csc)
+
+            # add constraints
+            @debug "For ConnectorLP_BlC $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and does not use resources $(sub_solver.A_sub)."
+            add_cut_from_scs_blc(subLP, csc)
 
             # check for time limit
             if current_time + params.runtime < time() 

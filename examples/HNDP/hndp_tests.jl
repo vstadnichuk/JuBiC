@@ -32,7 +32,7 @@ function testrun!(instances, parameters, logfolder)
         catch err
             @error "When solving instance number $ind we incurred the error $err. Continue solving other instances. "
             @error stacktrace()
-            #rethrow(err)  
+            rethrow(err)  # TODO: comment out
         end
     end
 
