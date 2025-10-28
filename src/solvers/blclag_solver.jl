@@ -63,7 +63,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
 
     # add callback to master and solve 
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
-    @debug "Finished model construction. Now proceeding to optimization process witfh solving using BlC with Langrangian cut coef. Remaining runtime is $true_runtime"
+    @debug "Finished model construction. Now proceeding to optimization process by solving using BlC with Langrangian cut coef. Remaining runtime is $true_runtime"
     set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> blclag_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, param))
 
     try 
@@ -77,7 +77,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
             new_stat!(param.stats, "BlCLagStatus", "Terminate")
-            rethrow(e) # TODO: comment out
+            #rethrow(e) 
         end
     else
         # print solution and collected data

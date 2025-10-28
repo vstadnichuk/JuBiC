@@ -32,14 +32,15 @@ end
 Creates a new logger that writes to a file where the path is given by 'filepath'. If 'print_debug' is true, the logger also prints the @debug messages. 
 """
 function new_file_logger(filepath, print_debug)
+    io = open(filepath, "w")
     if print_debug
-        logger = MinLevelLogger(FileLogger(filepath), Logging.Debug)
+        logger = MinLevelLogger(FileLogger(io), Logging.Debug)
         @info("Registered a new Logger for debuging. Please note that the debug messages are only printed to the logfile and not to the console. ")
     else
-        logger = MinLevelLogger(FileLogger(filepath), Logging.Info)
+        logger = MinLevelLogger(FileLogger(io), Logging.Info)
         @info("Registered a new Logger but it will not print any debug messages as it was not set in the parameters of the solvers.")
     end
-    return logger
+    return logger, io
 end
 
 """
@@ -47,8 +48,8 @@ end
 
 Print the passed list of JuMP constraints 'sol_to_lazy' to file.
 """
-function print_collected_cuts(param::SolverParam, sol_to_lazy::Dict)
-    filepath = param.output_folder_path * "/mastercuts_collection.txt"
+function print_collected_cuts(param::SolverParam, sol_to_lazy::Dict; filename="/mastercuts_collection.txt")
+    filepath = joinpath(param.output_folder_path, filename)
     for lazylist in values(sol_to_lazy)
         append_constraintlist_to_file(lazylist, filepath)
     end

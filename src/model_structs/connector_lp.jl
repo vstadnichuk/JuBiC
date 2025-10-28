@@ -1,5 +1,29 @@
 using JuMP
 
+### Constructor and basic functions ###
+struct ConSubsolCut
+    res::AbstractVector  # List of ressources used by solution
+    objL2::Number  # L2 solution value, i.e, cost
+    objL1::Number  # L1 solution value, i.e., risk
+end
+
+function Base.:(==)(scs1::ConSubsolCut, scs2::ConSubsolCut)
+    if scs1.objL2 == scs2.objL2 && scs1.objL1 == scs2.objL1
+        for r1 in scs1.res
+            if !(r1 in scs2.res)
+                return false
+            end
+        end
+        for r2 in scs2.res
+            if !(r2 in scs1.res)
+                return false
+            end
+        end
+        return true
+    end
+    return false
+end
+
 """
 The LP Benders solver for a single sub_problem. 
 """
@@ -11,7 +35,7 @@ struct ConnectorLP{T}
     lower_bound_obj_contribution::Number  # The lower bound on the contribution to the first level objective function
 
     blc_cut_generator::Union{ConnectorLP_BlC, Nothing}  # subroutine for generating BlC cut coefficients required for better GBC cut coefficients
-    my_subsolutions::AbstractVector  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
+    my_subsolutions::AbstractVector{ConSubsolCut}  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
 end
 
 function name(clp::ConnectorLP)
@@ -35,6 +59,7 @@ Generate an general Benders (feasibility or optimality) cut.
 
 - 'feas::Bool': True iff we need a feasibility cut.
 - 'cut': The left-hand (i.e., non-trivial) side of the cut.
+- 'bigMcut': If big M coefficients for BlC were computed as subroutine, return the right-hand (i.e., non-trivial) side of the BlC. Otherwise, return 'nothing'. 
 - 'pobj': The contribution of the cut to the objective for the current solution (0 if feasibility cut).
 """
 function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
@@ -78,6 +103,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         # build feas cut
         cut = build_feas_cut(subLP)
         pobj = 0
+        bigMcut = nothing
     else
         # solve sub_problem 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for optimality cut generation."
@@ -92,7 +118,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
 
         #build opt cut
         pobj = value(new_obj)
-        cut = build_opt_cut(subLP, optL2, y_vals, link_vals, params, time_limit_pareto)
+        cut, bigMcut = build_opt_cut(subLP, optL2, y_vals, link_vals, params, time_limit_pareto)
     end
 
     # clean up and return
@@ -109,12 +135,28 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         end
     end
     @debug "Finished solving connectLP $(name(subLP.sub_solver))."
-    return feas, cut, pobj
+    return feas, cut, bigMcut, pobj
 end
 
 
+"""
+    build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCparam, timelimit)
+
+# Arguments
+- 'subLP::ConnectorLP{T}': The LP that must be solved for the sub_problem. Note that the LP is modified during the solving process.
+- 'y_vals': The values of the optimal L2 solution for the current master solution. 
+- 'x_vals': The current master solution.
+- 'params::GBCparam': Parameters passed down from the main solver.
+- 'time_limit': The time limit for this subroutine. If exceeded, throws a 'TimeoutException'.
+
+# Returns
+
+- 'cut': The left-hand (i.e., non-trivial) side of the BlC constraint.
+- 'bigMcut': If big M coefficients of BlC were computed, return here the right-hand (i.e., non trivial) side of BlC constraint. Otherwise, return 'nothing'
+"""
 function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCparam, timelimit)
     master_vars = subLP.link_vars
+    bigMcut = nothing
 
     # s term of the cut
     sval = value(subLP.lp[:s])
@@ -149,6 +191,9 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
             end
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
+
+        # generate bigMcut
+        bigMcut = optL2 + sum(cutcoeff_BlC[a] * (1 - master_vars[a]) * y_vals[a] for a in subLP.A) # TODO: Not sure if y_vals term is needed but should not hurt
     else
         theta_xXg =
             optL2 * gval + sum(bigMterm * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient 
@@ -175,7 +220,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
             )
         end
     end
-    return cut
+    return cut, bigMcut
 end
 
 function build_feas_cut(subLP::ConnectorLP)
@@ -406,6 +451,8 @@ end
 Synchronize the subsolver solutions and constraints from ConnectorLP to its BlC counterpart. 
 """
 function synchronize_blc(con::ConnectorLP{T}, con_blc::ConnectorLP_BlC{T}) where T
+    return #TODO: We solve very different Lagrangian subproblems. Transferring one solution to another is not straightforward. However, we leave the function to give room a possible extension in the future.
+    """
     for scs in con.my_subsolutions
         if !(scs in con_blc.my_subsolutions_blc)
             # add solution to list 
@@ -415,6 +462,7 @@ function synchronize_blc(con::ConnectorLP{T}, con_blc::ConnectorLP_BlC{T}) where
             @debug "Added solution $scs and corresponding constraint from ConnectorLP to its BlC counterpart."
         end
     end
+    """
 end
 
 
@@ -424,6 +472,9 @@ end
 Synchronize the subsolver solutions and constraints from ConnectorLP to its BlC counterpart. 
 """
 function synchronize_gbc(con_blc::ConnectorLP_BlC{T}, con::ConnectorLP{T}) where T 
+    return # TODO: We solve very different Lagrangian subproblems. Transferring one solution to another is not straightforward. However, we leave the function to give room a possible extension in the future.
+    """
+    throw(ErrorException("Does not work after rework of BlC"))
     for scs in con_blc.my_subsolutions_blc
         if !(scs in con.my_subsolutions)
             # add solution to list 
@@ -437,6 +488,7 @@ function synchronize_gbc(con_blc::ConnectorLP_BlC{T}, con::ConnectorLP{T}) where
             @debug "Added solution $scs and corresponding constraint from ConnectorLP_BlC to its GBC counterpart."
         end
     end
+    """
 end
 
 

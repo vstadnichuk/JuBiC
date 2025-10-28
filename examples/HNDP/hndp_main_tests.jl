@@ -4,8 +4,8 @@ include("hndp_tests.jl")
 include("../logging.jl")
 
 # Tests for simple instances checking basic functionalities
-#test_toy_HNDPwC(["GBC", "GBCLag", "BlC", "BlCLag"])
-test_negative_HNDP(["BlCLag"])
+test_toy_HNDPwC(["GBC", "GBCLag", "BlC", "BlCLag"])
+#test_negative_HNDP()
 
 # Test for GBC and blc solvers
 #test_HNDPwC("examples/HNDP/run_settings/GBCparamsTest.json")

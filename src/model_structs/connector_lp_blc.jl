@@ -3,21 +3,21 @@
 
 
 ### Constructor and basic functions ###
-struct ConSubsolCut
-    res::AbstractVector  # List of ressources used by solution
+struct ConSubsolCut_BlC
+    xforbid::AbstractVector  # List of x-variables which were explicitly forbidden
     objL2::Number  # L2 solution value, i.e, cost
     objL1::Number  # L1 solution value, i.e., risk
 end
 
-function Base.:(==)(scs1::ConSubsolCut, scs2::ConSubsolCut)
+function Base.:(==)(scs1::ConSubsolCut_BlC, scs2::ConSubsolCut_BlC)
     if scs1.objL2 == scs2.objL2 && scs1.objL1 == scs2.objL1
-        for r1 in scs1.res
-            if !(r1 in scs2.res)
+        for r1 in scs1.xforbid
+            if !(r1 in scs2.xforbid)
                 return false
             end
         end
-        for r2 in scs2.res
-            if !(r2 in scs1.res)
+        for r2 in scs2.xforbid
+            if !(r2 in scs1.xforbid)
                 return false
             end
         end
@@ -31,7 +31,7 @@ struct ConnectorLP_BlC{T}
     A::Vector{T}  # Iterable of resources
     link_vars::Dict{T,VariableRef}  # The linking variables (from master) as dict. Keys=A
     sub_solver::SubSolver  # The sub_solver that is used to solve the sub_problem
-    my_subsolutions_blc::AbstractVector{ConSubsolCut}  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
+    my_subsolutions_blc::AbstractVector{ConSubsolCut_BlC}  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
 end
 
 function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_vars::Dict{<:Any, VariableRef}, sub_solver::SubSolver)
@@ -46,7 +46,7 @@ function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_v
 
     # build my struct
     ConnectorLP_BlC{T}(
-      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut}()
+      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut_BlC}()
     )
 end
 
@@ -94,11 +94,7 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     if !foundfeas
         throw(ErrorException("Found infeasible second-level when generating big M coef. for BlC cuts using Lagrangian dual. The master values are: $link_vals"))
     end
-    csc = ConSubsolCut([a for a in subLP.A if y_vals[a] > 0.5], optL2, optL2_risk)
-    if !(csc in subLP.my_subsolutions_blc)
-        add_cut_from_scs_blc(subLP, csc)
-    end
-    fixs_c = @constraint(subLP.lp, subLP.lp[:s] >= optL2, base_name="Fix_s")
+    fixs_c = @constraint(subLP.lp, subLP.lp[:s] >= optL2, base_name="Fix_s") 
 
     # solve sub LP for new master
     @debug "Start iterative solution procedure for ConnectorLP_BlC $(name(subLP.sub_solver))."
@@ -125,23 +121,19 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
             delete(subLP.lp, cref)
         end
     end
-    delete(subLP.lp, fixs_c)
-    unregister(subLP.lp, :fixs_c)
+    delete(subLP.lp, fixs_c) 
+    unregister(subLP.lp, :fixs_c) 
     @debug "Finished solving ConnectorLP_BlC $(name(subLP.sub_solver))."
     return cut, pobj, cutcoeff
 end
 
 
-function add_cut_from_scs_blc(subLP::ConnectorLP_BlC, scs::ConSubsolCut; synchro=false)
+function add_cut_from_scs_blc(subLP::ConnectorLP_BlC, scs::ConSubsolCut_BlC; synchro=false)
     # add constraints
     cname = if synchro "synchro" else "C" end
-    A_inv = [a for a in subLP.A if !(a in scs.res)] # inverse A_sub set as it contains non-used elements in cut 
-    new_const_left = subLP.lp[:s] + sum(subLP.lp[:k][a] for a in A_inv; init=0)
-    for a in A_inv
-        new_const_left = subLP.lp[:s] + subLP.lp[:k][a]
-        c = @constraint(subLP.lp, new_const_left >= scs.objL2, base_name=cname)
-        @debug "We added an violated constraint $(c) for ConnectorLP_BlC $(name(subLP.sub_solver))."
-    end
+    new_const_left = subLP.lp[:s] + sum(subLP.lp[:k][a] for a in scs.xforbid; init=0)
+    c = @constraint(subLP.lp, new_const_left >= scs.objL2, base_name=cname)
+    @debug "We added an violated constraint $(c) for ConnectorLP_BlC $(name(subLP.sub_solver))."
 
     # save constraint in internal list
     push!(subLP.my_subsolutions_blc, scs)
@@ -205,13 +197,10 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
 
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
-            # save found solution to our internal storage
-            A_used = [a for a in subLP.A if !(a in sub_solver.A_sub)] # inverse A_sub set as it contains non-used elements in cut 
-            csc = ConSubsolCut(A_used, sub_solver.obj_second_level, sub_solver.obj_first_level)
-            #push!(subLP.my_subsolutions_blc, csc)
+            @debug "For ConnectorLP_BlC $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution where the forbidden x-vars are $(sub_solver.A_sub)."
 
-            # add constraints
-            @debug "For ConnectorLP_BlC $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and does not use resources $(sub_solver.A_sub)."
+            # save found solution to our internal storage and add constraint
+            csc = ConSubsolCut_BlC(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level)
             add_cut_from_scs_blc(subLP, csc)
 
             # check for time limit
@@ -252,7 +241,7 @@ function pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, params
     current_obj = objective_value(subLP.lp)
     pBd_obj = sum(subLP.lp[:k])
     @objective(subLP.lp, Min, pBd_obj)
-    @constraint(subLP.lp, pBd_const, lp_obj == current_obj) #TODO: Strange things happen if s is only term in objective. Maybe for BlC version, we could just set s to the value of the current L2-solution?
+    @constraint(subLP.lp, pBd_const, lp_obj == current_obj) 
 
     # print pareto adjusted model to file in debbug mode 
     if params.debbug_out

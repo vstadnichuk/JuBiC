@@ -13,6 +13,7 @@
   "mip_sub": [true],
   "warmstartGBC": [true],
   "stabilizationGBC": [true],
-  "subsolvertype": ["MIP_CYCLE"],
-  "LCinGBC": [false]
+  "subsolvertype": ["MIP", "MIP_CYCLE"],
+  "LCinGBC": [true, false],
+  "blCandGBCcuts": [true, false]
 }

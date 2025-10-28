@@ -32,6 +32,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "NSub", length(subs))
     new_stat!(param.stats, "NFeasCuts", 0)
     new_stat!(param.stats, "NOptCuts", 0)
+    new_stat!(param.stats, "BlCLagCuts", 0)  # Number of added BlC constraints. Only added if their big M are generated in the subroutine
     new_stat!(param.stats, "NBigMlagCuts", 0)  # number of Lagrangian cuts computed to obtain better big M coef. 
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "SepaTimeCut", 0)  # time spend in separator for generating cuts only
@@ -79,9 +80,10 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
 
     # add callback to master and solve 
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
+    msol_cuts_mapping_blc = Dict()  # a mapping of master solution to found lazy blc constraints. They are only generated if BlC coef. are automatically computed in subroutine
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
-        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, param))
+        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, param))
     else
         @debug "We do not add any callbacks to GBCSolver as we run into a time out during the preprocessing."
         new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
@@ -103,6 +105,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     else
         # print solution and collected data
         print_collected_cuts(param, msol_cuts_mapping)
+        print_collected_cuts(param, msol_cuts_mapping_blc; filename="mastercuts_blc.txt")
         if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT
             if primal_status(master.model) == MOI.FEASIBLE_POINT
                 mobj = objective_value(master.model)
@@ -222,7 +225,7 @@ end
 
 
 
-function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, parameter::GBCparam)
+function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, parameter::GBCparam)
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
 
@@ -243,6 +246,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
             round_master_solution(x_vals) # round to integer
             @debug "Current values of the master linking variables are $(x_vals)"
             lazy = []
+            lazy_blc = []
 
             # Because of multi thread (and some start trouble I cannot explain) we resolve the subproblems for same master solution multiple times. 
             # To avoid this, we save the found cuts for each master solution and fall back on them before resolving the sub_problem
@@ -251,6 +255,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
             if haskey(msol_cuts_mapping, msolkey)
                 # if we already solved this sub_problem, we just recover the found lazy constraints 
                 lazy = msol_cuts_mapping[msolkey]
+                lazy_blc = msol_cuts_mapping_blc[msolkey]
                 @debug "We recovered the lazy cuts for solution $(x_vals) without resolving subproblems."
             else
                 # solve each sub and add cut to list of cuts "lazy"
@@ -262,7 +267,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                         feas = false
                         cut=nothing
                         pobj=-1
-                        feas, cut, pobj = genBenders_cut!(con, x_vals, parameter, parameter.runtime)
+                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, parameter, parameter.runtime)
                         # in case of timeout within one subsolver, one of the Submodels run for timelimit time. We let this result in a timeout error 
 
                         # generate cut from found solution
@@ -278,6 +283,14 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                                 @debug "Adding optimality cut $(cutopt) to the master problem for sub $(name(con.sub_solver))."
                                 add_stat!(parameter.stats, "NOptCuts", 1)
                                 push!(lazy, cutopt)
+
+                                # Add the BlC constraint if the required information is available
+                                if !isnothing(master.objL2) 
+                                    cutopt_blc = @build_constraint(master.objL2[name(con)] <= cut)
+                                    @debug "Adding in addition to optimality cut also the BlC constraint $(cutopt_blc) to the master problem for sub $(name(con.sub_solver))."
+                                    add_stat!(parameter.stats, "BlCLagCuts", 1)
+                                    push!(lazy_blc, cutopt)
+                                end
                             end
                         end
                     end
@@ -286,10 +299,12 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
 
                 # save that we found lazy const. for this sol
                 msol_cuts_mapping[msolkey] = lazy
+                msol_cuts_mapping_blc[msolkey] = lazy_blc
             end
 
             # add lazy cuts to master model
             map(cu -> MOI.submit(master.model, MOI.LazyConstraint(cb_data), cu), lazy)
+            map(cu -> MOI.submit(master.model, MOI.LazyConstraint(cb_data), cu), lazy_blc)
 
             # output cuts to file in case of debbug mode
             if should_debbug_print(parameter)

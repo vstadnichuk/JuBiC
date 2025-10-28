@@ -29,14 +29,19 @@ Generate a new Hierarchical Decomposition model from the passed HNDPwC instance.
     - 'hndp::HNDPwC': The instance of the HNDPwC.
     - 'solver::SolverWrapper': The MIP solver to use, e.g., Gurobi
     - 'partial_dec=true': If true, employs partial decomposition approach by adding flow constraints to master
+    - 'partial_objL2=true': If true, add L2 objective function as information to master. For example, it can then add additionally BlC constraints to master.
     - 'subtype::S_Solver=SGBC_LABEL': The subproblem subsolver that should be used.
 """
-function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, subtype::SGBC_Solver=SGBC_MIP)
+function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, partial_objL2=false, subtype::SGBC_Solver=SGBC_MIP)
+    if !partial_dec && partial_objL2
+        throw(ArgumentError("We require partial decomposition if we want to add L2 objective function. Please check your input parameters for the function 'to_GBCInstance'. "))
+    end
+
     @info "Starting generation of GBCSolver for passed HNDP instance" 
     A = [(src(e), dst(e)) for e in edges(hndp.mygraph)]
     unames = [user.uname for user in hndp.users]
 
-    # build master
+    # build master 
     # master MIP
     mm = Model(() -> get_next_optimizer(solver))
 
@@ -60,6 +65,7 @@ function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, s
     
 
     # if partial decomposition should be applied, create here the function adding L2 vars and constraints
+    objL2_map = Dict{String, Any}()
     if partial_dec
         partial(mmodel::JuMP.Model, mobj) = begin
             for user in hndp.users
@@ -69,11 +75,16 @@ function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, s
                     oL1 == mobj[user.uname],
                     base_name = "objLink$(user.uname)_"
                 )
+                objL2_map[user.uname] = oL2
             end
         end
         #master = Master(mm, A, xdec_dict, unames, partial)
         # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
-        master = Master(mm, hndp.edgeA, xdec_dict, unames, partial)
+        if partial_objL2
+            master = Master(mm, hndp.edgeA, xdec_dict, unames, partial, objL2_map)
+        else
+            master = Master(mm, hndp.edgeA, xdec_dict, unames, partial)
+        end
     else
         #master = Master(mm, A, xdec_dict, unames)
         # Only decision arcs are relevant as all other interdiction constraints are satisfied by default

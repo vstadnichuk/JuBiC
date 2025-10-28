@@ -32,7 +32,7 @@ function testrun!(instances, parameters, logfolder)
         catch err
             @error "When solving instance number $ind we incurred the error $err. Continue solving other instances. "
             @error stacktrace()
-            rethrow(err)  # TODO: comment out
+            #rethrow(err)  
         end
     end
 
@@ -50,226 +50,53 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
     parameters = []
 
     myfolder = init_logging_folder()
-    logger = JuBiC.new_file_logger(myfolder * "/debuglogInstances.txt", true)
+    logger, io = JuBiC.new_file_logger(myfolder * "/debuglogInstances.txt", true)
     @info "This debuger only contains information on the generation of the instances and models used in the function 'test_toy_HNDPwC'. For loggers of the different model runs, look in the respective folders. "
     
-    with_logger(logger) do
-        hndpt = build_toy_HNDPwC()
+    try 
+        with_logger(logger) do
+            hndpt = build_toy_HNDPwC()
 
-        if "GBC" in hsolver
-            myfolderGBC = myfolder * "/GBCSolver"
-            create_folder_if_not_exists(myfolderGBC)
+            if "GBC" in hsolver
+                myfolderGBC = myfolder * "/GBCSolver"
+                create_folder_if_not_exists(myfolderGBC)
 
-            # create instance
-            inst = to_GBCInstance(
-                hndpt,
-                GurobiSolver(Gurobi.Env());
-                partial_dec=partial_decomposition,
-            )
-            gbc_param = GBCparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderGBC,
-                "lp",
-                PARETO_OPTIMALITY_ONLY,
-                time_limit,
-            )
-
-            # set parameter of instance
-            new_stat!(get_stats(gbc_param), "seed", 42)
-            new_stat!(get_stats(gbc_param), "subsolver", SGBC_LABEL)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, gbc_param)
-        end
-
-        # build Hierarchical Decomposition model with Lagrangian cuts 
-        if "GBCLag" in hsolver
-            myfolderGBCLag = myfolder * "/GBCLagSolver"
-            create_folder_if_not_exists(myfolderGBCLag)
-
-            # create instance
-            subsolvertype = SGBC_MIP_CYCLEFREE 
-            inst = to_GBCInstance(
-                hndpt,
-                GurobiSolver(Gurobi.Env());
-                partial_dec=partial_decomposition, 
-                subtype = subsolvertype
-            )
-            gbclag_param = GBCparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderGBCLag,
-                "lp",
-                PARETO_OPTIMALITY_ONLY,
-                true, # warm start
-                true,  # use Lagrangian cuts for big M
-                true, # trim big M coef
-                time_limit
-            )
-
-            # set parameter of instance
-            new_stat!(get_stats(gbclag_param), "seed", 42)
-            new_stat!(get_stats(gbclag_param), "subsolver", subsolvertype)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, gbclag_param)
-        end
-
-        # build BlC
-        if "BlC" in hsolver
-            myfolderBlC = myfolder * "/BlCSolver"
-            create_folder_if_not_exists(myfolderBlC)
-
-            # create instance
-            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()))
-            blc_param =
-                BLCparam(GurobiSolver(Gurobi.Env()), true, myfolderBlC, "lp", time_limit)
-
-            # set parameter of instance
-            new_stat!(get_stats(blc_param), "seed", 42)
-            new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, blc_param)
-        end
-
-        if "BlCLag" in hsolver
-            myfolderBlCLag = myfolder * "/BlCLagSolver"
-            create_folder_if_not_exists(myfolderBlCLag)
-
-            # create instance
-            inst = to_BlCInstance(
-                hndpt,
-                GurobiSolver(Gurobi.Env());
-                subsolver=SBlCLAG_MIP_CYCLEFREE
-            )
-            blclag_param = BlCLagparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderBlCLag,
-                "lp",
-                PARETO_OPTIMALITY_ONLY,
-                true,
-                time_limit
-            )
-
-            # set parameter of instance
-            new_stat!(get_stats(blclag_param), "seed", 42)
-            new_stat!(get_stats(blclag_param), "subsolver", SBlCLAG_MIP_CYCLEFREE)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, blclag_param)
-        end
-
-        if "BlCLagMiBS" in hsolver
-            myfolderBlCLagMiBS = myfolder * "/BlCLagMiBSSolver"
-            create_folder_if_not_exists(myfolderBlCLagMiBS)
-
-            # create instance
-            inst = to_BlCInstance(
-                hndpt,
-                GurobiSolver(Gurobi.Env());
-                subsolver=SBlCLAG_MiBS
-            )
-            blclagmibs_param = BlCLagparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderBlCLagMiBS,
-                "lp",
-                PARETO_OPTIMALITY_ONLY,
-                true,
-                time_limit
-            )
-
-            # set parameter of instance
-            new_stat!(get_stats(blclagmibs_param), "seed", 42)
-            new_stat!(get_stats(blclagmibs_param), "MIPsubsolver", SBlCLAG_MiBS)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, blclagmibs_param)
-        end
-    end # end logger
-
-    # test Sioux toy instance
-    testrun!(instances, parameters, myfolder)
-end
-
-
-"""
-    test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
-
-Test the algorithm for a toy example of the HNDP with negative cycle according to first-level objective.
-# Arguments
-    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "GBCLag" is the GBCSolver but Lagrian cuts are used for generating big M constants in coef.,
-        "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver where Lagrangian cuts are used for BlCuts, "BlCLagMiBS" if the Lagragian subproblem should be solved with MiBS,
-        "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
-        If multiple solvers are passed, solve instance with each. 
-    - 'time_limit': Time limit for the solvers.
-    - 'partial_decomposition': If true, employ partial decomposition for GBCSolver.
-    - 'cycle_free_GBC': If true, additionaly generate Benders-like cuts within the MIP subproblem for GBCSolver. Has no effect on other solvers.
-    - 'withweights': If true, the HNDP instance will contain an additional weight knapsack constraint. It will throw an exception if used with a solver who does not support this setting.
-"""
-function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
-    instances = []
-    parameters = []
-
-    myfolder = init_logging_folder()
-    logger = JuBiC.new_file_logger(myfolder * "/debuglogInstances.txt", true)
-    @info "This debuger only contains information on the generation of the instances and models used in the function 'test_negative_HNDP'. For loggers of the different model runs, look in the respective folders. "
-    
-    with_logger(logger) do
-        hndpt = build_toy_HNDPneg()
-
-        # build Hierarchical Decomposition model
-        if "GBC" in hsolver
-            myfolderGBC = myfolder * "/GBCSolver"
-            create_folder_if_not_exists(myfolderGBC)
-
-            # create instance
-            subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
-            inst = to_GBCInstance(
-                hndpt,
-                GurobiSolver(Gurobi.Env());
-                partial_dec=partial_decomposition, 
-                subtype = subsolvertype
-            )
-            gbc_param = GBCparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderGBC,
-                "lp",
-                PARETO_OPTIMALITY_ONLY,
-                time_limit,
-            )
-
-            # set parameter of instance
-            new_stat!(get_stats(gbc_param), "seed", 42)
-            new_stat!(get_stats(gbc_param), "subsolver", subsolvertype)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, gbc_param)
-        end
-
-        # build Hierarchical Decomposition model with Lagrangian cuts 
-        if "GBCLag" in hsolver
-            myfolderGBCLag = myfolder * "/GBCLagSolver"
-            create_folder_if_not_exists(myfolderGBCLag)
-
-            # we need to generate bilevel feasible solutions for the big M generation of BlC cuts
-            if cycle_free_GBC
                 # create instance
-                subsolvertype = SGBC_MIP_CYCLEFREE
+                inst = to_GBCInstance(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env());
+                    partial_dec=partial_decomposition,
+                )
+                gbc_param = GBCparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderGBC,
+                    "lp",
+                    PARETO_OPTIMALITY_ONLY,
+                    time_limit,
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(gbc_param), "seed", 42)
+                new_stat!(get_stats(gbc_param), "subsolver", SGBC_LABEL)
+
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, gbc_param)
+            end
+
+            # build Hierarchical Decomposition model with Lagrangian cuts 
+            if "GBCLag" in hsolver
+                myfolderGBCLag = myfolder * "/GBCLagSolver"
+                create_folder_if_not_exists(myfolderGBCLag)
+
+                # create instance
+                subsolvertype = SGBC_MIP_CYCLEFREE 
                 inst = to_GBCInstance(
                     hndpt,
                     GurobiSolver(Gurobi.Env());
                     partial_dec=partial_decomposition, 
+                    partial_objL2=partial_decomposition,
                     subtype = subsolvertype
                 )
                 gbclag_param = GBCparam(
@@ -291,153 +118,337 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 # save generated and continue
                 push!(instances, inst)
                 push!(parameters, gbclag_param)
-            else
-                @info "We scip GBCLag solver because we need cycle breaking constraints in the subsolver which is not given by current settings."
             end
 
-            
-        end
+            # build BlC
+            if "BlC" in hsolver
+                myfolderBlC = myfolder * "/BlCSolver"
+                create_folder_if_not_exists(myfolderBlC)
 
-        # build BlC
-        if "BlC" in hsolver
-            myfolderBlC = myfolder * "/BlCSolver"
-            create_folder_if_not_exists(myfolderBlC)
+                # create instance
+                inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()))
+                blc_param =
+                    BLCparam(GurobiSolver(Gurobi.Env()), true, myfolderBlC, "lp", time_limit)
 
-            # create instance
-            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP) # we need MIP subsolver for negative cycles right now
-            blc_param =
-                BLCparam(GurobiSolver(Gurobi.Env()), true, myfolderBlC, "lp", time_limit)
+                # set parameter of instance
+                new_stat!(get_stats(blc_param), "seed", 42)
+                new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
 
-            # set parameter of instance
-            new_stat!(get_stats(blc_param), "seed", 42)
-            new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, blc_param)
-        end
-
-        # build BlCLag
-        if "BlCLag" in hsolver
-            myfolderBlCLag = myfolder * "/BlCLagSolver"
-            create_folder_if_not_exists(myfolderBlCLag)
-
-            # create instance
-            subsolvertype = if cycle_free_GBC SBlCLAG_MIP_CYCLEFREE else SGBC_MiBS end
-            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver=subsolvertype) 
-            blclag_param =
-                BlCLagparam(GurobiSolver(Gurobi.Env()), true, myfolderBlCLag, "lp", time_limit)
-
-            # set parameter of instance
-            new_stat!(get_stats(blclag_param), "seed", 42)
-            new_stat!(get_stats(blclag_param), "subsolver", subsolvertype)
-
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, blclag_param)
-        end
-
-        # build arc compact solver instance
-        if "CA" in hsolver
-            if withweights
-                throw(ArgumentError("Solver CA does not support weights on the second level as then the second level is non-convex."))
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, blc_param)
             end
 
-            myfolderCA = myfolder * "/CASolver"
-            create_folder_if_not_exists(myfolderCA)
+            if "BlCLag" in hsolver
+                myfolderBlCLag = myfolder * "/BlCLagSolver"
+                create_folder_if_not_exists(myfolderBlCLag)
 
-            # create instance
-            inst = to_MIPInstance_arc(
-                hndpt,
-                GurobiSolver(Gurobi.Env())
-            )
-            ca_param = MIPparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderCA,
-                "lp",
-                time_limit,
-            )
+                # create instance
+                inst = to_BlCInstance(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env());
+                    subsolver=SBlCLAG_MIP_CYCLEFREE
+                )
+                blclag_param = BlCLagparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderBlCLag,
+                    "lp",
+                    PARETO_OPTIMALITY_ONLY,
+                    true,
+                    time_limit
+                )
 
-            # set parameter of instance
-            new_stat!(get_stats(ca_param), "seed", 42)
-            new_stat!(get_stats(ca_param), "CompactType", "Arc")
+                # set parameter of instance
+                new_stat!(get_stats(blclag_param), "seed", 42)
+                new_stat!(get_stats(blclag_param), "subsolver", SBlCLAG_MIP_CYCLEFREE)
 
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, ca_param)
-        end 
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, blclag_param)
+            end
+
+            if "BlCLagMiBS" in hsolver
+                myfolderBlCLagMiBS = myfolder * "/BlCLagMiBSSolver"
+                create_folder_if_not_exists(myfolderBlCLagMiBS)
+
+                # create instance
+                inst = to_BlCInstance(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env());
+                    subsolver=SBlCLAG_MiBS
+                )
+                blclagmibs_param = BlCLagparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderBlCLagMiBS,
+                    "lp",
+                    PARETO_OPTIMALITY_ONLY,
+                    true,
+                    time_limit
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(blclagmibs_param), "seed", 42)
+                new_stat!(get_stats(blclagmibs_param), "MIPsubsolver", SBlCLAG_MiBS)
+
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, blclagmibs_param)
+            end
+        end # end logger
+    finally
+        close(io)
+    end
+
+    # test Sioux toy instance
+    testrun!(instances, parameters, myfolder)
+end
+
+
+"""
+    test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=50, partial_decomposition=false, cycle_free_GBC=true, withweights=false)
+
+Test the algorithm for a toy example of the HNDP with negative cycle according to first-level objective.
+# Arguments
+    - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "GBCLag" is the GBCSolver but Lagrian cuts are used for generating big M constants in coef.,
+        "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver where Lagrangian cuts are used for BlCuts, "BlCLagMiBS" if the Lagragian subproblem should be solved with MiBS,
+        "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
+        If multiple solvers are passed, solve instance with each. 
+    - 'time_limit': Time limit for the solvers.
+    - 'partial_decomposition': If true, employ partial decomposition for GBCSolver.
+    - 'cycle_free_GBC': If true, additionaly generate Benders-like cuts within the MIP subproblem for GBCSolver. Has no effect on other solvers.
+    - 'withweights': If true, the HNDP instance will contain an additional weight knapsack constraint. It will throw an exception if used with a solver who does not support this setting.
+"""
+function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMiBS", "CA", "CP", "CH"], time_limit=30, partial_decomposition=true, cycle_free_GBC=true, withweights=false)
+    instances = []
+    parameters = []
+
+    myfolder = init_logging_folder()
+    logger, io = JuBiC.new_file_logger(myfolder * "/debuglogInstances.txt", true)
+    @info "This debuger only contains information on the generation of the instances and models used in the function 'test_negative_HNDP'. For loggers of the different model runs, look in the respective folders. "
     
-        # build arc compact solver instance
-        if "CP" in hsolver
-            if withweights
-                throw(ArgumentError("Solver CP does not support weights on the second level as the path enumeration algorithm was not tested for thissetting yet."))
+    try
+
+        with_logger(logger) do
+            hndpt = build_toy_HNDPneg()
+
+            # build Hierarchical Decomposition model
+            if "GBC" in hsolver
+                myfolderGBC = myfolder * "/GBCSolver"
+                create_folder_if_not_exists(myfolderGBC)
+
+                # create instance
+                subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
+                inst = to_GBCInstance(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env());
+                    partial_dec=partial_decomposition, 
+                    subtype=subsolvertype
+                )
+                gbc_param = GBCparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderGBC,
+                    "lp",
+                    PARETO_OPTIMALITY_ONLY,
+                    time_limit,
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(gbc_param), "seed", 42)
+                new_stat!(get_stats(gbc_param), "subsolver", subsolvertype)
+
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, gbc_param)
             end
 
-            myfolderCP = myfolder * "/CPSolver"
-            create_folder_if_not_exists(myfolderCP)
+            # build Hierarchical Decomposition model with Lagrangian cuts 
+            if "GBCLag" in hsolver
+                myfolderGBCLag = myfolder * "/GBCLagSolver"
+                create_folder_if_not_exists(myfolderGBCLag)
 
-            # create instance
-            inst, enumtime, _, _, _ = to_MIPInstance_path(
-                hndpt,
-                GurobiSolver(Gurobi.Env()), 
-                time_limit
-            )
-            cp_param = MIPparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderCP,
-                "lp",
-                time_limit-enumtime,
-            )
+                # we need to generate bilevel feasible solutions for the big M generation of BlC cuts
+                if cycle_free_GBC
+                    # create instance
+                    subsolvertype = SGBC_MIP_CYCLEFREE
+                    inst = to_GBCInstance(
+                        hndpt,
+                        GurobiSolver(Gurobi.Env());
+                        partial_dec = partial_decomposition, 
+                        partial_objL2 = partial_decomposition,
+                        subtype = subsolvertype
+                    )
+                    gbclag_param = GBCparam(
+                        GurobiSolver(Gurobi.Env()),
+                        true,
+                        myfolderGBCLag,
+                        "lp",
+                        PARETO_OPTIMALITY_ONLY,
+                        true, # warm start
+                        true,  # use Lagrangian cuts for big M
+                        true, # trim big M coef
+                        time_limit
+                    )
 
-            # set parameter of instance
-            new_stat!(get_stats(cp_param), "seed", 42)
-            new_stat!(get_stats(cp_param), "CompactType", "Path")
-            new_stat!(get_stats(cp_param), "Enumtime", enumtime)
+                    # set parameter of instance
+                    new_stat!(get_stats(gbclag_param), "seed", 42)
+                    new_stat!(get_stats(gbclag_param), "subsolver", subsolvertype)
 
+                    # save generated and continue
+                    push!(instances, inst)
+                    push!(parameters, gbclag_param)
+                else
+                    @info "We scip GBCLag solver because we need cycle breaking constraints in the subsolver which is not given by current settings."
+                end
 
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, cp_param)
-        end 
-
-        # build arc compact solver instance
-        if "CH" in hsolver
-            if withweights
-                throw(ArgumentError("Solver CH does not support weights on the second level as then the second level is non-convex."))
+                
             end
 
-            myfolderCP = myfolder * "/CHSolver"
-            create_folder_if_not_exists(myfolderCP)
+            # build BlC
+            if "BlC" in hsolver
+                myfolderBlC = myfolder * "/BlCSolver"
+                create_folder_if_not_exists(myfolderBlC)
 
-            # create instance
-            inst, enumtime, nbad_users = to_MIPInstance_hybrid(
-                hndpt,
-                GurobiSolver(Gurobi.Env()), 
-                0.1 # time for enumeration of paths. You can play around with it to obtain paths or arcs for the one user we have in the toy example
-            )
-            ch_param = MIPparam(
-                GurobiSolver(Gurobi.Env()),
-                true,
-                myfolderCP,
-                "lp",
-                time_limit-enumtime,
-            )
+                # create instance
+                inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP) # we need MIP subsolver for negative cycles right now
+                blc_param =
+                    BLCparam(GurobiSolver(Gurobi.Env()), true, myfolderBlC, "lp", time_limit)
 
-            # set parameter of instance
-            new_stat!(get_stats(ch_param), "seed", 42)
-            new_stat!(get_stats(ch_param), "CompactType", "Hybrid")
-            new_stat!(get_stats(ch_param), "nbadusers", nbad_users)
-            new_stat!(get_stats(ch_param), "Enumtime", enumtime)
+                # set parameter of instance
+                new_stat!(get_stats(blc_param), "seed", 42)
+                new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
 
-            
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, blc_param)
+            end
 
-            # save generated and continue
-            push!(instances, inst)
-            push!(parameters, ch_param)
-        end 
-    end # end logger
+            # build BlCLag
+            if "BlCLag" in hsolver
+                myfolderBlCLag = myfolder * "/BlCLagSolver"
+                create_folder_if_not_exists(myfolderBlCLag)
+
+                # create instance
+                subsolvertype = if cycle_free_GBC SBlCLAG_MIP_CYCLEFREE else SGBC_MiBS end
+                inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver=subsolvertype) 
+                blclag_param =
+                    BlCLagparam(GurobiSolver(Gurobi.Env()), true, myfolderBlCLag, "lp", time_limit)
+
+                # set parameter of instance
+                new_stat!(get_stats(blclag_param), "seed", 42)
+                new_stat!(get_stats(blclag_param), "subsolver", subsolvertype)
+
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, blclag_param)
+            end
+
+            # build arc compact solver instance
+            if "CA" in hsolver
+                if withweights
+                    throw(ArgumentError("Solver CA does not support weights on the second level as then the second level is non-convex."))
+                end
+
+                myfolderCA = myfolder * "/CASolver"
+                create_folder_if_not_exists(myfolderCA)
+
+                # create instance
+                inst = to_MIPInstance_arc(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env())
+                )
+                ca_param = MIPparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderCA,
+                    "lp",
+                    time_limit,
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(ca_param), "seed", 42)
+                new_stat!(get_stats(ca_param), "CompactType", "Arc")
+
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, ca_param)
+            end 
+        
+            # build arc compact solver instance
+            if "CP" in hsolver
+                if withweights
+                    throw(ArgumentError("Solver CP does not support weights on the second level as the path enumeration algorithm was not tested for thissetting yet."))
+                end
+
+                myfolderCP = myfolder * "/CPSolver"
+                create_folder_if_not_exists(myfolderCP)
+
+                # create instance
+                inst, enumtime, _, _, _ = to_MIPInstance_path(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env()), 
+                    time_limit
+                )
+                cp_param = MIPparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderCP,
+                    "lp",
+                    time_limit-enumtime,
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(cp_param), "seed", 42)
+                new_stat!(get_stats(cp_param), "CompactType", "Path")
+                new_stat!(get_stats(cp_param), "Enumtime", enumtime)
+
+
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, cp_param)
+            end 
+
+            # build arc compact solver instance
+            if "CH" in hsolver
+                if withweights
+                    throw(ArgumentError("Solver CH does not support weights on the second level as then the second level is non-convex."))
+                end
+
+                myfolderCP = myfolder * "/CHSolver"
+                create_folder_if_not_exists(myfolderCP)
+
+                # create instance
+                inst, enumtime, nbad_users = to_MIPInstance_hybrid(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env()), 
+                    0.1 # time for enumeration of paths. You can play around with it to obtain paths or arcs for the one user we have in the toy example
+                )
+                ch_param = MIPparam(
+                    GurobiSolver(Gurobi.Env()),
+                    true,
+                    myfolderCP,
+                    "lp",
+                    time_limit-enumtime,
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(ch_param), "seed", 42)
+                new_stat!(get_stats(ch_param), "CompactType", "Hybrid")
+                new_stat!(get_stats(ch_param), "nbadusers", nbad_users)
+                new_stat!(get_stats(ch_param), "Enumtime", enumtime)
+
+                
+
+                # save generated and continue
+                push!(instances, inst)
+                push!(parameters, ch_param)
+            end 
+        end # end logger
+    finally
+        close(io)
+    end
 
     # test Sioux toy instance
     testrun!(instances, parameters, myfolder)
@@ -464,6 +475,7 @@ If multiple solvers are passed, solve instance with each.
 - 'paretooptcuts': A list containing true or false (or both). If true, use Pareto optimal cuts are used. Note that this applies to all cuts that are generated by solving Lagrangian dual.
 - 'subsolvertype': This is a list of solver types. The currently supported types are "MIP" for a simple MIP solver, "MIP_CYCLE" for feasible solutions only, and "MiBS" for MiBS. Note that this setting only affects GBC and BlC solvers.
 - 'LCinGBC': A list containing true or false (or both). If true, when solving ConnectorLP for GBCSolver, use a second ConnectorLP to compute the big M coefficients needed for Bilevel Lagrangian cuts.  
+- 'blCandGBCcuts': A list containing true or false (or both). If true, when generating GBC, also add BlC to master if coef. were computed in GBC procedure (i.e., 'LCinGBC' setting was true).
 """
 function test_HNDPwC(json_path::String)
     # parse passed json file
@@ -483,6 +495,7 @@ function test_HNDPwC(json_path::String)
     paretooptcuts         = get(cfg, "paretooptcuts", [true])
     subsolvertype         = get(cfg, "subsolvertype", ["MIP", "MIP_CYCLE", "MiBS"])
     LCinGBC               = get(cfg, "LCinGBC", [false])
+    blCandGBCcuts         = get(cfg, "blCandGBCcuts", [false])
     trim_coeff_opt        = get(cfg, "trim_coeff", [true])
     debug_mode            = get(cfg, "debug_mode", false)
 
@@ -512,7 +525,7 @@ function test_HNDPwC(json_path::String)
     if "GBC" in hsolver
         myfolderGBC = myfolder * "/GBCSolver"
         create_folder_if_not_exists(myfolderGBC)
-        for (u, al, nr, partdec, stabopt, wstart, st, LCsub, trim) in Base.product(users, alphas, 1:nruns, partial_decomposition, pareto_options, warmstartGBC, subsolvertype, LCinGBC, trim_coeff_opt)
+        for (u, al, nr, partdec, stabopt, wstart, st, LCsub, blc_gbc, trim) in Base.product(users, alphas, 1:nruns, partial_decomposition, pareto_options, warmstartGBC, subsolvertype, LCinGBC, blCandGBCcuts, trim_coeff_opt)
             # check conditions for parameter combinations
             if LCsub 
                 if st != "MIP_CYCLE" && st != "MIP_CYCLE"
@@ -520,9 +533,15 @@ function test_HNDPwC(json_path::String)
                     continue 
                 end
             end
+            if blc_gbc
+                if !partdec || !LCsub
+                    @warn "We require partial decomposition and automated generation of big M coefficients for the option to add BlC to master in GBCSolver. As partdec=$partdec and LCsub=$LCsub, this is not given, and we scip current setting."
+                    continue 
+                end
+            end
             
             # create output folder
-            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_P$(partdec)_$(stabopt)_W$(wstart)_$(st)_LC$(LCsub)_T$(trim)"
+            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_P$(partdec)_$(stabopt)_W$(wstart)_$(st)_LC$(LCsub)_BlC$(blc_gbc)_T$(trim)"
             create_folder_if_not_exists(myfolderrun)
 
             # find out solver type
@@ -542,6 +561,7 @@ function test_HNDPwC(json_path::String)
                 hndpt,
                 GurobiSolver(Gurobi.Env());
                 partial_dec=partdec,
+                partial_objL2=blc_gbc,
                 subtype = solvertype
             )
             gbc_param = GBCparam(
@@ -739,285 +759,310 @@ function test_HNDPfix(json_file_path)
     
     # Generate HNDP multi-layer graph instances
     myfolder = init_logging_folder()
-    logger = JuBiC.new_file_logger(myfolder * "/graph_generation_log.txt", true)
-    @info "This debuger only contains information on the generation of the HNDP graphs used in the function 'test_HNDPfix'. For loggers of the different model runs, look in the respective folders."
-    hndps = with_logger(logger) do
-        hndps = Dict(
-            (u, nr, be) => build_random_layer_SiouxFalls(u, 0; seed=nr, beta=be) for
-            (u, nr, be) in Base.product(users, 1:nruns, betas)
-        )
-    end
+    logger, io = JuBiC.new_file_logger(myfolder * "/graph_generation_log.txt", true)
 
-    # build GBC instances
-    if "GBC" in hsolver
-        myfolderGBC = myfolder * "/GBCSolver"
-        create_folder_if_not_exists(myfolderGBC)
-        for u in users
-            for nr = 1:nruns
-                for be in betas
-                    # create output folder
-                    myfolderrun = myfolderGBC * "/S$(u)_$(nr)_$be"
-                    create_folder_if_not_exists(myfolderrun)
-
-                    loggerGBC = JuBiC.new_file_logger(myfolderrun * "/setupGBC$(u)_$(nr)_$be.txt", true)
-                    @info "This debuger only contains information on the generation of the GBCSolver instances used in the function 'test_HNDPfix'."
-                    with_logger(loggerGBC) do
-                        # create instance
-                        hndpt = hndps[u, nr, be]
-                        subsolvertype = if cycle_free_GBC SGBC_MIP_CYCLEFREE else SGBC_MIP end
-                        inst = to_GBCInstance(
-                            hndpt,
-                            GurobiSolver(Gurobi.Env());
-                            partial_dec=partial_decomposition,
-                            subtype = subsolvertype
-                        )
-                        gbc_param = GBCparam(
-                            GurobiSolver(Gurobi.Env()),
-                            debug_mode,
-                            myfolderrun,
-                            "lp",
-                            PARETO_OPTIMALITY_ONLY,
-                            time_limit,
-                        )
-
-                        # set parameter of instance
-                        new_stat!(get_stats(gbc_param), "U", u)
-                        new_stat!(get_stats(gbc_param), "partial dec", partial_decomposition)
-                        new_stat!(get_stats(gbc_param), "seed", nr)
-                        new_stat!(get_stats(gbc_param), "beta", be)
-                        new_stat!(get_stats(gbc_param), "subsolver", subsolvertype)
-
-                        # save generated and continue
-                        push!(instances, inst)
-                        push!(parameters, gbc_param)
-                    end
-                end
-            end
+    try
+        @info "This debuger only contains information on the generation of the HNDP graphs used in the function 'test_HNDPfix'. For loggers of the different model runs, look in the respective folders."
+        hndps = with_logger(logger) do
+            hndps = Dict(
+                (u, nr, be) => build_random_layer_SiouxFalls(u, 0; seed=nr, beta=be) for
+                (u, nr, be) in Base.product(users, 1:nruns, betas)
+            )
         end
-    end #end GBC
 
-    # build BlC
-    if "BlC" in hsolver
-        myfolderBlC = myfolder * "/BlCSolver"
-        create_folder_if_not_exists(myfolderBlC)
-        for u in users
-            for nr = 1:nruns
-                for be in betas
-                    for bm in bigMsetting
-                        # scip settings taht rely on dual variables
-                        if bm != "F" && bm != "C"
-                            @info "Sciping bigM setting $bm for BlC solver as it is not directly applicatble for it"
-                            continue
-                        end
-                        # transform big M setting
-                        fixBigM = false
-                        if bm == "F"
-                            fixBigM = true
-                        end
-
+        # build GBC instances
+        if "GBC" in hsolver
+            myfolderGBC = myfolder * "/GBCSolver"
+            create_folder_if_not_exists(myfolderGBC)
+            for u in users
+                for nr = 1:nruns
+                    for be in betas
                         # create output folder
-                        myfolderrun = myfolderBlC * "/S$(u)_$(nr)_$(be)_$bm"
+                        myfolderrun = myfolderGBC * "/S$(u)_$(nr)_$be"
                         create_folder_if_not_exists(myfolderrun)
 
-                        loggerBlC = JuBiC.new_file_logger(myfolderrun * "/setupBlC$(u)_$(nr)_$be.txt", true)
-                        @info "This debuger only contains information on the generation of the BlCSolver instances used in the function 'test_HNDPfix'."
-                        with_logger(loggerBlC) do
-                            # create instance
-                            hndpt = hndps[u, nr, be]
-                            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP)
-                            @debug "Time limit is set to $time_limit"
-                            blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
+                        loggerGBC, io = JuBiC.new_file_logger(myfolderrun * "/setupGBC$(u)_$(nr)_$be.txt", true)
+                        try 
+                            @info "This debuger only contains information on the generation of the GBCSolver instances used in the function 'test_HNDPfix'."
+                            with_logger(loggerGBC) do
+                                # create instance
+                                hndpt = hndps[u, nr, be]
+                                subsolvertype = if cycle_free_GBC SGBC_MIP_CYCLEFREE else SGBC_MIP end
+                                inst = to_GBCInstance(
+                                    hndpt,
+                                    GurobiSolver(Gurobi.Env());
+                                    partial_dec=partial_decomposition,
+                                    subtype = subsolvertype
+                                )
+                                gbc_param = GBCparam(
+                                    GurobiSolver(Gurobi.Env()),
+                                    debug_mode,
+                                    myfolderrun,
+                                    "lp",
+                                    PARETO_OPTIMALITY_ONLY,
+                                    time_limit,
+                                )
 
-                            # set parameter of instance
-                            new_stat!(get_stats(blc_param), "U", u)
-                            new_stat!(get_stats(blc_param), "seed", nr)
-                            new_stat!(get_stats(blc_param), "TypeBigM", bm)
-                            new_stat!(get_stats(blc_param), "beta", be)
-                            new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
+                                # set parameter of instance
+                                new_stat!(get_stats(gbc_param), "U", u)
+                                new_stat!(get_stats(gbc_param), "partial dec", partial_decomposition)
+                                new_stat!(get_stats(gbc_param), "seed", nr)
+                                new_stat!(get_stats(gbc_param), "beta", be)
+                                new_stat!(get_stats(gbc_param), "subsolver", subsolvertype)
 
-
-                            # save generated and continue
-                            push!(instances, inst)
-                            push!(parameters, blc_param)
+                                # save generated and continue
+                                push!(instances, inst)
+                                push!(parameters, gbc_param)
+                            end
+                        finally
+                            close(io)
                         end
                     end
                 end
             end
-        end
-    end # end BlC
+        end #end GBC
 
-    # build compact arc-based MIP model
-    if "CA" in hsolver
-        myfolderBlC = myfolder * "/CASolver"
-        create_folder_if_not_exists(myfolderBlC)
-        for u in users
-            for nr = 1:nruns
-                for be in betas
-                    for bm in bigMsetting
+        # build BlC
+        if "BlC" in hsolver
+            myfolderBlC = myfolder * "/BlCSolver"
+            create_folder_if_not_exists(myfolderBlC)
+            for u in users
+                for nr = 1:nruns
+                    for be in betas
+                        for bm in bigMsetting
+                            # scip settings taht rely on dual variables
+                            if bm != "F" && bm != "C"
+                                @info "Sciping bigM setting $bm for BlC solver as it is not directly applicatble for it"
+                                continue
+                            end
+                            # transform big M setting
+                            fixBigM = false
+                            if bm == "F"
+                                fixBigM = true
+                            end
+
+                            # create output folder
+                            myfolderrun = myfolderBlC * "/S$(u)_$(nr)_$(be)_$bm"
+                            create_folder_if_not_exists(myfolderrun)
+
+                            loggerBlC, io = JuBiC.new_file_logger(myfolderrun * "/setupBlC$(u)_$(nr)_$be.txt", true)
+                            try 
+                                @info "This debuger only contains information on the generation of the BlCSolver instances used in the function 'test_HNDPfix'."
+                                with_logger(loggerBlC) do
+                                    # create instance
+                                    hndpt = hndps[u, nr, be]
+                                    inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP)
+                                    @debug "Time limit is set to $time_limit"
+                                    blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
+
+                                    # set parameter of instance
+                                    new_stat!(get_stats(blc_param), "U", u)
+                                    new_stat!(get_stats(blc_param), "seed", nr)
+                                    new_stat!(get_stats(blc_param), "TypeBigM", bm)
+                                    new_stat!(get_stats(blc_param), "beta", be)
+                                    new_stat!(get_stats(blc_param), "subsolver", SBlC_MIP)
+
+
+                                    # save generated and continue
+                                    push!(instances, inst)
+                                    push!(parameters, blc_param)
+                                end
+                            finally
+                                close(io)
+                            end
+                        end
+                    end
+                end
+            end
+        end # end BlC
+
+        # build compact arc-based MIP model
+        if "CA" in hsolver
+            myfolderBlC = myfolder * "/CASolver"
+            create_folder_if_not_exists(myfolderBlC)
+            for u in users
+                for nr = 1:nruns
+                    for be in betas
+                        for bm in bigMsetting
+                            if withweights
+                                throw(ArgumentError("Solver CA does not support weights on the second level as then the second level is non-convex."))
+                            end
+
+                            # transform big M setting to boolean parameters
+                            fixBigM = false
+                            if occursin("F", bm)
+                                fixBigM = true
+                            end
+                            
+                            indicator = false
+                            if occursin("I", bm)
+                                indicator = true
+                            end
+
+                            boundsL2vars = false
+                            if occursin("B", bm)
+                                boundsL2vars = true
+                            end
+
+
+                            # create output folder
+                            myfolderrun = myfolderBlC * "/S$(u)_$(nr)_$(be)_$bm"
+                            create_folder_if_not_exists(myfolderrun)
+
+                            loggerCA, io = JuBiC.new_file_logger(myfolderrun * "/setupCA$(u)_$(nr)_$(be)_$bm.txt", true)
+                            try 
+                                @info "This debuger only contains information on the generation of the arc-based MIP instances used in the function 'test_HNDPfix'."
+                                with_logger(loggerCA) do
+                                    # create instance
+                                    hndpt = hndps[u, nr, be]
+                                    inst = to_MIPInstance_arc(hndpt, GurobiSolver(Gurobi.Env()); fixedBigM=fixBigM, indicator=indicator, boundsL2vars=boundsL2vars)
+                                    ca_param = MIPparam(
+                                        GurobiSolver(Gurobi.Env()),
+                                        debug_mode,
+                                        myfolderrun,
+                                        "lp",
+                                        time_limit,
+                                    )
+
+                                    # set parameter of instance
+                                    new_stat!(get_stats(ca_param), "U", u)
+                                    new_stat!(get_stats(ca_param), "seed", nr)
+                                    new_stat!(get_stats(ca_param), "beta", be)
+                                    new_stat!(get_stats(ca_param), "CompactType", "Arc")
+                                    new_stat!(get_stats(ca_param), "TypeBigM", bm)
+
+
+                                    # save generated and continue
+                                    push!(instances, inst)
+                                    push!(parameters, ca_param)
+                                end
+                            finally
+                                close(io)
+                            end
+                        end
+                    end
+                    
+                end
+            end
+        end # end compact arc-based MIP
+
+        # build compact arc-based MIP model
+        if "CP" in hsolver
+            myfolderCP = myfolder * "/CPSolver"
+            create_folder_if_not_exists(myfolderCP)
+            enumtime_collection = Dict((u, be) => [] for (u, be) in Base.product(users, betas))
+            npaths_collection = Dict((u, be) => [] for (u, be) in Base.product(users, betas))
+            for u in users
+                for nr = 1:nruns
+                    for be in betas
                         if withweights
-                            throw(ArgumentError("Solver CA does not support weights on the second level as then the second level is non-convex."))
+                            throw(ArgumentError("Solver CP does not support weights on the second level as the poath enumeration was not tested for this setting yet."))
                         end
-
-                        # transform big M setting to boolean parameters
-                        fixBigM = false
-                        if occursin("F", bm)
-                            fixBigM = true
-                        end
-                        
-                        indicator = false
-                        if occursin("I", bm)
-                            indicator = true
-                        end
-
-                        boundsL2vars = false
-                        if occursin("B", bm)
-                            boundsL2vars = true
-                        end
-
 
                         # create output folder
-                        myfolderrun = myfolderBlC * "/S$(u)_$(nr)_$(be)_$bm"
+                        myfolderrun = myfolderCP * "/S$(u)_$(nr)_$be"
                         create_folder_if_not_exists(myfolderrun)
 
-                        loggerCA = JuBiC.new_file_logger(myfolderrun * "/setupCA$(u)_$(nr)_$(be)_$bm.txt", true)
-                        @info "This debuger only contains information on the generation of the arc-based MIP instances used in the function 'test_HNDPfix'."
-                        with_logger(loggerCA) do
-                            # create instance
-                            hndpt = hndps[u, nr, be]
-                            inst = to_MIPInstance_arc(hndpt, GurobiSolver(Gurobi.Env()); fixedBigM=fixBigM, indicator=indicator, boundsL2vars=boundsL2vars)
-                            ca_param = MIPparam(
-                                GurobiSolver(Gurobi.Env()),
-                                debug_mode,
-                                myfolderrun,
-                                "lp",
-                                time_limit,
-                            )
+                        loggerCP, io = JuBiC.new_file_logger(myfolderrun * "/setupCP$(u)_$(nr)_$be.txt", true)
+                        try 
+                            @info "This debuger only contains information on the generation of the path-based MIP instances used in the function 'test_HNDPfix'."
+                            with_logger(loggerCP) do
+                                # create instance
+                                hndpt = hndps[u, nr, be]
+                                inst, enumtime, sp_enumtimes, enum_enumtimes, npaths = to_MIPInstance_path(hndpt, GurobiSolver(Gurobi.Env()), time_limit)
+                                cp_param = MIPparam(
+                                    GurobiSolver(Gurobi.Env()),
+                                    debug_mode,
+                                    myfolderrun,
+                                    "lp",
+                                    time_limit-enumtime,
+                                )
 
-                            # set parameter of instance
-                            new_stat!(get_stats(ca_param), "U", u)
-                            new_stat!(get_stats(ca_param), "seed", nr)
-                            new_stat!(get_stats(ca_param), "beta", be)
-                            new_stat!(get_stats(ca_param), "CompactType", "Arc")
-                            new_stat!(get_stats(ca_param), "TypeBigM", bm)
+                                # set parameter of instance
+                                new_stat!(get_stats(cp_param), "U", u)
+                                new_stat!(get_stats(cp_param), "seed", nr)
+                                new_stat!(get_stats(cp_param), "beta", be)
+                                new_stat!(get_stats(cp_param), "CompactType", "Path")
+                                new_stat!(get_stats(cp_param), "Enumtime", enumtime)
+                                new_stat!(get_stats(cp_param), "SumPaths", sum(npaths))
+                                new_stat!(get_stats(cp_param), "npath_users", u)
+                                
+                                for (i, val) in pairs(sp_enumtimes)
+                                    push!(enumtime_collection[u, be], val + enum_enumtimes[i])
+                                end
+                                append!(npaths_collection[u, be], npaths)
 
+                                # save generated and continue
+                                push!(instances, inst)
+                                push!(parameters, cp_param)
+                            end
+                        finally
+                            close(io)
+                        end
+                    end
 
-                            # save generated and continue
-                            push!(instances, inst)
-                            push!(parameters, ca_param)
+                    
+                end
+            end
+
+            # print collected times for enumeration to file
+            enum_to_file(enumtime_collection, myfolderCP * "/enumtimesAggregated.csv")
+            enum_to_file(npaths_collection, myfolderCP * "/npathsAggregated.csv")
+        end # end compact arc-based MIP
+
+        # build compact arc-based MIP model
+        if "CH" in hsolver
+            myfolderCH = myfolder * "/CHSolver"
+            create_folder_if_not_exists(myfolderCH)
+            for u in users
+                for nr = 1:nruns
+                    for be in betas
+                        if withweights
+                            throw(ArgumentError("Solver CH does not support weights on the second level as then the second level is non-convex."))
+                        end
+
+                        # create output folder
+                        myfolderrun = myfolderCH * "/S$(u)_$(nr)_$(be)"
+                        create_folder_if_not_exists(myfolderrun)
+
+                        loggerCH, io = JuBiC.new_file_logger(myfolderrun * "/setupCH$(u)_$(nr).txt", true)
+                        try
+                            @info "This debuger only contains information on the generation of the hybrid MIP instances used in the function 'test_HNDPfix'."
+                            with_logger(loggerCH) do
+                                # create instance
+                                hndpt = hndps[u, nr, be]
+                                inst, enumtime, nbad_users = to_MIPInstance_hybrid(hndpt, GurobiSolver(Gurobi.Env()), time_enum_hybrid; fixedBigM=true)
+                                ch_param = MIPparam(
+                                    GurobiSolver(Gurobi.Env()),
+                                    debug_mode,
+                                    myfolderrun,
+                                    "lp",
+                                    time_limit-enumtime,
+                                )
+
+                                # set parameter of instance
+                                new_stat!(get_stats(ch_param), "U", u)
+                                new_stat!(get_stats(ch_param), "seed", nr)
+                                new_stat!(get_stats(ch_param), "beta", be)
+                                new_stat!(get_stats(ch_param), "CompactType", "Hybrid")
+                                new_stat!(get_stats(ch_param), "TypeBigM", "F")
+                                new_stat!(get_stats(ch_param), "Enumtime", enumtime)
+                                new_stat!(get_stats(ch_param), "npath_users", nbad_users)
+
+                                # save generated and continue
+                                push!(instances, inst)
+                                push!(parameters, ch_param)
+                            end
+                        finally 
+                            close(io)
                         end
                     end
                 end
-                
             end
-        end
-    end # end compact arc-based MIP
-
-    # build compact arc-based MIP model
-    if "CP" in hsolver
-        myfolderCP = myfolder * "/CPSolver"
-        create_folder_if_not_exists(myfolderCP)
-        enumtime_collection = Dict((u, be) => [] for (u, be) in Base.product(users, betas))
-        npaths_collection = Dict((u, be) => [] for (u, be) in Base.product(users, betas))
-        for u in users
-            for nr = 1:nruns
-                for be in betas
-                    if withweights
-                        throw(ArgumentError("Solver CP does not support weights on the second level as the poath enumeration was not tested for this setting yet."))
-                    end
-
-                    # create output folder
-                    myfolderrun = myfolderCP * "/S$(u)_$(nr)_$be"
-                    create_folder_if_not_exists(myfolderrun)
-
-                    loggerCP = JuBiC.new_file_logger(myfolderrun * "/setupCP$(u)_$(nr)_$be.txt", true)
-                    @info "This debuger only contains information on the generation of the path-based MIP instances used in the function 'test_HNDPfix'."
-                    with_logger(loggerCP) do
-                        # create instance
-                        hndpt = hndps[u, nr, be]
-                        inst, enumtime, sp_enumtimes, enum_enumtimes, npaths = to_MIPInstance_path(hndpt, GurobiSolver(Gurobi.Env()), time_limit)
-                        cp_param = MIPparam(
-                            GurobiSolver(Gurobi.Env()),
-                            debug_mode,
-                            myfolderrun,
-                            "lp",
-                            time_limit-enumtime,
-                        )
-
-                        # set parameter of instance
-                        new_stat!(get_stats(cp_param), "U", u)
-                        new_stat!(get_stats(cp_param), "seed", nr)
-                        new_stat!(get_stats(cp_param), "beta", be)
-                        new_stat!(get_stats(cp_param), "CompactType", "Path")
-                        new_stat!(get_stats(cp_param), "Enumtime", enumtime)
-                        new_stat!(get_stats(cp_param), "SumPaths", sum(npaths))
-                        new_stat!(get_stats(cp_param), "npath_users", u)
-                        
-                        for (i, val) in pairs(sp_enumtimes)
-                            push!(enumtime_collection[u, be], val + enum_enumtimes[i])
-                        end
-                        append!(npaths_collection[u, be], npaths)
-
-                        # save generated and continue
-                        push!(instances, inst)
-                        push!(parameters, cp_param)
-                    end
-                end
-
-                
-            end
-        end
-
-        # print collected times for enumeration to file
-        enum_to_file(enumtime_collection, myfolderCP * "/enumtimesAggregated.csv")
-        enum_to_file(npaths_collection, myfolderCP * "/npathsAggregated.csv")
-    end # end compact arc-based MIP
-
-    # build compact arc-based MIP model
-    if "CH" in hsolver
-        myfolderCH = myfolder * "/CHSolver"
-        create_folder_if_not_exists(myfolderCH)
-        for u in users
-            for nr = 1:nruns
-                for be in betas
-                    if withweights
-                        throw(ArgumentError("Solver CH does not support weights on the second level as then the second level is non-convex."))
-                    end
-
-                    # create output folder
-                    myfolderrun = myfolderCH * "/S$(u)_$(nr)_$(be)"
-                    create_folder_if_not_exists(myfolderrun)
-
-                    loggerCH = JuBiC.new_file_logger(myfolderrun * "/setupCH$(u)_$(nr).txt", true)
-                    @info "This debuger only contains information on the generation of the hybrid MIP instances used in the function 'test_HNDPfix'."
-                    with_logger(loggerCH) do
-                        # create instance
-                        hndpt = hndps[u, nr, be]
-                        inst, enumtime, nbad_users = to_MIPInstance_hybrid(hndpt, GurobiSolver(Gurobi.Env()), time_enum_hybrid; fixedBigM=true)
-                        ch_param = MIPparam(
-                            GurobiSolver(Gurobi.Env()),
-                            debug_mode,
-                            myfolderrun,
-                            "lp",
-                            time_limit-enumtime,
-                        )
-
-                        # set parameter of instance
-                        new_stat!(get_stats(ch_param), "U", u)
-                        new_stat!(get_stats(ch_param), "seed", nr)
-                        new_stat!(get_stats(ch_param), "beta", be)
-                        new_stat!(get_stats(ch_param), "CompactType", "Hybrid")
-                        new_stat!(get_stats(ch_param), "TypeBigM", "F")
-                        new_stat!(get_stats(ch_param), "Enumtime", enumtime)
-                        new_stat!(get_stats(ch_param), "npath_users", nbad_users)
-
-                        # save generated and continue
-                        push!(instances, inst)
-                        push!(parameters, ch_param)
-                    end
-                end
-            end
-        end
-    end # end compact arc-based MIP
+        end # end compact arc-based MIP
+    finally
+        close(io)
+    end
 
     # test Sioux
     testrun!(instances, parameters, myfolder)

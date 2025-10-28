@@ -9,9 +9,13 @@ struct Master{T}
     # You can pass a function that takes 'm' and a list of master objective variables (Dict: a => var for a in A) and add some additional constraints/variables to 'm'.
     # This models a partial decomposition approach for the subproblems.
     partial_decomposition::Union{Function,Nothing} # TODO: We need a better documentation why this is needed. It is because you do not have the variables presenting the second-level objectives when initially building the model. This may not be oblivious to everyone
+
+    # You can pass a List of Variables or AffineExpressions representing the L2 objective function (as mapping subproblemname->objective). If you do, the solver will try to take advantage of this information
+    objL2::Union{Dict{String, <:Any}, Nothing}
 end
 
-Master(model, A, link_vars, sub_names) = Master(model, A, link_vars, sub_names, nothing)
+Master(model, A, link_vars, sub_names) = Master(model, A, link_vars, sub_names, nothing, nothing)
+Master(model, A, link_vars, sub_names, partial_decomposition) = Master(model, A, link_vars, sub_names, partial_decomposition, nothing)
 
 
 """
