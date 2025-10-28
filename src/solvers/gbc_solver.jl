@@ -285,11 +285,11 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                                 push!(lazy, cutopt)
 
                                 # Add the BlC constraint if the required information is available
-                                if !isnothing(master.objL2) 
-                                    cutopt_blc = @build_constraint(master.objL2[name(con)] <= cut)
+                                if !isnothing(master.objL2) && !isnothing(bigMcut)
+                                    cutopt_blc = @build_constraint(master.objL2[name(con)] <= bigMcut)
                                     @debug "Adding in addition to optimality cut also the BlC constraint $(cutopt_blc) to the master problem for sub $(name(con.sub_solver))."
                                     add_stat!(parameter.stats, "BlCLagCuts", 1)
-                                    push!(lazy_blc, cutopt)
+                                    push!(lazy_blc, cutopt_blc)
                                 end
                             end
                         end

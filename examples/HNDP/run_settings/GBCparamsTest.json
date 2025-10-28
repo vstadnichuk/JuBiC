@@ -10,10 +10,10 @@
   "two_stage": false,
   "debug_mode": true,
   "constrac_cost": 0,
-  "mip_sub": [true],
+  "trim_coeff": [true],
   "warmstartGBC": [true],
   "stabilizationGBC": [true],
-  "subsolvertype": ["MIP", "MIP_CYCLE"],
-  "LCinGBC": [true],
-  "blCandGBCcuts": [true]
+  "subsolvertype": ["MIP_CYCLE"],
+  "LCinGBC": [true, false],
+  "blCandGBCcuts": [true, false]
 }

@@ -177,7 +177,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
         # If g=0, investing computational efford into generating a Lagrangian cut is just waste of computational ressources
         # solve subroutine approximating 
         synchronize_blc(subLP, subLP.blc_cut_generator)  # update ConnectorLP_BlC s.t. we preserve the subsolver solutions we found till now
-        _, _, cutcoeff_BlC = genBenderslike_cut!(subLP.blc_cut_generator, x_vals, params, timelimit)  # if we get a timeout error, we just let it through
+        blc_cut, _, cutcoeff_BlC = genBenderslike_cut!(subLP.blc_cut_generator, x_vals, params, timelimit)  # if we get a timeout error, we just let it through
         
         # build GBC cut, i.e., Bilevel Lagrangian cut, coefficients for theta terms
         cut -= optL2 * gval 
@@ -185,15 +185,15 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
         for a in keys(cutcoeff_BlC)
             coefa = cutcoeff_BlC[a]
             if params.trim_coeff
-                cut -= min(coefa, bigMterm) * (1-master_vars[a]) * y_vals[a]
+                cut -= min(coefa * gval, bigMterm) * (1-master_vars[a]) * y_vals[a]
             else
-                cut -= coefa * (1-master_vars[a]) * y_vals[a]
+                cut -= coefa * gval * (1-master_vars[a]) * y_vals[a]
             end
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
 
         # generate bigMcut
-        bigMcut = optL2 + sum(cutcoeff_BlC[a] * (1 - master_vars[a]) * y_vals[a] for a in subLP.A) # TODO: Not sure if y_vals term is needed but should not hurt
+        bigMcut = blc_cut
     else
         theta_xXg =
             optL2 * gval + sum(bigMterm * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient 

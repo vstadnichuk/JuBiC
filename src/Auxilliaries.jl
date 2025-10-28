@@ -48,7 +48,7 @@ end
 
 Print the passed list of JuMP constraints 'sol_to_lazy' to file.
 """
-function print_collected_cuts(param::SolverParam, sol_to_lazy::Dict; filename="/mastercuts_collection.txt")
+function print_collected_cuts(param::SolverParam, sol_to_lazy::Dict; filename="mastercuts_collection.txt")
     filepath = joinpath(param.output_folder_path, filename)
     for lazylist in values(sol_to_lazy)
         append_constraintlist_to_file(lazylist, filepath)

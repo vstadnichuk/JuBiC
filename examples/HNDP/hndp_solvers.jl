@@ -75,7 +75,9 @@ function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, p
                     oL1 == mobj[user.uname],
                     base_name = "objLink$(user.uname)_"
                 )
-                objL2_map[user.uname] = oL2
+                optL2 = @variable(mmodel, base_name = "optL2$(user.uname)")
+                @constraint(mmodel, optL2 == oL2, base_name = "objUser$(user.uname)")
+                objL2_map[user.uname] = optL2
             end
         end
         #master = Master(mm, A, xdec_dict, unames, partial)
