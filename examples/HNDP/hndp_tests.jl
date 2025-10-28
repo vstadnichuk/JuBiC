@@ -508,6 +508,11 @@ function test_HNDPwC(json_path::String)
     (true  in paretooptcuts ? [PARETO_OPTIMALITY_AND_FEASIBILITY] : []),
     (false in paretooptcuts ? [PARETO_NONE]                   : []) )
 
+    # save used settings in folder
+    open(joinpath(myfolder, "params.json"), "w") do io
+        JSON.print(io, cfg)
+    end
+
     # generate the underlying HNDPwC instances
     if fixnetwork
         hndps = Dict(
@@ -590,6 +595,7 @@ function test_HNDPwC(json_path::String)
             new_stat!(get_stats(gbc_param), "solvertype", solvertype)
             new_stat!(get_stats(gbc_param), "debug_mode", debug_mode)
             new_stat!(get_stats(gbc_param), "bigMwithLC", LCsub)
+            new_stat!(get_stats(gbc_param), "blCandGBCcuts", blc_gbc)
             new_stat!(get_stats(gbc_param), "trim_coef", trim)
 
             # save generated and continue

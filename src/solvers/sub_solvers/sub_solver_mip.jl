@@ -265,11 +265,12 @@ end
 function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::SolverParam, time_limit)
     # TODO: we use hard coded numeric tolerances here...
     obj_tolerance = 4 # 10e-4
-    var_non_zero_tolerance = 10e-4
+    var_non_zero_tolerance = 10e-4  # TODO: Okay, the hard coded numerics are a thing now
 
     # set new objective function
     k_term = sum([kvals[a] * (1-sub_solver.link_varsC[a]) for a in sub_solver.A])  #TODO: we could direct the search by enforcing small penalty terms for k which are 0?
-    new_obj = sub_solver.c_objterm - k_term
+    k_penalty = sum([var_non_zero_tolerance*(1-sub_solver.link_varsC[a]) for a in sub_solver.A]) # a penalty term that prevents us from forbidding an arc if it is not necessary
+    new_obj = sub_solver.c_objterm - k_term - k_penalty
     @objective(sub_solver.mip_model, Max, new_obj)
 
     # Solve sub_problem (and print it in debbug mode)
@@ -289,7 +290,7 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
     check_solution_status(sub_solver)
 
     # construct return value 
-    opt_obj = objective_value(sub_solver.mip_model)
+    opt_obj = objective_value(sub_solver.mip_model) + sum([var_non_zero_tolerance*(1-value(sub_solver.link_varsC[a])) for a in sub_solver.A])
     @debug "Optimal solution of sub " * sub_solver.name * " is " * string(opt_obj)
 
     is_violate = Bool(!(sval > opt_obj - var_non_zero_tolerance))
