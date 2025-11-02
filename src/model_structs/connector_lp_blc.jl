@@ -113,6 +113,8 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
 
     # clean up and return
     pareto_optimal_decomposition_cleanup(subLP)
+    delete(subLP.lp, fixs_c) 
+    unregister(subLP.lp, :fixs_c) 
     if !params.warmstart
         # okay, I understand that these tests are kind of interesting, BUT I never felt so stupid implementing a feature
         @debug "As requested cleaning up ConnectorLP_BlC $(name(subLP.sub_solver)) by removing all generated constraints."
@@ -121,8 +123,6 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
             delete(subLP.lp, cref)
         end
     end
-    delete(subLP.lp, fixs_c) 
-    unregister(subLP.lp, :fixs_c) 
     @debug "Finished solving ConnectorLP_BlC $(name(subLP.sub_solver))."
     return cut, pobj, cutcoeff
 end

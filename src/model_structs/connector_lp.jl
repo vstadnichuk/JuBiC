@@ -168,7 +168,11 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
     bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution
     @debug "We use big_m=$(bigMterm) for this optimality cut"
     if bigMterm < 0
-        throw(ArgumentError("The big M $(bigMterm) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
+        if bigMterm > -10e-4  # TODO: Again, hard coded numerics
+            bigMterm = 0
+        else
+                throw(ArgumentError("The big M $(bigMterm) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
+        end
     end
     ## generate cut from bound or by solving Lagrangian dual fpr BlC
     blc_subroutine = params.bigMwithLC && gval > 0 
