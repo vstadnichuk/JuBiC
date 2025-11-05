@@ -5,13 +5,14 @@ const VARIABLE_AUX_SUFFIX = "_JuBiCaux"
 
 Builds an instance from the given MPS and AUX files.
 """
-function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer)
+function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer; partial_decomposition::Bool=true)
     mps_data = _read_mps(mps_file_path)
     aux_data = _read_aux(aux_file_path)
 
     nsub = "Sub"
     upper_vars = Dict{String,Any}()
     lower_vars = Dict{String,Any}()
+    upper_vars_partial = Dict{String,Any}()
     model_upper = Model(optimizer)
     model_lower = Model(optimizer)
 
@@ -34,6 +35,17 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
             lower_vars[name] = var_ref
         else
             upper_vars[name] = var_ref
+            upper_vars_partial[name] = var_ref
+        end
+
+        if partial_decomposition && sub_model === model_lower
+            if bound.is_binary
+                lb = 0.0
+                ub = 1.0
+            end
+
+            var_partial = @variable(model_upper, base_name = name, lower_bound = lb, upper_bound = ub)
+            upper_vars_partial[name] = var_partial
         end
     end
 
@@ -74,7 +86,7 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
     # objectives
     lower_obj = @expression(model_lower, sum(aux_data.objective[name] * var for (name, var) in lower_vars; init=0))
     @objective(model_lower, Min, 1 * lower_obj)
-    
+
     @assert length(mps_data.rows_natural) <= 1 "Multiple natural rows are not supported"
     if length(mps_data.rows_natural) == 1 && haskey(mps_data.columns, mps_data.rows_natural[1])
         @objective(model_upper, Min,
@@ -88,20 +100,34 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
     # constraints
     function _add_constraints!(row_names::Vector{String}, sense::Char)
         for row in row_names
-            sub_model = (row in aux_data.constraints ? model_lower : model_upper)
-            lhs = if sub_model == model_upper
-                sum(upper_vars[name] * n for (name, n) in mps_data.columns[row]; init=0)
+            sub_model = (row in aux_data.constraints) ? model_lower : model_upper
+
+            lhs = if sub_model === model_upper
+                sum(upper_vars[name] * n for (name, n) in mps_data.columns[row])
             else
                 sum(lower_vars[name] * n for (name, n) in mps_data.columns[row] if name in keys(lower_vars); init=0) +
                 sum(link_lower[name] * n for (name, n) in mps_data.columns[row] if name in keys(upper_vars); init=0)
             end
+
             rhs = mps_data.rhs[row]
+
             if sense == 'L'
                 @constraint(sub_model, lhs <= rhs)
             elseif sense == 'G'
                 @constraint(sub_model, lhs >= rhs)
             elseif sense == 'E'
                 @constraint(sub_model, lhs == rhs)
+            end
+
+            if partial_decomposition && sub_model === model_lower
+                lhs_partial = sum(upper_vars_partial[name] * n for (name, n) in mps_data.columns[row])
+                if sense == 'L'
+                    @constraint(model_upper, lhs_partial <= rhs)
+                elseif sense == 'G'
+                    @constraint(model_upper, lhs_partial >= rhs)
+                elseif sense == 'E'
+                    @constraint(model_upper, lhs_partial == rhs)
+                end
             end
         end
     end

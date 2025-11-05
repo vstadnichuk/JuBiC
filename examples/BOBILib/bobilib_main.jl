@@ -6,12 +6,13 @@ optimizer = Gurobi.Optimizer
 const instances_dir = "./examples/BOBILib/instances/"
 const instances_to_solve = []
 const test_gbc = true
+const test_gbc_without_partial_decomposition = true
 const test_mibs = true
 const test_mibs_transform = false
 
 
-function _solve_GBC(mps_data, aux_data, logging_gbc)
-    gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer)
+function _solve_GBC(mps_data, aux_data, logging_gbc; partial_decomposition::Bool=true)
+    gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer; partial_decomposition=partial_decomposition)
     gbc_parameters = GBCparam(GurobiSolver(Gurobi.Env()), false, logging_gbc, "lp", PARETO_OPTIMALITY_ONLY)
     gbc_statistics = solve_instance!(gbc_instance, gbc_parameters)
     return gbc_statistics
@@ -25,7 +26,7 @@ function _solve_MibS(mps_data, aux_data, logging_mibs)
 end
 
 function _solve_MibS_transformation(mps_data, aux_data, logging_mibs)
-    gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer)
+    gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer, partial_decomposition=false)
     bilevel_instance = transform_GBC_to_MibS(gbc_instance)
     bilevel_parameters = MibSparam(false, logging_mibs)
     bilevel_statistics = solve_instance!(bilevel_instance, bilevel_parameters)
@@ -35,11 +36,16 @@ end
 function main()
     logging_file = init_logging_folder()
     logging_gbc = joinpath(logging_file, "GBC_Solver")
+    logging_gbc_without_partial_decomposition = joinpath(logging_file, "GBC_Solver(Without_Partial_Decomposition)")
     logging_mibs = joinpath(logging_file, "MibS_Solver")
     logging_mibs_transform = joinpath(logging_file, "MibS_Solver(Transformation)")
 
     if test_gbc
         mkpath(logging_gbc)
+    end
+
+    if test_gbc_without_partial_decomposition
+        mkpath(logging_gbc_without_partial_decomposition)
     end
 
     if test_mibs
@@ -63,8 +69,17 @@ function main()
 
         if test_gbc
             println("Solving instance $instance with GBC")
-            statistic = _solve_GBC(mps_path, aux_path, logging_gbc)
+            statistic = _solve_GBC(mps_path, aux_path, logging_gbc, partial_decomposition=true)
             new_stat!(statistic, "instance", instance)
+            new_stat!(statistic, "partial_decomposition", true)
+            push!(statistics_list, statistic)
+        end
+
+        if test_gbc_without_partial_decomposition
+            println("Solving instance $instance with GBC (without partial decomposition)")
+            statistic = _solve_GBC(mps_path, aux_path, logging_gbc_without_partial_decomposition, partial_decomposition=false)
+            new_stat!(statistic, "instance", instance)
+            new_stat!(statistic, "partial_decomposition", false)
             push!(statistics_list, statistic)
         end
 
