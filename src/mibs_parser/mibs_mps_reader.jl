@@ -82,6 +82,7 @@ function _read_mps(file_path::String)
                         columns[row_name] = Vector{Tuple{String,Number}}()
                     end
                     push!(columns[row_name], (var_name, coeff))
+                    rhs[row_name] = 0.0
                 elseif current_section == "RHS"
                     row_name = parts[2]
                     rhs[row_name] = parse(Float64, parts[3])
