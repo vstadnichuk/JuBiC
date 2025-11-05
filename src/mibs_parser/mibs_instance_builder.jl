@@ -45,11 +45,16 @@ function get_MibS_instance(mps_file_path::String, aux_file_path::String)
     )
 
     # upper-level objective
-    @objective(
-        Upper(model),
-        Min,
-        sum(all_vars[name] * n for (name, n) in mps_data.columns[mps_data.rows_natural[1]])
-    )
+    @assert length(mps_data.rows_natural) <= 1 "Multiple natural rows are not supported"
+    if length(mps_data.rows_natural) == 1 && haskey(mps_data.columns, mps_data.rows_natural[1])
+        @objective(
+            Upper(model),
+            Min,
+            sum(all_vars[name] * n for (name, n) in mps_data.columns[mps_data.rows_natural[1]])
+        )
+    else
+        @objective(Upper(model), Min, 0)
+    end
 
     # add constraints based on sense
     function _add_constraints!(row_names::Vector{String}, sense::Char)
