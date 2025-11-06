@@ -70,15 +70,18 @@ function transform_GBC_to_MibS(instance::Instance)
 
     # define upper level objective
     upper_obj = objective_function(instance.master.model)
+    l1term = if upper_obj isa GenericVariableRef upper_obj else sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) + constant(upper_obj) end # small hack if L1 Obj is only 1 variable
     @objective(
         Upper(bilevel_model),
         Min,
-        sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) +
+        sum(l1term) +
         sum(
+            constant(sub_problem.r_objterm) +
             sum(coef * lower_vars_ref[var] for (var, coef) in sub_problem.r_objterm.terms)
             for sub_problem in instance.subproblems
         )  # TODO: Currently only supports the SubSolverJuMP subproblem type
     )
+    # TODO: "fun fact" MiBS ignores constants in objective function O_O
 
     # define lower level objective
     lower_obj = objective_function(instance.subproblems[1].mip_model)

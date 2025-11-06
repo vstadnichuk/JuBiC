@@ -9,6 +9,12 @@ function solve_with_MibS!(inst::Instance, param::MibSparam)
     new_stat!(param.stats, "Solver", "MibSSolver")
 
     try
+        @info model
+    catch
+        @debug "Could not print BilevelJuMP model for current MiBS instance to debug file."
+    end
+
+    try
         @debug "Finished model construction. Now proceeding to optimization process with MibS solver."
         solution = BilevelJuMP.solve_with_MibS(model, MibS_jll.mibs)
         status = solution.status
