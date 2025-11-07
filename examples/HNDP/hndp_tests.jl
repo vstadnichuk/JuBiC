@@ -196,6 +196,31 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                 push!(instances, inst)
                 push!(parameters, blclagmibs_param)
             end
+
+            if "MiBS" in hsolver
+                myfolderMiBS = myfolder * "/MiBSSolver"
+                create_folder_if_not_exists(myfolderMiBS)
+
+                # create instance
+                inst = to_GBCInstance(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env());
+                    partial_dec=false,
+                    mibs_correct=true
+                )
+                inst_mibs = transform_GBC_to_MibS(inst)
+                mibs_param = MibSparam(
+                    true,
+                    myfolderMiBS,
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(mibs_param), "seed", 42)
+
+                # save generated and continue
+                push!(instances, inst_mibs)
+                push!(parameters, mibs_param)
+            end
         end # end logger
     finally
         close(io)
@@ -465,7 +490,8 @@ You should path a .json file with the following parameter lists. All combination
 - 'users': A list with the number of users for the individual runs.
 - 'alphas': The different alpha values that may appear. The alpha should be a parameter between 0 and 1, and sets the capacity limit for the test instance. 0 indicates very tight bounds, and 1 that there is no capacity limit. 
 - 'nruns': Number of runs with different seed for each instance.
-- 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, and "BlCLag" for the BlCLagSolver.  
+- 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "BlC" for the BlCSolver, and "BlCLag" for the BlCLagSolver. 
+    Also, "MiBS" will pass the instance to MiBS solver. However, MiBS does not support most of the settings, and will especially ignore time limit. 
 If multiple solvers are passed, solve instance with each. 
 - 'time_limit': The time limit set on (each) solver (in sec).
 - 'partial_decomposition': A list containing true or false (or both). If true, apply partial decomposition where applicable, i.e., when using our GBCSolver
@@ -486,7 +512,7 @@ function test_HNDPwC(json_path::String)
     alphas                = cfg["alphas"]
     beta                  = get(cfg, "beta", 1)
     nruns                 = cfg["nruns"]
-    hsolver               = get(cfg, "hsolver", ["GBC", "BlC", "BlCLag"])
+    hsolver               = get(cfg, "hsolver", ["GBC", "BlC", "BlCLag", "MiBS"])
     time_limit            = get(cfg, "time_limit", 3600)
     partial_decomposition = get(cfg, "partial_decomposition", [true])
     two_stage             = get(cfg, "two_stage", false)
@@ -687,6 +713,44 @@ function test_HNDPwC(json_path::String)
             # save generated and continue
             push!(instances, inst)
             push!(parameters, blclag_param)
+        end
+    end
+
+    # build MiBS instances
+    if "MiBS" in hsolver
+        myfolderMiBS = myfolder * "/MiBSSolver"
+        create_folder_if_not_exists(myfolderMiBS)
+        for (u, al, nr) in Base.product(users, alphas, 1:nruns)
+            # create output folder
+            myfolderrun = myfolderMiBS * "/S$(u)_$(al)_$(nr)"
+            create_folder_if_not_exists(myfolderrun)
+
+            # create instance
+            hndpt = hndps[u, al, nr]
+            inst = to_GBCInstance(
+                hndpt, 
+                GurobiSolver(Gurobi.Env());
+                partial_dec = false,
+                mibs_correct = true
+            )
+            instance_mibs = transform_GBC_to_MibS(inst)  # transform GBC to MiBS
+            mibs_param = MibSparam(
+                debug_mode,
+                myfolderrun
+            )
+
+            # set parameter of instance
+            new_stat!(get_stats(mibs_param), "fixnetwork", fixnetwork)
+            new_stat!(get_stats(mibs_param), "U", u)
+            new_stat!(get_stats(mibs_param), "alpha", al)
+            if fixnetwork new_stat!(get_stats(mibs_param), "beta", beta) end
+            new_stat!(get_stats(mibs_param), "constructioncost", constrac_cost)
+            new_stat!(get_stats(mibs_param), "seed", nr)
+            new_stat!(get_stats(mibs_param), "debug_mode", debug_mode)
+
+            # save generated and continue
+            push!(instances, instance_mibs)
+            push!(parameters, mibs_param)
         end
     end
 

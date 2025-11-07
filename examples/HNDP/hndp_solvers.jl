@@ -31,10 +31,17 @@ Generate a new Hierarchical Decomposition model from the passed HNDPwC instance.
     - 'partial_dec=true': If true, employs partial decomposition approach by adding flow constraints to master
     - 'partial_objL2=true': If true, add L2 objective function as information to master. For example, it can then add additionally BlC constraints to master.
     - 'subtype::S_Solver=SGBC_LABEL': The subproblem subsolver that should be used.
+    - 'mibs_correct': Adjust MIP formulation s.t. it is conform with MiBS standards, e.g., no "=" constraints.
 """
-function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, partial_objL2=false, subtype::SGBC_Solver=SGBC_MIP)
+function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, partial_objL2=false, subtype::SGBC_Solver=SGBC_MIP, mibs_correct=false)
     if !partial_dec && partial_objL2
         throw(ArgumentError("We require partial decomposition if we want to add L2 objective function. Please check your input parameters for the function 'to_GBCInstance'. "))
+    end
+    if partial_dec && mibs_correct
+        throw(ArgumentError("Partial decomposition makes no sense when using MiBS. Please adjust your 'partial_dec' and 'mibs_correct' settings."))
+    end
+    if mibs_correct && subtype != SGBC_MIP
+        throw(ArgumentError("Mibs implies that subsolver should be 'SGBC_MIP'. Please adjust your 'subtype' and 'mibs_correct' settings. "))
     end
 
     @info "Starting generation of GBCSolver for passed HNDP instance" 
@@ -56,10 +63,11 @@ function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, p
     # add variable that represents the construction cost (easier to debug with it)
     constructioncost = sum(hndp.edge_price[a]*x[a] for a in A)
     @variable(mm, construction_cost_var)
+    if mibs_correct set_integer(construction_cost_var) end # small hack as MIBS can only deal with Integer variables
     @constraint(mm, constructioncost == construction_cost_var, base_name="constructioncost")
 
     # create master (obj. has no impact from x-variables)
-    @objective(mm, Min, construction_cost_var)  # only first-level cost are the construction cost for the arcs
+    @objective(mm, Min, construction_cost_var + 0)  # only first-level cost are the construction cost for the arcs # TODO: test
     xdec_dict = Dict(a => x[a] for a in hndp.edgeA) # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
 
     
@@ -97,6 +105,9 @@ function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, p
     usolvers = []
     for user in hndp.users
         if subtype == SGBC_LABEL
+            if mibs_correct
+                throw(ArgumentError("Labeling Solver is not compatible with MiBS right now"))
+            end
             @info "Adding A*search subsolver for user $(user.uname)"
             #solver_user = build_Astar_user(user, hndp, A)
             # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
@@ -104,11 +115,11 @@ function to_GBCInstance(hndp::HNDPwC, solver::SolverWrapper; partial_dec=true, p
         elseif subtype == SGBC_MIP
             @info "Adding MIP subsolver for user $(user.uname)"
             # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
-            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=false)
+            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=false, mibs_conform=mibs_correct)
         elseif subtype == SGBC_MIP_CYCLEFREE
             @info "Adding MIP subsolver with cyclebreakers for user $(user.uname)"
             # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
-            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=true)
+            solver_user = build_MIP_user(user, hndp, A, hndp.edgeA, solver; cycle_free=true, mibs_conform=mibs_correct)
         elseif subtype == SGBC_MiBS
             @info "Adding MiBS subsolver for user $(user.uname)"
             # Only decision arcs are relevant as all other interdiction constraints are satisfied by default
@@ -558,19 +569,30 @@ Generate a Subsolver that solves the passed users subproblem by formulating it a
     - 'solver::SolverWrapper': The MIP solver to use
 
     - 'cycle_free::Bool': If true, generate Benders-like cuts to ensure that the found solution is cycle free (only usefull for GBCsolver where negative cycles can incur)
+    - 'mibs_conform': If true, build constraints of subsolver in a way that is conform with MiBS settings, e.g., no "=" constraints
 """
-function build_MIP_user(user::User, hndp::HNDPwC, A, Adec, solver::SolverWrapper; cycle_free=false)
+function build_MIP_user(user::User, hndp::HNDPwC, A, Adec, solver::SolverWrapper; cycle_free=false, mibs_conform=false)
+    if cycle_free && mibs_conform
+        throw(ArgumentError("MiBS is not compatible with bilevel subsolver but 'cycle_free' and 'mibs_conform' settings suggest you aim to do so. "))
+    end
+
+
     # set up sub MIP (min-cost flow for passed user)
     sub = Model()
     set_optimizer(sub, () -> get_next_optimizer(solver))
     @variable(sub, xc[A], Bin)
-    oL1, oL2, f = make_user_constraints(user, sub, hndp, A, xc, false; l2binary=true) 
+    oL1, oL2, f = make_user_constraints(user, sub, hndp, A, xc, false; l2binary=true, mibs_conform) 
     @objective(sub, Min, oL2)
 
     # additionally, fix non-decision arc variables in sub to 1
     for et in A
         if !(et in Adec)
-            @constraint(sub, xc[et] == 1, base_name = "nondec$(et))")
+            if ! mibs_conform
+                @constraint(sub, xc[et] == 1, base_name = "nondec$(et))")
+            else
+                @constraint(sub, xc[et] <= 1, base_name = "nondec_p$(et))") 
+                @constraint(sub, xc[et] >= 1, base_name = "nondec_n$(et))") 
+            end
         end
     end 
 
@@ -712,13 +734,14 @@ function build_MiBS_user(user::User, hndp::HNDPwC, A, Adec, solver::SolverWrappe
     # set up sub MIP (min-cost flow for passed user)
     sub = BilevelModel()
     #set_optimizer(sub, () -> get_next_optimizer(solver))
-    oL1, oL2, f = make_user_constraints(user, Lower(sub), hndp, A, nothing, false; l2binary=true) 
+    oL1, oL2, f = make_user_constraints(user, Lower(sub), hndp, A, nothing, false; l2binary=true, mibs_conform=true) 
     @objective(Upper(sub), Min, oL2)
 
     # additionally, fix non-decision arc variables in sub to 1
     for et in A
         if !(et in Adec)
-            @constraint(Lower(sub), xc[et] == 1, base_name = "nondec$(et))")
+            @constraint(Lower(sub), xc[et] >= 1, base_name = "nondec_p$(et))")
+            @constraint(Lower(sub), xc[et] <= 1, base_name = "nondec_n$(et))")
         end
     end 
 
@@ -758,9 +781,9 @@ If you want to use dual constraints, please also provide a function 'bigM_functi
     - 'l2binary=true': If true, the second-level flow variables are set to be binary.
     - 'bigM_function = nothing': If you add dual constraints, pass a function here that gives the big M's. It should take (a, u) as arguments where 'a' is the resource 'u' is the user name.
     - 'indicatorconst = true': If true, use indicator constraints for dual constraints. The big M are still used as bounds on second-level variables.
-    - 
+    - 'mibs_conform': If true, build constraints in a way that is conform with MiBS requirements, e.g., avoid "=" constraints.
 """
-function make_user_constraints(user::User, hpr, hndp::HNDPwC, A, xvars, dualconst; l2binary=true, bigM_function = nothing, indicatorconst = true, with_var_bounds=true)
+function make_user_constraints(user::User, hpr, hndp::HNDPwC, A, xvars, dualconst; l2binary=true, bigM_function = nothing, indicatorconst = true, with_var_bounds=true, mibs_conform=false)
     # add flow variables
     if l2binary
         f = @variable(hpr, [i = A], Bin, base_name = "f$(user.uname)_")
@@ -795,7 +818,12 @@ function make_user_constraints(user::User, hpr, hndp::HNDPwC, A, xvars, dualcons
         flowcons =
             reduce(+, [f[(n, o)] for o in outneighbors(hndp.mygraph, n)], init=0.0) -
             reduce(+, [f[(i, n)] for i in inneighbors(hndp.mygraph, n)], init=0.0)
-        @constraint(hpr, flowcons == demand, base_name = "flow$(user.uname)_$n")
+        if mibs_conform
+            @constraint(hpr, flowcons <= demand, base_name = "flow_p$(user.uname)_$n")
+            @constraint(hpr, flowcons >= demand, base_name = "flow_n$(user.uname)_$n")
+        else
+            @constraint(hpr, flowcons == demand, base_name = "flow$(user.uname)_$n")
+        end
     end
 
     # link first and second level
