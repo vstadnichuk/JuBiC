@@ -271,7 +271,7 @@ function build_random_layer_SiouxFalls(nusers, alpha; seed=25, max_cost=100, max
         bound = -1
         if withweight
             minweight_user = minweight.dists[origin, destination]
-            bound = minweight_user + alpha * (24 * maxweight - minweight_user)
+            bound = minweight_user + alpha * ((24 + 24 + 24) * maxweight - minweight_user) # 24 nodes per layer, 24 transfer arcs
         else 
             bound = nothing
         end

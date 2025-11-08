@@ -541,10 +541,21 @@ function test_HNDPwC(json_path::String)
 
     # generate the underlying HNDPwC instances
     if fixnetwork
-        hndps = Dict(
-            (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr, beta=beta, withweight=true) for
-            (u, al, nr) in Base.product(users, alphas, 1:nruns)
-        )
+        if beta >= 1
+            # no weight parameter
+            hndps = Dict(
+                (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr, beta=beta, withweight=false) for
+                (u, al, nr) in Base.product(users, alphas, 1:nruns)
+            )
+        else
+            # include weight parameter
+            @warn "Adding weights to fixednetwork isntances is currently and experimental feature."
+            hndps = Dict(
+                (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr, beta=beta, withweight=true) for
+                (u, al, nr) in Base.product(users, alphas, 1:nruns)
+            )
+        end
+        
     else
         hndps = Dict(
             (u, al, nr) => build_random_SiouxFalls(u, al; seed=nr, two_stage=two_stage, constructioncost=constrac_cost) for
