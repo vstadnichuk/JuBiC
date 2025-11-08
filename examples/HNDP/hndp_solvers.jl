@@ -1022,7 +1022,7 @@ function shortest_unforbiddable_path(user::User, hndp::HNDPwC, timelimit)
     # compute the shortest path in the fixed network. Gives an error if no path is found. In case of timeout, return empty path. Also alwqays returns runtime needed
 
     #auxiliary function
-    function neighboring_shortest_unforbiddable_path(label::Subpath)
+    function neighboring_shortest_unforbiddable_path(label::Subpath, user_sub::User)
         neighbors_list = []
         for n in neighbors(hndp.mygraph, label.mynode)
             # check if fixed edge. If not, scip
@@ -1043,12 +1043,17 @@ function shortest_unforbiddable_path(user::User, hndp::HNDPwC, timelimit)
                 continue
             end
 
+            # check weight bound
+            nweight = label.weight + user.mweight[label.mynode, n]
+            if nweight > user_sub.weighlimit
+                continue 
+            end
+
             # generate new label 
             narcs = copy(label.arcs) 
             push!(narcs, (label.mynode, n))
             ncost = label.cost + user.mcost[label.mynode, n]
             nrisk = label.risk + user.mrisk[label.mynode, n]
-            nweight = label.weight + user.mweight[label.mynode, n]
             newlabel = Subpath(n, narcs, ncost, nrisk, nweight)
             push!(neighbors_list, newlabel)
         end
@@ -1064,7 +1069,7 @@ function shortest_unforbiddable_path(user::User, hndp::HNDPwC, timelimit)
     costf(lv::Subpath, lw::Subpath) = user.mcost[lv.mynode, lw.mynode]
     dominance(lv, lw) = false
     solution = JuBiC.shortest_path_labeling(
-            neighboring_shortest_unforbiddable_path,
+            label -> neighboring_shortest_unforbiddable_path(label, user),
             starts,
             ends,
             heuristicf_none,
@@ -1080,6 +1085,9 @@ function shortest_unforbiddable_path(user::User, hndp::HNDPwC, timelimit)
     elseif solution.status == JuBiC.LS_TIMEOUT
         return solution.goal, timelimit
     elseif solution.status == JuBiC.LS_OPTIMAL
+        # as 
+
+
         return solution.goal, solution.runtime
     else
         throw(ArgumentError("Return status $(solution.status) not known."))

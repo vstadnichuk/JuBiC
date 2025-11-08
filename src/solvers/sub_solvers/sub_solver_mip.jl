@@ -332,10 +332,23 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
     solve_mip(sol, time_limit)
 
     try
-        # here, we can have infeeasible solutions due to wrong first-level decision. Catch this case
+        # here, we can have infeasible solutions due to wrong first-level decision. Catch this case
         status = termination_status(sol.mip_model)
         if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
             @debug "The Subproblem $(sol.name) was infeasible"
+
+            # for debuging, nice to have IIS of this case to in some cases
+            if should_debbug_print(params)
+                compute_conflict!(sol.mip_model)
+                @debug "IIS computed, now printing it"
+                iis_model, _ = copy_conflict(sol.mip_model)
+                if get_attribute(sol.mip_model, MOI.ConflictStatus()) == MOI.CONFLICT_FOUND
+                    @debug iis_model # printing to file just causes error...
+                else
+                    @debug "The IIS was not computed succesfully??? Maybe numerics??"
+                end
+            end
+
             return false, 0, 0, Dict()
         end
 

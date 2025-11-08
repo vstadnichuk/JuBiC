@@ -94,7 +94,7 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     if !foundfeas
         throw(ErrorException("Found infeasible second-level when generating big M coef. for BlC cuts using Lagrangian dual. The master values are: $link_vals"))
     end
-    fixs_c = @constraint(subLP.lp, subLP.lp[:s] >= optL2, base_name="Fix_s") 
+    fixs_c = @constraint(subLP.lp, subLP.lp[:s] == optL2, base_name="Fix_s")  # TODO: "=" to force structure of BlC 
 
     # solve sub LP for new master
     @debug "Start iterative solution procedure for ConnectorLP_BlC $(name(subLP.sub_solver))."
