@@ -1045,7 +1045,7 @@ function shortest_unforbiddable_path(user::User, hndp::HNDPwC, timelimit)
 
             # check weight bound
             nweight = label.weight + user.mweight[label.mynode, n]
-            if nweight > user_sub.weighlimit
+            if !isnothing(user_sub.weighlimit) && nweight > user_sub.weighlimit
                 continue 
             end
 

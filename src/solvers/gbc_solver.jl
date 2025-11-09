@@ -203,6 +203,13 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     # set number of threads
     set_attribute(myLP, MOI.NumberOfThreads(), parameter.threads_sub_con)
 
+    # TODO: This parameter combination seems to fix some numeric issues. Seems to have only necglectable impact on runtime
+    if parameter.solver isa GurobiSolver
+        set_optimizer_attribute(myLP, "NumericFocus", 3)
+        set_optimizer_attribute(myLP, "CrossoverBasis", 1)
+        set_optimizer_attribute(myLP, "Method", 2)
+    end
+
     # disable output of LP
     set_silent(myLP)
 

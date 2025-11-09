@@ -160,10 +160,10 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
 
     # s term of the cut
     sval = value(subLP.lp[:s])
-    cut = sval
+    cut = sval  # TODO: currently not rounding s. If we want to do it, we should round down?
 
     # g term of the cut
-    gval = value(subLP.lp[:g])
+    gval = value(subLP.lp[:g]) 
     ## build bound (called bigM-term)
     bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution
     @debug "We use big_m=$(bigMterm) for this optimality cut"
@@ -189,9 +189,9 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
         for a in keys(cutcoeff_BlC) 
             coefa = ceil(Int, cutcoeff_BlC[a]) # TODO: rounding should be save and avoid numeric trouble
             if params.trim_coeff
-                cut -= min(coefa * gval, bigMterm) * (1-master_vars[a]) * y_vals[a] 
+                cut -= _adjust_cut_coef(min(coefa * gval, bigMterm)) * (1-master_vars[a]) * y_vals[a] # TODO: rounding to avoid numeric trouble
             else
-                cut -= coefa * gval * (1-master_vars[a]) * y_vals[a] 
+                cut -= _adjust_cut_coef(coefa * gval) * (1-master_vars[a]) * y_vals[a] # TODO: rounding to avoid numeric trouble
             end
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
@@ -200,16 +200,16 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
         bigMcut = blc_cut
     else
         theta_xXg =
-            optL2 * gval + sum(bigMterm * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient  
+            _adjust_cut_coef(optL2 * gval) + sum(_adjust_cut_coef(bigMterm) * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
         cut -= theta_xXg
     end
 
     # k term of the cut
     kvals = value.(subLP.lp[:k])
     if params.trim_coeff
-        cut -= sum(min(kvals[a], bigMterm) * master_vars[a] for a in subLP.A) 
+        cut -= sum(_adjust_cut_coef(min(kvals[a], bigMterm)) * master_vars[a] for a in subLP.A) # TODO: rounding to avoid numeric trouble
     else
-        cut -= sum(kvals[a] * master_vars[a] for a in subLP.A) 
+        cut -= sum(_adjust_cut_coef(kvals[a]) * master_vars[a] for a in subLP.A) # TODO: rounding to avoid numeric trouble
     end
 
     # for the coef. bounds in GBC, we assume that y_vals and k > 0 are disjoint. Check this property
@@ -308,11 +308,12 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
-        @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and k=$(kvals)"
+        @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and k=$(kvals). 
+            Rounded g to $(_adjust_g(value(subLP.lp[:g]))) for more numeric stability. "
         sub_solver = separation!(
             subLP.sub_solver,
             value(subLP.lp[:s]),
-            value(subLP.lp[:g]),
+            _adjust_g(value(subLP.lp[:g])),
             kvals,
             params,
             time_limit
@@ -324,7 +325,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
             @debug "For connector $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and uses resources $(sub_solver.A_sub)."
             new_const_left =
                 subLP.lp[:s] - sum(subLP.lp[:k][a] for a in sub_solver.A_sub; init=0) -
-                sub_solver.obj_second_level * subLP.lp[:g]
+                sub_solver.obj_second_level * subLP.lp[:g] 
             c = @constraint(subLP.lp, new_const_left <= sub_solver.obj_first_level)
             @debug "We added an violated constraint $(c) for connector $(name(subLP.sub_solver)). Continue separation."
 
@@ -417,7 +418,7 @@ When called after LP was solved to optimality, transforms the LP to generate a p
 function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, params::GBCparam, time_limit)
     # resolve the subLP with steps necessary for pareto-optimal cuts
     cssol = value(subLP.lp[:s])
-    cgsol = value(subLP.lp[:g])
+    cgsol = value(subLP.lp[:g])  # TODO: no rounding of g value for pareto optimal cut good idea 
 
     # The 0.1 term -> you still want to minimize the g
     bigMterm = (cssol - g_obj_coef * cgsol - subLP.lower_bound_obj_contribution) + 0.1 # this is just an educated guess, i.e., heuristic pareto-optimal cut generation
@@ -429,7 +430,7 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
 
     # build adjusted model
     current_obj = objective_value(subLP.lp)
-    pBd_obj = sum(subLP.lp[:k]) + bigMterm * subLP.lp[:g]
+    pBd_obj = sum(subLP.lp[:k]) + bigMterm * cgsol
     @objective(subLP.lp, Min, pBd_obj)
     @constraint(subLP.lp, pBd_const, lp_obj == current_obj)
 
@@ -499,6 +500,25 @@ function synchronize_gbc(con_blc::ConnectorLP_BlC{T}, con::ConnectorLP{T}) where
         end
     end
     """
+end
+
+
+"""
+    _adjust_cut_coef(cut_coef)
+
+Round cut coef to avoid numeric trouble.
+"""
+function _adjust_cut_coef(cut_coef)
+    return ceil(cut_coef, digits=4)  # TODO: again, hard coded numerics
+end
+
+"""
+    _adjust_g(g_value)
+
+Round value of g to avoid numeric trouble. 
+"""
+function _adjust_g(g_value)
+    return ceil(g_value, digits=4)  # TODO: again, hard coded numerics
 end
 
 

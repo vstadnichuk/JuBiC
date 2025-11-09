@@ -718,7 +718,7 @@ function test_HNDPwC(json_path::String)
             new_stat!(get_stats(blclag_param), "seed", nr)
             new_stat!(get_stats(blclag_param), "stabopt", stabopt)
             new_stat!(get_stats(blclag_param), "warmstart", wstart)
-            new_stat!(get_stats(blclag_param), "subsolver", subsolvertype)
+            new_stat!(get_stats(blclag_param), "mip_subsolver", subsolvertype)
             new_stat!(get_stats(blclag_param), "debug_mode", debug_mode)
 
             # save generated and continue
