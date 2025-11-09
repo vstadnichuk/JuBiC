@@ -502,6 +502,7 @@ If multiple solvers are passed, solve instance with each.
 - 'subsolvertype': This is a list of solver types. The currently supported types are "MIP" for a simple MIP solver, "MIP_CYCLE" for feasible solutions only, and "MiBS" for MiBS. Note that this setting only affects GBC and BlC solvers.
 - 'LCinGBC': A list containing true or false (or both). If true, when solving ConnectorLP for GBCSolver, use a second ConnectorLP to compute the big M coefficients needed for Bilevel Lagrangian cuts.  
 - 'blCandGBCcuts': A list containing true or false (or both). If true, when generating GBC, also add BlC to master if coef. were computed in GBC procedure (i.e., 'LCinGBC' setting was true).
+- 'seed': Start seed for random instance generation. If multiple instances are created, we increment this start seed by 1 for each.
 """
 function test_HNDPwC(json_path::String)
     # parse passed json file
@@ -524,6 +525,7 @@ function test_HNDPwC(json_path::String)
     blCandGBCcuts         = get(cfg, "blCandGBCcuts", [false])
     trim_coeff_opt        = get(cfg, "trim_coeff", [true])
     debug_mode            = get(cfg, "debug_mode", false)
+    startseed             = get(cfg, "seed", 0)
 
 
     # init folder and lists
@@ -541,24 +543,13 @@ function test_HNDPwC(json_path::String)
 
     # generate the underlying HNDPwC instances
     if fixnetwork
-        if beta >= 1
-            # no weight parameter
-            hndps = Dict(
-                (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr, beta=beta, withweight=false) for
-                (u, al, nr) in Base.product(users, alphas, 1:nruns)
-            )
-        else
-            # include weight parameter
-            @warn "Adding weights to fixednetwork isntances is currently and experimental feature."
-            hndps = Dict(
-                (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr, beta=beta, withweight=true) for
-                (u, al, nr) in Base.product(users, alphas, 1:nruns)
-            )
-        end
-        
+        hndps = Dict(
+            (u, al, nr) => build_random_layer_SiouxFalls(u, al; seed=nr+startseed, beta=beta, withweight=true) for
+            (u, al, nr) in Base.product(users, alphas, 1:nruns)
+        )
     else
         hndps = Dict(
-            (u, al, nr) => build_random_SiouxFalls(u, al; seed=nr, two_stage=two_stage, constructioncost=constrac_cost) for
+            (u, al, nr) => build_random_SiouxFalls(u, al; seed=nr+startseed, two_stage=two_stage, constructioncost=constrac_cost) for
             (u, al, nr) in Base.product(users, alphas, 1:nruns)
         )
     end

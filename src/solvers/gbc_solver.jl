@@ -223,7 +223,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     # add generator for BlC cuts if better cuts are requested
     blc_generator = nothing
     if parameter.bigMwithLC
-        blc_generator = ConnectorLP_BlC(parameter.solver, parameter.infinity_num, sub.A, link_vars_master, sub)
+        blc_generator = ConnectorLP_BlC(parameter, sub.A, link_vars_master, sub)
     end
 
     # build ConnectorLP obj

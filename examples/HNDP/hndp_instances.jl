@@ -169,6 +169,14 @@ function build_random_layer_SiouxFalls(nusers, alpha; seed=25, max_cost=100, max
     @assert alpha >= 0 && alpha <= 1
     @assert max_cost >= 0 && maxrisk >= 0 && maxweight >= 0
 
+    if alpha < 1
+        @warn "Adding weights to fixednetwork intances is currently and experimental feature."
+    else
+        @info "Alpha=1 passed. Hence, we remove capacity constraints from layer HNDPwC instance."
+        withweight = false
+    end
+        
+
     # read in sioux falls graph
     file_path = "examples/data/SF_DNDP_10_base.txt"
     @info "Reading in Sioux Falls graph structure from file $file_path"

@@ -50,6 +50,31 @@ function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_v
     )
 end
 
+function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict{<:Any, VariableRef}, sub_solver::SubSolver)
+    solver = params.solver
+    infinity_num = params.infinity_num
+    T = eltype(A)
+    # build LP
+    myLP = Model(() -> get_next_optimizer(solver))
+    @variable(myLP, infinity_num >= s >= -infinity_num)
+    @variable(myLP, k[sub_solver.A] >= 0)
+
+    # TODO: This parameter combination seems to fix some numeric issues. Seems to have only necglectable impact on runtime
+    if params.solver isa GurobiSolver
+        set_optimizer_attribute(myLP, "NumericFocus", 3)
+        set_optimizer_attribute(myLP, "CrossoverBasis", 1)
+        set_optimizer_attribute(myLP, "Method", 2)
+    end
+
+    # disable output of LP
+    set_silent(myLP)
+
+    # build my struct
+    ConnectorLP_BlC{T}(
+      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut_BlC}()
+    )
+end
+
 
 function name(clp::ConnectorLP_BlC)
     return name(clp.sub_solver)

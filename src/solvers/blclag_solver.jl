@@ -124,7 +124,7 @@ function init_connectorLPBlCs(subs, link_vars, param::BlCLagparam)
     @debug "Beginn building LPs for each subproblems required for Benders steps."
     connectors = []
     time_s = @elapsed for s in subs
-        con = ConnectorLP_BlC(param.solver, param.infinity_num, s.A, link_vars, s)
+        con = ConnectorLP_BlC(param, s.A, link_vars, s)
         push!(connectors, con)
     end
     return connectors, time_s
