@@ -667,10 +667,6 @@ function test_HNDPwC(json_path::String)
         myfolderGBC = myfolder * "/BlCLagSolver"
         create_folder_if_not_exists(myfolderGBC)
         for (u, al, nr, subsolver, stabopt, wstart) in Base.product(users, alphas, 1:nruns, subsolvertype, pareto_options, warmstartGBC)
-            # create output folder
-            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_$(subsolver)_$(stabopt)_W$(wstart)"
-            create_folder_if_not_exists(myfolderrun)
-
             # find out solver type
             if subsolver == "MIP"
                 @warn "The chosen BlCLag subsolver does not guarantee bilevel feasible points. Therefore, discarding the solver setting $subsolver in combination with generating big M with Lagrangian dual."
@@ -682,6 +678,10 @@ function test_HNDPwC(json_path::String)
             else
                 throw(ArgumentError("unsupported subsolver type $(subsolver)"))
             end
+
+            # create output folder
+            myfolderrun = myfolderGBC * "/S$(u)_$(al)_$(nr)_$(subsolver)_$(stabopt)_W$(wstart)"
+            create_folder_if_not_exists(myfolderrun)
 
             # create instance
             hndpt = hndps[u, al, nr]

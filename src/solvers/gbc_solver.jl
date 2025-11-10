@@ -227,7 +227,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     end
 
     # build ConnectorLP obj
-    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}())
+    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}(), parameter.g_round_digit)
 end
 
 

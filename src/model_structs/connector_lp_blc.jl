@@ -59,7 +59,7 @@ function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict
     @variable(myLP, infinity_num >= s >= -infinity_num)
     @variable(myLP, k[sub_solver.A] >= 0)
 
-    # TODO: This parameter combination seems to fix some numeric issues. Seems to have only necglectable impact on runtime
+    # TODO: This parameter combination seems to fix some numeric issues. Seems to have only neglectable impact on runtime
     if params.solver isa GurobiSolver
         set_optimizer_attribute(myLP, "NumericFocus", 3)
         set_optimizer_attribute(myLP, "CrossoverBasis", 1)
@@ -174,7 +174,7 @@ function build_opt_cut_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLa
     # k term of the cut
     # TODO: round coefficients?
     kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
-    cut += sum(kvals[a] * (1-master_vars[a]) for a in subLP.A)
+    cut += sum( (ceil(Int,kvals[a]) +1) * (1-master_vars[a]) for a in subLP.A)  # TODO: Rounding should be safe to avoid numerical trouble. We want to round up "kvals[a] + eps" where eps > 0 is sufficiently large, resulting in the used formula. But again, hard coded numeric
     return cut, kvals
 end
 

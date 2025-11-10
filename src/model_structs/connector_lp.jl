@@ -36,6 +36,8 @@ struct ConnectorLP{T}
 
     blc_cut_generator::Union{ConnectorLP_BlC, Nothing}  # subroutine for generating BlC cut coefficients required for better GBC cut coefficients
     my_subsolutions::AbstractVector{ConSubsolCut}  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
+
+    g_round_digits::Int  # we round obtained g-value to this digits (see 'ceil' docu of digits). It ensures numerical stability while weakening cuts.
 end
 
 function name(clp::ConnectorLP)
@@ -118,7 +120,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
 
         #build opt cut
         pobj = value(new_obj)
-        cut, bigMcut = build_opt_cut(subLP, optL2, y_vals, link_vals, params, time_limit_pareto)
+        cut, bigMcut = build_opt_cut(subLP, optL2, optL2_risk, y_vals, link_vals, params, time_limit_pareto)
     end
 
     # clean up and return
@@ -144,6 +146,8 @@ end
 
 # Arguments
 - 'subLP::ConnectorLP{T}': The LP that must be solved for the sub_problem. Note that the LP is modified during the solving process.
+- 'optL2': The value of optimal L2 solution.
+- 'optL2_risk': The value of the optimal L2 solution evaluated with L1 objective.
 - 'y_vals': The values of the optimal L2 solution for the current master solution. 
 - 'x_vals': The current master solution.
 - 'params::GBCparam': Parameters passed down from the main solver.
@@ -154,18 +158,19 @@ end
 - 'cut': The left-hand (i.e., non-trivial) side of the BlC constraint.
 - 'bigMcut': If big M coefficients of BlC were computed, return here the right-hand (i.e., non trivial) side of BlC constraint. Otherwise, return 'nothing'
 """
-function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCparam, timelimit)
+function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, params::GBCparam, timelimit)
     master_vars = subLP.link_vars
     bigMcut = nothing
 
-    # s term of the cut
-    sval = value(subLP.lp[:s])
-    cut = sval  # TODO: currently not rounding s. If we want to do it, we should round down?
-
     # g term of the cut
     gval = value(subLP.lp[:g]) 
+
+    # s term of the cut
+    sval = value(subLP.lp[:s])
+    cut = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP)  # TODO: rounding to avoid numerics
+
     ## build bound (called bigM-term)
-    bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution
+    bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution  # TODO: currently not rounding the gval in big M term computation. Good choice?
     @debug "We use big_m=$(bigMterm) for this optimality cut"
     if bigMterm < 0
         if bigMterm > -10e-4  # TODO: Again, hard coded numerics
@@ -184,14 +189,13 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
         blc_cut, _, cutcoeff_BlC = genBenderslike_cut!(subLP.blc_cut_generator, x_vals, params, timelimit)  # if we get a timeout error, we just let it through
         
         # build GBC cut, i.e., Bilevel Lagrangian cut, coefficients for theta terms
-        cut -= optL2 * gval 
         @debug "The big M values computed from Lagrangian dual now used in BlC are: $cutcoeff_BlC and optL2 * gval=$(ceil(Int, optL2 * gval))"
         for a in keys(cutcoeff_BlC) 
-            coefa = ceil(Int, cutcoeff_BlC[a]) # TODO: rounding should be save and avoid numeric trouble
+            coefa = cutcoeff_BlC[a] # TODO: we assume here that big M were already rounded  
             if params.trim_coeff
-                cut -= _adjust_cut_coef(min(coefa * gval, bigMterm)) * (1-master_vars[a]) * y_vals[a] # TODO: rounding to avoid numeric trouble
+                cut -= _adjust_cut_coef(min(coefa * _adjust_g(subLP, gval), bigMterm)) * (1-master_vars[a]) * y_vals[a] # TODO: rounding to avoid numeric trouble
             else
-                cut -= _adjust_cut_coef(coefa * gval) * (1-master_vars[a]) * y_vals[a] # TODO: rounding to avoid numeric trouble
+                cut -= _adjust_cut_coef(coefa * _adjust_g(subLP, gval)) * (1-master_vars[a]) * y_vals[a] # TODO: rounding to avoid numeric trouble
             end
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
@@ -199,8 +203,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, y_vals, x_vals, params::GBCpar
         # generate bigMcut
         bigMcut = blc_cut
     else
-        theta_xXg =
-            _adjust_cut_coef(optL2 * gval) + sum(_adjust_cut_coef(bigMterm) * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
+        theta_xXg = sum(_adjust_cut_coef(bigMterm) * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
         cut -= theta_xXg
     end
 
@@ -255,14 +258,14 @@ function check_solution_status_LP(me::ConnectorLP)
 
 
     if status == MOI.INFEASIBLE
-        @debug "The ConnectorLP $(name(me)) is infeasible. Starting computations of IIS. But most of the time this is implied by numerical issues."
+        @error "The ConnectorLP $(name(me)) is infeasible. Starting computations of IIS. But most of the time this is implied by numerical issues."
         compute_conflict!(me.lp)
         @debug "IIS computed, now printing it"
         iis_model, _ = copy_conflict(me.lp)
         if get_attribute(me.lp, MOI.ConflictStatus()) == MOI.CONFLICT_FOUND
-            @debug iis_model # printing to file just causes error...
+            @error iis_model # printing to file just causes error...
         else
-            @debug "The IIS was not computed succesfully??? Most likely numerics??"
+            @error "The IIS was not computed succesfully??? Most likely numerics??"
         end
         error("ConnectorLP $(name(me)) was infeasible. Computed IIS but stopping solution process (as it is clearly a bug). Most likely, it was caused by numerical issues.")
     elseif status == MOI.DUAL_INFEASIBLE
@@ -308,12 +311,11 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
-        @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and k=$(kvals). 
-            Rounded g to $(_adjust_g(value(subLP.lp[:g]))) for more numeric stability. "
+        @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and k=$(kvals). "
         sub_solver = separation!(
             subLP.sub_solver,
             value(subLP.lp[:s]),
-            _adjust_g(value(subLP.lp[:g])),
+            value(subLP.lp[:g]),
             kvals,
             params,
             time_limit
@@ -430,7 +432,7 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
 
     # build adjusted model
     current_obj = objective_value(subLP.lp)
-    pBd_obj = sum(subLP.lp[:k]) + bigMterm * cgsol
+    pBd_obj = sum(subLP.lp[:k]) + bigMterm * subLP.lp[:g]
     @objective(subLP.lp, Min, pBd_obj)
     @constraint(subLP.lp, pBd_const, lp_obj == current_obj)
 
@@ -509,16 +511,35 @@ end
 Round cut coef to avoid numeric trouble.
 """
 function _adjust_cut_coef(cut_coef)
-    return ceil(cut_coef, digits=4)  # TODO: again, hard coded numerics
+    return ceil(cut_coef, digits=0)  # TODO: again, hard coded numerics. Currently, we just round down to next integer, hoping that it is save
 end
 
 """
-    _adjust_g(g_value)
+    _adjust_g(subLP::ConnectorLP, g_value)
 
-Round value of g to avoid numeric trouble. 
+Round value of g to avoid numeric trouble. Only intended use case is to round 'g_value' before multiplying it with other coef of x-variables from master. 
+This should ensure higher numric stability while preserving correctness of cut.
 """
-function _adjust_g(g_value)
-    return ceil(g_value, digits=4)  # TODO: again, hard coded numerics
+function _adjust_g(subLP::ConnectorLP, g_value)
+    return ceil(g_value, digits=subLP.g_round_digits) 
+end
+
+
+"""
+    _adjust_optcut_constant(constvalue, optL2_risk, subLP::ConnectorLP)
+
+Numerically savely adjust the constant term of the GBC optimality cut.  
+"""
+function _adjust_optcut_constant(constvalue, optL2_risk, subLP::ConnectorLP)
+    num_tol = 10e-2  # TODO_: Again, hard coded numerics
+    if ! (constvalue >= optL2_risk - num_tol && constvalue <= optL2_risk + num_tol)
+        @debug "In GBCSolver $(name(subLP)), the next cut to be generated has constant term $(constvalue) but the current solution should have value $(optL2_risk).
+            This can occur if there are multiple solutions with the same L2 objective, but the subsolver chooses one with a non-minimal objective value according to the L1 objective.
+            Since we cannot guess the correct value for the cut constant, we omit rounding here."
+        return constvalue
+    else
+        return optL2_risk
+    end
 end
 
 
