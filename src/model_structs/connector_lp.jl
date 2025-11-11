@@ -203,8 +203,11 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         # generate bigMcut
         bigMcut = blc_cut
     else
-        theta_xXg = sum(_adjust_cut_coef(bigMterm) * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
-        cut -= theta_xXg
+        if gval > 0
+            # if gval = 0, we do not have any impact from theta coef
+            theta_xXg = sum(_adjust_cut_coef(bigMterm) * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
+            cut -= theta_xXg
+        end
     end
 
     # k term of the cut
@@ -311,7 +314,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
-        @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and k=$(kvals). "
+        @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
         sub_solver = separation!(
             subLP.sub_solver,
             value(subLP.lp[:s]),
@@ -538,6 +541,7 @@ function _adjust_optcut_constant(constvalue, optL2_risk, subLP::ConnectorLP)
             Since we cannot guess the correct value for the cut constant, we omit rounding here."
         return constvalue
     else
+        @debug "Set constant term of GBC to $(optL2_risk)"
         return optL2_risk
     end
 end

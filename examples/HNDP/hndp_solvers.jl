@@ -173,10 +173,12 @@ function to_BlCInstance(hndp::HNDPwC, solver::SolverWrapper; subsolver::SBlC_Sol
 
         # a small hack to see easily second level solution later in output
         optL2 = @variable(hpr, base_name = "optL2$(user.uname)")
+        optL1 = @variable(hpr, base_name = "optL1$(user.uname)")
         @constraint(hpr, optL2 == oL2, base_name = "objUser$(user.uname)")
+        @constraint(hpr, optL1 == oL1, base_name = "masterObj$(user.uname)")
 
         # set parameters for master
-        master_objs[user.uname] = oL1
+        master_objs[user.uname] = optL1
         sub_objs[user.uname] = optL2
     end
 

@@ -173,8 +173,8 @@ function build_opt_cut_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLa
 
     # k term of the cut
     # TODO: round coefficients?
-    kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
-    cut += sum( (ceil(Int,kvals[a]) +1) * (1-master_vars[a]) for a in subLP.A)  # TODO: Rounding should be safe to avoid numerical trouble. We want to round up "kvals[a] + eps" where eps > 0 is sufficiently large, resulting in the used formula. But again, hard coded numeric
+    kvals = Dict(a => _adjust_kval(subLP, value(subLP.lp[:k][a])) for a in subLP.A) # TODO: Rounding should be safe to avoid numerical trouble. We want to round up "kvals[a] + eps" where eps > 0 is sufficiently large, resulting in the used formula. But again, hard coded numeric
+    cut += sum( kvals[a] * (1-master_vars[a]) for a in subLP.A)  
     return cut, kvals
 end
 
@@ -211,7 +211,7 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A) 
-        @debug "The found sub_problem ConnectorLP_BlC solution is s=$(value(subLP.lp[:s])) and k=$(kvals)"
+        @debug "The found sub_problem ConnectorLP_BlC solution is s=$(value(subLP.lp[:s])) and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0))"
         sub_solver = separation_BlC!(
             subLP.sub_solver,
             value(subLP.lp[:s]),
@@ -296,6 +296,26 @@ end
 
 
 ### Auxiliary Functions ###
+
+"""
+    _adjust_kval(kval)
+
+Save rounding of the big M values. Especially, increment all non-zero big M by 1 to increase numeric stability.
+"""
+function _adjust_kval(me::ConnectorLP_BlC, kval)
+    # TODO: Again, hard coded numerics 
+    if kval < 10e-4  
+        return 0
+    elseif kval < 0 && kval > -10e-4
+        return 0
+    elseif kval < -10e-4
+        throw(ErrorException("A big M of Subproblem $(name(me)) was negative within the new BlC: $(kval)"))
+    else
+        return ceil(kval) + 1 # this rounding should not influence solution
+    end
+end
+
+
 """
     check_solution_status_LP(me::ConnectorLP_BlC)
 
