@@ -1,6 +1,7 @@
 include("mibs_aux_reader.jl")
 include("mibs_mps_reader.jl")
 include("mibs_instance_builder.jl")
+include("mibs_instance_gbc_preprocess.jl")
 include("mibs_instance_gbc_builder.jl")
 include("mibs_transformation.jl")
 include("mibs_instance_to_file_input.jl")
