@@ -73,6 +73,7 @@ function transform_GBC_to_MibS(instance::Instance)
     @objective(
         Upper(bilevel_model),
         Min,
+        upper_obj.constant +  # TODO: The constant part of the objective is not supported by the current BilevelJuMP version. Thus, the solution values may differ by this constant.
         sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) +
         sum(
             sum(coef * lower_vars_ref[var] for (var, coef) in sub_problem.r_objterm.terms)
