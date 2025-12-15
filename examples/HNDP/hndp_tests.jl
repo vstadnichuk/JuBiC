@@ -208,7 +208,7 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                     partial_dec=false,
                     mibs_correct=true
                 )
-                inst_mibs = transform_GBC_to_MibS(inst)
+                inst_mibs = transform_GBC_to_MibS(inst, GurobiSolver(Gurobi.Env()))
                 mibs_param = MibSparam(
                     true,
                     myfolderMiBS,
@@ -238,7 +238,7 @@ Test the algorithm for a toy example of the HNDP with negative cycle according t
 # Arguments
     - 'hsolver': The type of solver used for the bilevel problem. Currently supported are "GBC" for GBCSolver, "GBCLag" is the GBCSolver but Lagrian cuts are used for generating big M constants in coef.,
         "BlC" for the BlCSolver, "BlCLag" for BlCLagSolver where Lagrangian cuts are used for BlCuts, "BlCLagMiBS" if the Lagragian subproblem should be solved with MiBS,
-        "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
+        "MiBS" to use MiBS as bilevel solver, "CA" for compact arc-based model, "CP" for compact path-based model, and "CH" for a hybrid version of the previous two.
         If multiple solvers are passed, solve instance with each. 
     - 'time_limit': Time limit for the solvers.
     - 'partial_decomposition': If true, employ partial decomposition for GBCSolver.
@@ -368,6 +368,32 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 # save generated and continue
                 push!(instances, inst)
                 push!(parameters, blclag_param)
+            end
+
+            # build MiBS instance
+            if "MiBS" in hsolver
+                myfolderMiBS = myfolder * "/MiBSSolver"
+                create_folder_if_not_exists(myfolderMiBS)
+
+                # create instance
+                inst = to_GBCInstance(
+                    hndpt,
+                    GurobiSolver(Gurobi.Env());
+                    partial_dec=false,
+                    mibs_correct=true
+                )
+                inst_mibs = transform_GBC_to_MibS(inst, GurobiSolver(Gurobi.Env()))
+                mibs_param = MibSparam(
+                    true,
+                    myfolderMiBS,
+                )
+
+                # set parameter of instance
+                new_stat!(get_stats(mibs_param), "seed", 42)
+
+                # save generated and continue
+                push!(instances, inst_mibs)
+                push!(parameters, mibs_param)
             end
 
             # build arc compact solver instance
@@ -735,7 +761,7 @@ function test_HNDPwC(json_path::String)
                 partial_dec = false,
                 mibs_correct = true
             )
-            instance_mibs = transform_GBC_to_MibS(inst)  # transform GBC to MiBS
+            instance_mibs = transform_GBC_to_MibS(inst, GurobiSolver(Gurobi.Env()))  # transform GBC to MiBS
             mibs_param = MibSparam(
                 debug_mode,
                 myfolderrun

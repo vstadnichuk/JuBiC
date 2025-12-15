@@ -10,7 +10,7 @@ struct SubSolverJuMP{T} <: SubSolver
     name::String  # the name (unique identifier) of this sub_problem
     mip_model::JuMP.Model
     A::Vector{T}  # Iterable of resources
-    link_varsC::Any  # A list of linking variables (copy within sub_problem). Keys=A
+    link_varsC::Any  # A Dict of linking variables (copy within sub_problem). Keys=A
     y_vars::Any  # Dict of sub_problem variables appearing in the interdiction constraints. Keys=A. NOTE: We essentially assume that y-vars are binary. You are free to ignore it, but it can lead to undefined behavior
     link_constraints_capacities::Dict{T,<:Number}  # the capacity parameters in the interdiction linking constraints. I would recommend to set it to 1 und use y_vars as indicator variables sub_problem formulation!
     r_objterm::GenericAffExpr  # The objective function term within the master problem, i.e., the contribution to the cost in master (should be generated with sub_problem variables)
