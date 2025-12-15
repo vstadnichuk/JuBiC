@@ -119,10 +119,10 @@ end
 Define the custom sub-solver inheriting from the `JuBiC.SubSolver`. It should contain the variable `A` as the set of all identifiers of linking variables, and has to provide the following methods:
 
 - `JuBiC.name(sub_solver::OwnSubSolver)`: Return the name of the sub-problem
-- `JuBiC.check(sub_solver::OwnSubSolver, params::SolverParam)`: Check if the sub-solver type is correctly defined
-- `JuBiC.capacity_linking(sub_solver::OwnSubSolver, a, params::SolverParam)`: Return the capacity of each linking variable
-- `JuBiC.compute_lower_bound_master_contribution(sub_solver::OwnSubSolver, params::SolverParam, time_limit)`: Compute a lower bound on the contribution of the sub-solver to the master problem
-- `JuBiC.separation!(sub_solver::OwnSubSolver, sval, gvals, kvals::Dict, param::SolverParam, time_limit)`: Perform the separation for the given solution
+- `JuBiC.check(sub_solver::OwnSubSolver, params::SolverParam)`: This function should contain tests ensuring that the subsolver instance is correct and will be called before the solution process starts.
+- `JuBiC.capacity_linking(sub_solver::OwnSubSolver, a, params::SolverParam)`: Return the capacity of each linking variable 'a'
+- `JuBiC.compute_lower_bound_master_contribution(sub_solver::OwnSubSolver, params::SolverParam, time_limit)`: Compute a lower bound on the sub-solver's contribution to the master problem. In other words, the first-level objective function computed by the sub-solver will always be greater than or equal to the returned bound.
+- `JuBiC.separation!(sub_solver::OwnSubSolver, sval, gvals, kvals::Dict, param::SolverParam, time_limit)`: Perform the separation step, i.e., solve the assoziated Lagrangian subproblem
 - `JuBiC.solve_sub_for_x(sub_solver::OwnSubSolver, xvals, params::SolverParam, time_limit)`: Solve the second-level problem for the given first-level solution
 
 #### Define the Custom SubSolver Struct (`OwnSubSolver`):

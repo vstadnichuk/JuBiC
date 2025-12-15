@@ -1,6 +1,6 @@
 # Example 1: Simple Bilevel Problem
 
-This example demonstrates how to define and solve a simple bilevel optimization problem using binary variables at both the upper- and second-level.
+This example demonstrates how to define and solve a simple bilevel optimization problem using binary variables at both the first- and second-level.
 
 ---
 
@@ -42,7 +42,7 @@ using JuBiC, JuMP
 using Gurobi        # Or any other supported solver
 ```
 
-### Step 2: Define the first-level Problem
+### Step 2: Define the First-Level Problem
 
 Define the first-level (master) problem as follows:
 
@@ -68,7 +68,7 @@ xdict = Dict(a => x[a] for a in A)
 master = Master(master_model, A, xdict, [sub_name])
 ```
 
-### Step 3: Define the second-level Problem
+### Step 3: Define the Second-Level Problem
 
 Define the second-level (sub) problem as follows:
 ```julia

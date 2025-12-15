@@ -1,6 +1,6 @@
 # Mixed Integer Program (MIP) Solver
 
-The Mixed Integer Program (MIP) solver provides an interface for solving bilevel problems by reformulating them as a single-level mixed-integer program. This procedure must be performed explicitly by the user. 
+The Mixed Integer Program (MIP) solver provides an interface for solving bilevel problems by reformulating them as a single-level mixed-integer program. The user must perform this procedure explicitly. It provides a wrapper for passing a single-level MIP problem to JuBiC, which is especially useful if you want to benchmark other methods against an MIP solver. 
 
 
 ## Master Type
