@@ -98,7 +98,7 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
     # set upper level objective function
     @assert length(mps_data.rows_natural) <= 1 "Multiple natural rows are not supported"
     if length(mps_data.rows_natural) == 1 && haskey(mps_data.columns, mps_data.rows_natural[1])
-        @objective(model_upper, Min, sum(obj_bias + upper_vars[name] * n for (name, n) in mps_data.columns[mps_data.rows_natural[1]] if name in keys(upper_vars); init=obj_bias))
+        @objective(model_upper, Min, sum(upper_vars[name] * n for (name, n) in mps_data.columns[mps_data.rows_natural[1]] if name in keys(upper_vars); init=obj_bias))
         master_sub_obj = sum(lower_vars[name] * n for (name, n) in mps_data.columns[mps_data.rows_natural[1]] if name in keys(lower_vars); init=AffExpr(0))
     else
         @objective(model_upper, Min, obj_bias)

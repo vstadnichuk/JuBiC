@@ -90,20 +90,15 @@ Preprocesses the MPS model by transforming certain constraints and variables. It
 function _preprocess_model(mps_data::MPSData, aux_data::AUXData)
     obj_bias = 0.0
 
-    # transform x + y <= 1 into - \bar{x} + y <= 0
+    # transform a*x + y <= a into -a*\bar{x} + y <= 0
     for (var_name, bound) in mps_data.bounds
         if bound.is_binary && !(var_name in aux_data.variables)
-            other_var_name = nothing
-            C = 0.0
+            is_binary_linking = false
 
             for row in aux_data.constraints
                 if any(var_name == name for (name, _) in mps_data.columns[row])
-                    if other_var_name !== nothing
-                        other_var_name = nothing
-                        break
-                    end
-
-                    if mps_data.rhs[row] != 1
+                    if is_binary_linking
+                        is_binary_linking = false
                         break
                     end
 
@@ -116,18 +111,16 @@ function _preprocess_model(mps_data::MPSData, aux_data::AUXData)
                     end
 
                     column = mps_data.columns[row]
-                    factor = column[1][1] == var_name ? column[1][2] : column[2][2]
-                    other_factor = column[1][1] == var_name ? column[2][2] : column[1][2]
-                    other_var_name = column[1][1] == var_name ? column[2][1] : column[1][1]
-                    C = -factor / other_factor
-
-                    if other_factor <= 0 || C < 0
+                    factor = (column[1][1] == var_name) ? column[1][2] : column[2][2]
+                    if mps_data.rhs[row] <= 0 || factor <= 0 || factor != mps_data.rhs[row]
                         break
                     end
+
+                    is_binary_linking = true
                 end
             end
 
-            if other_var_name !== nothing
+            if is_binary_linking
                 delete!(mps_data.bounds, var_name)
 
                 new_var_name = var_name * LINKING_CONSTRAINT_SUFFIX
@@ -141,8 +134,8 @@ function _preprocess_model(mps_data::MPSData, aux_data::AUXData)
                         filter!(e -> e[1] != var_name, mps_data.columns[column])
                         push!(mps_data.columns[column], (new_var_name, -coefficient))
 
-                        if column in mps_data.rows_equal
-                            obj_bias -= coefficient
+                        if column in mps_data.rows_natural
+                            obj_bias += coefficient
                         else
                             mps_data.rhs[column] -= coefficient
                         end
