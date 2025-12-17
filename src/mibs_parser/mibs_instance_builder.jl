@@ -5,7 +5,7 @@ using BilevelJuMP
 
 Builds a bilevel optimization instance from the given MPS and AUX files.
 """
-function get_MibS_instance(mps_file_path::String, aux_file_path::String)
+function get_MibS_instance(mps_file_path::String, aux_file_path::String; stats::Union{Nothing,RunStats}=nothing)
     mps_data = _read_mps(mps_file_path)
     aux_data = _read_aux(aux_file_path)
 
@@ -75,6 +75,11 @@ function get_MibS_instance(mps_file_path::String, aux_file_path::String)
     _add_constraints!(mps_data.rows_less_than, 'L')
     _add_constraints!(mps_data.rows_greater_than, 'G')
     _add_constraints!(mps_data.rows_equal, 'E')
+
+    # fill the statistics if provided
+    if stats !== nothing
+        new_stat!(stats, "instance", mps_data.name)
+    end
 
     return Instance(MibSMaster(model), nothing)
 end

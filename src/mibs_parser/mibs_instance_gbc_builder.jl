@@ -7,7 +7,7 @@ const VARIABLE_PARTIAL_SUFFIX = "_JuBiC-partial"
 
 Builds an instance from the given MPS and AUX files.
 """
-function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer; partial_decomposition::Bool=true, preprocessing::Bool=true)
+function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer; partial_decomposition::Bool=true, preprocessing::Bool=true, stats::Union{Nothing,RunStats}=nothing)
     mps_data = _read_mps(mps_file_path)
     aux_data = _read_aux(aux_file_path)
 
@@ -144,6 +144,14 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
     _add_constraints!(mps_data.rows_less_than, 'L')
     _add_constraints!(mps_data.rows_greater_than, 'G')
     _add_constraints!(mps_data.rows_equal, 'E')
+
+    # fill the statistics if provided
+    if stats !== nothing
+        new_stat!(stats, "instance", mps_data.name)
+        new_stat!(stats, "instanceGen_use_partial_decomposition", partial_decomposition)
+        new_stat!(stats, "instanceGen_use_preprocessing", preprocessing)
+        new_stat!(stats, "instanceGen_obj_bias", obj_bias)
+    end
 
     # build and return the instance
     master = Master(model_upper, A, xdict, [nsub])
