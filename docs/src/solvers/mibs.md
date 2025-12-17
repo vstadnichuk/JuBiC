@@ -18,7 +18,7 @@ The MibS solver accepts the following parameters:
 
 - `output_folder_path`: The path to the output directory
 - `file_format_output`: The format of the output files (e.g., "lp", "mps")
-- `stats`: The runtime statistics
+- `stats`: The runtime statistics (default: `JuBiC.RunStats()`)
 
 The parameters can be set using one of the following constructors:
 

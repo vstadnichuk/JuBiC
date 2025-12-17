@@ -1,6 +1,6 @@
 # Example 1: Simple Bilevel Problem
 
-This example demonstrates how to define and solve a simple bilevel optimization problem using binary variables at both the first- and second-level.
+This example demonstrates how to define and solve a simple bilevel optimization problem using binary variables at both the first- and second-level. The complete implementation is available in the file [example1.jl](../examples/example1.jl).
 
 ---
 
@@ -44,7 +44,7 @@ using Gurobi        # Or any other supported solver
 
 ### Step 2: Define the First-Level Problem
 
-Define the first-level (master) problem as follows:
+We first need to define the first-level (master) problem using JuMP. For the implementation, we call this model `master_model`, and set up the binary variables and objective function accordingly. In addition, we create the master model, and a mapping of the linking variables.
 
 ```julia
 # Define the set of shared resources and the subproblem name
@@ -70,14 +70,15 @@ master = Master(master_model, A, xdict, [sub_name])
 
 ### Step 3: Define the Second-Level Problem
 
-Define the second-level (sub) problem as follows:
+In this step, we define `sub_model`, the second-level model, including its variables, constraints, and objective function. For the linking constraints, we create copies of the first-level variables to be used in the second-level problem constraints. We also define the part of the first-level objective function that depends on the second-level variables called `master_sub_obj`, and the capacities of the linking constraints.
+
 ```julia
 # Create the second-level model
 sub_model = Model()
 set_optimizer(sub_model, Gurobi.Optimizer)
 
 # Define binary variables for the second level
-@variable(sub_model, y[1, 2], Bin)
+@variable(sub_model, y[A], Bin)
 
 # Define copies of first-level (linking) variables
 @variable(sub_model, xc[A], Bin)
@@ -118,7 +119,7 @@ sub_solver = SubSolverJuMP(
 
 ### Step 5: Define the Parameters
 
-Define the parameters for solving the bilevel instance using the GBC method and creating an output directory:
+In this step, we will define the parameters for solving the bilevel instance using the GBC method and creating an output directory. As mentioned earlier, we use the Gurobi solver in this example for solving the MIP. If you prefer another solver, you should replace `GurobiSolver(Gurobi.Env())` with our own solver that inherits from `SolverWrapper`, and implement the required `get_next_optimizer()` method. 
 
 ```julia
 # Set up the solver parameters
@@ -131,7 +132,7 @@ params = GBCparam(
 )
 
 # Create the output directory
-mkpath("./output")  
+mkpath("./output")
 ```
 
 ### Step 6: Create and Solve the Instance
@@ -143,5 +144,11 @@ Finally, create the bilevel instance and solve it:
 instance = Instance(master, [sub_solver])
 
 # Solve the instance
-result = solve_instance!(instance, params)  
+result = solve_instance!(instance, params)
+```
+
+The result may contain the following output:
+
+```
+JuBiC.RunStats(Dict{String, Any}("SepaTimeCut" => 1.1966958250000002, "SepaTime" => 1.500258789, "Opt" => 1.0, "runtime_preprocessingGBC" => 0.7359138689998872, "NSub" => 1, "BNodes" => 1, "Solver" => "GBCSolver", "Opt_status" => "Optimal", "time_limit" => 3600, "runtime" => 2.0209591388702393, "gap" => 0.0, "NOptCuts" => 1, "NFeasCuts" => 1))
 ```

@@ -1,6 +1,6 @@
 # Benders-like Cuts (BlC)
 
-The Benders-like Cuts (BlC) solver first solves the High Point Relaxation of the bilevel problem, initially ignoring the second-level optimization functions. It then iteratively generates Benders-like cuts to ensure the optimality of the second-level problems using a user-provided big-M function explicitly provided by the user.
+The Benders-like Cuts (BlC) solver first solves the High Point Relaxation of the bilevel problem, initially ignoring the second-level optimization functions. It then iteratively generates Benders-like cuts to ensure the optimality of the second-level problems using a user-provided big-M function explicitly provided by the user. For more details on the this approach, see Section 6.2 (Benders-like Decomposition) in [Kleinert et al, 2021, *A Survey on Mixed-Integer Programming Techniques in Bilevel Optimization*](https://doi.org/10.1016/j.ejco.2021.100007).
 
 
 ## Master Type
@@ -10,7 +10,7 @@ The `BlCMaster` type has the following fields:
 - `hpr`: The High Point Relaxation JuMP model of the bilevel problem
 - `A`: The set of shared resources
 - `link_vars`: A dictionary mapping each shared resource to its corresponding first-level linking variable
-- `big_m`: A function computing the big-M values for second-level problems given a shared resource $a \in A$, and sub-problem name
+- `big_m`: A function computing the big-M values for second-level problems given a shared resource $a \in A$, and sub-problem name. It should have the signature `big_m(a, sub_name) -> Number`
 - `sub_names`: The names of the second-level problems
 - `sub_objectives`: A dictionary mapping each second-level problem name to its objective function expression
 
@@ -23,10 +23,10 @@ The BlC solver accepts the following parameters:
 - `debbug_out`: Boolean flag to enable or disable the debug output
 - `output_folder_path`: The path to the output directory
 - `file_format_output`: The format of the output files (e.g., "lp", "mps")
-- `stats`: The runtime statistics
-- `runtime`: The maximum allowed runtime for the solver (in seconds)
-- `threads_master`: Number of threads for the master problem
-- `threads_sub_con`: Number of threads for the subproblems
+- `stats`: The runtime statistics (default: `JuBiC.RunStats()`)
+- `runtime`: The maximum allowed runtime for the solver (in seconds) (default: 3600)
+- `threads_master`: Number of threads for the master problem (default: 8)
+- `threads_sub_con`: Number of threads for the subproblems (default: 8)
 
 The parameters can be set using one of the following constructors:
 

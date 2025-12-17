@@ -1,6 +1,6 @@
 # Example 2: Solving an Instance in MibS Input File Format
 
-This example illustrates how to solve a bilevel optimization problem using the MibS Input File Format, which is widely used for defining such problems. For more details on the format, please refer to the [MibS Input File Format](https://coin-or.github.io/MibS/input.html) and the [MPS Format](https://en.wikipedia.org/wiki/MPS_(format)).
+This example illustrates how to solve a bilevel optimization problem using the MibS Input File Format, which is widely used for defining such problems. For more details on the format, please refer to the [MibS Input File Format](https://coin-or.github.io/MibS/input.html) and the [MPS Format](https://en.wikipedia.org/wiki/MPS_(format)). The complete implementation is available in the file [example2.jl](../examples/example2.jl).
 
 ---
 
@@ -123,7 +123,7 @@ params = GBCparam(
 )
 
 # Create the output directory
-mkpath("./output")  
+mkpath("./output")
 ```
 
 ### Step 4: Solve the Instance

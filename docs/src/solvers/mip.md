@@ -20,9 +20,9 @@ The MIP solver accepts the following parameters:
 - `debbug_out`: Boolean flag to enable or disable the debug output
 - `output_folder_path`: The path to the output directory
 - `file_format_output`: The format of the output files (e.g., "lp", "mps")
-- `stats`: The runtime statistics
-- `runtime`: The maximum allowed runtime for the solver (in seconds)
-- `threads_master`: Number of threads for the master problem
+- `stats`: The runtime statistics (default: `JuBiC.RunStats()`)
+- `runtime`: The maximum allowed runtime for the solver (in seconds) (default: 3600)
+- `threads_master`: Number of threads for the master problem (default: 8)
 
 The parameters can be set using one of the following constructors:
 

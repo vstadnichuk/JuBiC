@@ -1,6 +1,6 @@
 # Example 3: Custom Pricing Solver
 
-This document presents a step-by-step guide on implementing a custom pricing solver within the `JuBiC` framework. 
+This document presents a step-by-step guide on implementing a custom pricing solver within the `JuBiC` framework. The complete implementation is available in the file [example3.jl](../examples/example3.jl).
 
 ---
 
@@ -191,7 +191,7 @@ end
 
 #### Implement the Required `compute_lower_bound_master_contribution()` Method:
 
-This method computes a lower bound on the contribution of the sub-solver to the master problem. In this case, we can compute the shortest path from source to target considering only transportation costs $c_a^u$ using Dijkstra's algorithm.
+This method computes a lower bound on the contribution of the sub-solver to the master problem. In this case, we can compute the shortest path from source to target considering only transportation costs $c_a^u$ using Dijkstra's algorithm. In addition, a parameter `time_limit` is provided, which can be used to limit the computation time if necessary to ensure that the overall solver respects time constraints.
 
 ```julia
 function JuBiC.compute_lower_bound_master_contribution(sub_solver::OwnSubSolver, params::SolverParam, time_limit)
@@ -212,6 +212,8 @@ end
 ```
 
 #### Implement the Required `separation!()` Method:
+
+This method should perform the separation step and output a `JuBiC.SubSolution` object. We again use Dijkstra's algorithm to compute the shortest path from source to target, but this time we consider the modified costs given by the `gvals` and `kvals` parameters. The parameter `sval` represents the objective value of the current first-level solution, which we use to check if the Benders cut is violated. The `time_limit` parameter can be used to limit computation time if necessary. The method returns whether the cut is violated, the risk and cost of the shortest path, and the path itself.
 
 ```julia
 function JuBiC.separation!(sub_solver::OwnSubSolver, sval, gvals, kvals::Dict, param::SolverParam, time_limit)
@@ -249,7 +251,7 @@ end
 
 #### Implement the Required `solve_sub_for_x()` Method:
 
-Given a first-level solution `xvals`, this method solves the second-level problem by constructing the graph with only the opened arcs and computing the shortest path from source to target. If a feasible path exists, it returns the total transportation time and the resource mapping. Otherwise, it indicates infeasibility.
+Given a first-level solution `xvals` (a dict mapping the arcs to their first-level decision variable values), this method solves the second-level problem by constructing the graph with only the opened arcs and computing the shortest path from source to target. If a feasible path exists, it returns the total transportation time and the resource mapping. Otherwise, it indicates infeasibility. Again, the `time_limit` parameter can be used to limit computation time if necessary.
 
 ```julia
 function JuBiC.solve_sub_for_x(sub_solver::OwnSubSolver, xvals, params::SolverParam, time_limit)

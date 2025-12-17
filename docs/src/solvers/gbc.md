@@ -31,19 +31,19 @@ The GBC solver accepts the following parameters:
 - `debbug_out`: Boolean flag to enable or disable the debug output
 - `output_folder_path`: The path to the output directory
 - `file_format_output`: The format of the output files (e.g., "lp", "mps")
-- `stats`: The runtime statistics
-- `runtime`: The maximum allowed runtime for the solver (in seconds)
-- `threads_master`: Number of threads for the master problem
-- `threads_sub_con`: Number of threads for the subproblems
-- `pareto`: The setting for the pareto cuts to be used. Possible values are:
+- `stats`: The runtime statistics (default: `JuBiC.RunStats()`)
+- `runtime`: The maximum allowed runtime for the solver (in seconds) (default: 3600)
+- `threads_master`: Number of threads for the master problem (default: 8)
+- `threads_sub_con`: Number of threads for the subproblems (default: 8)
+- `pareto`: The setting for the pareto cuts to be used (default: `JuBiC.PARETO_OPTIMALITY_ONLY`). Possible values are:
     - `PARETO_NONE`: No pareto cuts are generated
     - `PARETO_OPTIMALITY_ONLY`: Only pareto optimality cuts are generated
     - `PARETO_OPTIMALITY_AND_FEASIBILITY`: Both pareto optimality cuts and pareto feasibility cuts are generated
-- `warmstart`: Boolean flag to enable or disable warmstart in ConnectorLP (if false, ConnectorLP is reset at each iteration)
-- `bigMwithLC`: Boolean flag to enable or disable BlC cuts
-- `trim_coeff`: Boolean flag that determines whether to apply coefficient trimming optimization. When set to `true`, the solver uses bounds on cut coefficients to also trim k-coefficients and big M values generated from BlC coefficients
-- `infinity_num`: The value used to represent infinity in the solver
-- `g_round_digit`: The number of digits to round the coefficients in the solver
+- `warmstart`: Boolean flag to enable or disable warmstart in ConnectorLP (if false, ConnectorLP is reset at each iteration) (default: true)
+- `bigMwithLC`: Boolean flag to enable or disable BlC cuts (default: false)
+- `trim_coeff`: Boolean flag that determines whether to apply coefficient trimming optimization. When set to `true`, the solver uses bounds on cut coefficients to also trim k-coefficients and big M values generated from BlC coefficients (default: false)
+- `infinity_num`: The value used to represent infinity in the solver (default: 1e9)
+- `g_round_digit`: The number of digits to round the coefficients in the solver (default: 0)
 
 The parameters can be set using one of the following constructors:
 

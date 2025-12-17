@@ -7,7 +7,8 @@
 
 ### Problem Formulation
 
-Let $\mathcal{A}$ denote a set of shared resources. For each resource $a \in \mathcal{A}$, the first-level problem uses binary linking variables $x_a \in \{0, 1\}$, and we denote the vector of all $x$-variables as $\mathbf{x}$. Let $K$ be the total number of second-level problems. For each second-level problem $k \in \{1, \dots, K\}$ and resource $a \in \mathcal{A}$, let $C_a^k > 0$ denote the resource capacity available to the problem, and let $y_a^k \geq 0$ represent the variable in the second-level problem that is linked to the corresponding first-level variable $x_a$. Similarly, $\mathbf{y}^k$ denotes the vector of all $y$-variables of the $k$-th second-level problem. Furthermore, let $\mathbf{h}$ and $\mathbf{z}^k$ denote the (bounded) feasible regions for purely first-level and purely second-level variables. The functions $r(\cdot), r_1(\cdot), \dots, r_K(\cdot)$ and $c_1(\cdot), \dots, c_K(\cdot)$ represent the (linear) objective functions for the first-level and all second-level problems, respectively.
+JuBiC focuses on solving bilevel optimization problems with the following general structure.
+Let $\mathcal{A}$ denote a set of shared resources. For each resource $a \in \mathcal{A}$, the first-level problem uses binary linking variables $x_a \in \{0, 1\}$, and we denote the vector of all $x$-variables as $\mathbf{x}$. Let $K$ be the total number of second-level problems. For each second-level problem $k \in \{1, \dots, K\}$ and resource $a \in \mathcal{A}$, let $C_a^k > 0$ denote the resource capacity available to the problem, and let $y_a^k \geq 0$ represent the variable in the second-level problem that is linked to the corresponding first-level variable $x_a$. Similarly, $\mathbf{y}^k$ denotes the vector of all $y$-variables of the $k$-th second-level problem. Furthermore, let $\mathbf{h}$ and $\mathbf{z}^k$ denote the (bounded) feasible regions for purely first-level and purely second-level variables. The functions $r(\cdot), r_1(\cdot), \dots, r_K(\cdot)$ and $c_1(\cdot), \dots, c_K(\cdot)$ represent the (linear) objective functions for the first-level and all second-level problems, respectively. Note that two-stage problems are special cases where $r_i = c_i$ for all $i \in \{1, \dots, K\}$.
 
 The first-level problem is defined as:
 
@@ -33,15 +34,19 @@ Here, $\mathcal{S}_k(\mathbf{x})$ represents the set of optimal solutions to the
 
 ## Installation
 
-You can install JuBiC via Julia's package manager as follows:
+```@raw comment
+(currently not supported) Installation through Julia's package manager
 
-```julia-repl
-julia> import Pkg
+    You can install JuBiC via Julia's package manager as follows:
 
-julia> Pkg.add("JuBiC")
+    ```julia-repl
+    julia> import Pkg
+
+    julia> Pkg.add("JuBiC")
+    ```
 ```
 
-Alternatively, the latest development version can be installed directly from GitHub:
+The latest development version can be installed directly from GitHub:
 
 ```julia-repl
 julia> import Pkg
