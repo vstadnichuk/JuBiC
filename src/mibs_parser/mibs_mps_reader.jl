@@ -16,14 +16,14 @@ struct MPSData
     bounds::Dict{String,VariableBound}  # Mapping variable names to their bounds
 end
 
-const SECTION_NAMES = Set(["NAME", "ROWS", "COLUMNS", "RHS", "BOUNDS", "ENDATA"])
-
 """
     _read_mps(file_path::String) -> MPSData
 
 Reads an mps file and returns an MPSData struct containing the parsed data.
 """
 function _read_mps(file_path::String)
+    SECTION_NAMES = Set(["NAME", "ROWS", "COLUMNS", "RHS", "BOUNDS", "ENDATA"])
+
     name = ""
     rows_less_than = String[]
     rows_greater_than = String[]
@@ -82,6 +82,19 @@ function _read_mps(file_path::String)
                         columns[row_name] = Vector{Tuple{String,Number}}()
                     end
                     push!(columns[row_name], (var_name, coeff))
+
+                    if length(parts) > 3
+                        row_name2 = parts[4]
+                        coeff2 = parse(Float64, parts[5])
+                        if !haskey(columns, row_name2)
+                            columns[row_name2] = Vector{Tuple{String,Number}}()
+                        end
+                        push!(columns[row_name2], (var_name, coeff2))
+                    end
+
+                    if !haskey(rhs, row_name)
+                        rhs[row_name] = 0.0
+                    end
                 elseif current_section == "RHS"
                     row_name = parts[2]
                     rhs[row_name] = parse(Float64, parts[3])
@@ -108,6 +121,8 @@ function _read_mps(file_path::String)
                     elseif bound_type == "UI"
                         is_integer = true
                         upper_bound = parse(Float64, parts[4])
+                    elseif bound_type == "SC"
+                        error("Semi-continuous variables (SC) are not supported.")
                     end
 
                     if haskey(bounds, var_name)

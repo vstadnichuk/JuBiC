@@ -6,48 +6,47 @@ optimizer = Gurobi.Optimizer
 const instances_dir = "C:\\Users\\stadnichuk\\OneDrive - rwth-aachen.de\\Documents\\Arbeit\\Julia Bilevel\\L_Shape_tests\\JuBiC\\examples\\BOBILib\\instances"
 const instances_to_solve = ["K5010W07.KNP"]
 const test_gbc = true
+const test_gbc_without_preprocessing = false
+const test_gbc_without_partial_decomposition = false
 const test_mibs = true
-const test_mibs_transform = false
 
 
-function _solve_GBC(mps_data, aux_data, logging_gbc)
-    gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer)
+function _solve_GBC(mps_data, aux_data, logging_gbc, partial_decomposition, preprocessing)
     gbc_parameters = GBCparam(GurobiSolver(Gurobi.Env()), false, logging_gbc, "lp", PARETO_OPTIMALITY_ONLY)
+    gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer; partial_decomposition=partial_decomposition, preprocessing=preprocessing, stats=gbc_parameters.stats)
     gbc_statistics = solve_instance!(gbc_instance, gbc_parameters)
     return gbc_statistics
 end
 
 function _solve_MibS(mps_data, aux_data, logging_mibs)
-    bilevel_instance = get_MibS_instance(mps_data, aux_data)
     bilevel_parameters = MibSparam(false, logging_mibs)
+    bilevel_instance = get_MibS_instance(mps_data, aux_data; stats=bilevel_parameters.stats)
     bilevel_statistics = solve_instance!(bilevel_instance, bilevel_parameters)
     return bilevel_statistics
 end
 
-function _solve_MibS_transformation(mps_data, aux_data, logging_mibs)
-    gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer)
-    bilevel_instance = transform_GBC_to_MibS(gbc_instance)
-    bilevel_parameters = MibSparam(false, logging_mibs)
-    bilevel_statistics = solve_instance!(bilevel_instance, bilevel_parameters)
-    return bilevel_statistics
-end
 
 function main()
     logging_file = init_logging_folder()
     logging_gbc = joinpath(logging_file, "GBC_Solver")
+    logging_gbc_without_preprocessing = joinpath(logging_file, "GBC_Solver(Without_Preprocessing)")
+    logging_gbc_without_partial_decomposition = joinpath(logging_file, "GBC_Solver(Without_Partial_Decomposition)")
     logging_mibs = joinpath(logging_file, "MibS_Solver")
-    logging_mibs_transform = joinpath(logging_file, "MibS_Solver(Transformation)")
 
     if test_gbc
         mkpath(logging_gbc)
     end
 
-    if test_mibs
-        mkpath(logging_mibs)
+    if test_gbc_without_preprocessing
+        mkpath(logging_gbc_without_preprocessing)
     end
 
-    if test_mibs_transform
-        mkpath(logging_mibs_transform)
+    if test_gbc_without_partial_decomposition
+        mkpath(logging_gbc_without_partial_decomposition)
+    end
+
+    if test_mibs
+        mkpath(logging_mibs)
     end
 
     statistics_list = []
@@ -68,23 +67,25 @@ function main()
 
         if test_gbc
             println("Solving instance $instance with GBC")
-            statistic = _solve_GBC(mps_path, aux_path, logging_gbc)
-            new_stat!(statistic, "instance", instance)
+            statistic = _solve_GBC(mps_path, aux_path, logging_gbc, true, true)
+            push!(statistics_list, statistic)
+        end
+
+        if test_gbc_without_preprocessing
+            println("Solving instance $instance with GBC (without preprocessing)")
+            statistic = _solve_GBC(mps_path, aux_path, logging_gbc_without_preprocessing, true, false)
+            push!(statistics_list, statistic)
+        end
+
+        if test_gbc_without_partial_decomposition
+            println("Solving instance $instance with GBC (without partial decomposition)")
+            statistic = _solve_GBC(mps_path, aux_path, logging_gbc_without_partial_decomposition, false, true)
             push!(statistics_list, statistic)
         end
 
         if test_mibs
             println("Solving instance $instance with MibS")
             statistic = _solve_MibS(mps_path, aux_path, logging_mibs)
-            new_stat!(statistic, "instance", instance)
-            push!(statistics_list, statistic)
-        end
-
-        if test_mibs_transform
-            println("Solving instance $instance with MibS (Transformation)")
-            statistic = _solve_MibS_transformation(mps_path, aux_path, logging_mibs_transform)
-            new_stat!(statistic, "instance", instance)
-            statistic.data["Solver"] = "MibSSolver(Transformation)"
             push!(statistics_list, statistic)
         end
     end

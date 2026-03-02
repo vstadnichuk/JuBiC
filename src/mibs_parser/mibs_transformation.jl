@@ -184,5 +184,33 @@ function _key_for_value(vars, val, key_list)
             return k    # found it, return the key
         end
     end
-    return nothing       # not found
+
+    # define upper level objective
+    upper_obj = objective_function(instance.master.model)
+    @objective(
+        Upper(bilevel_model),
+        Min,
+        upper_obj.constant +  # TODO: The constant part of the objective is not supported by the current BilevelJuMP version. Thus, the solution values may differ by this constant.
+        sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) +
+        sum(
+            sum(coef * lower_vars_ref[var] for (var, coef) in sub_problem.r_objterm.terms)
+            for sub_problem in instance.subproblems
+        )  # TODO: Currently only supports the SubSolverJuMP subproblem type
+    )
+
+    # define lower level objective
+    lower_obj = objective_function(instance.subproblems[1].mip_model)
+    @objective(
+        Lower(bilevel_model),
+        Min,
+        sum(coef * lower_vars_ref[var] for (var, coef) in lower_obj.terms)
+    )
+
+    # add upper level constraints
+    _add_constraints!(Upper(bilevel_model), instance.master.model, upper_vars_ref)
+
+    # add lower level constraints
+    _add_constraints!(Lower(bilevel_model), instance.subproblems[1].mip_model, lower_vars_ref)
+
+    return Instance(MibSMaster(bilevel_model), nothing)
 end
