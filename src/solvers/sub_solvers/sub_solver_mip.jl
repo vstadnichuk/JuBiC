@@ -12,7 +12,6 @@ struct SubSolverJuMP{T} <: SubSolver
     A::Vector{T}  # Iterable of resources
     link_varsC::Any  # A Dict of linking variables (copy within sub_problem). Keys=A
     y_vars::Any  # Dict of sub_problem variables appearing in the interdiction constraints. Keys=A. NOTE: We essentially assume that y-vars are binary. You are free to ignore it, but it can lead to undefined behavior
-    link_constraints_capacities::Dict{T,<:Number}  # the capacity parameters in the interdiction linking constraints. I would recommend to set it to 1 und use y_vars as indicator variables sub_problem formulation!
     r_objterm::GenericAffExpr  # The objective function term within the master problem, i.e., the contribution to the cost in master (should be generated with sub_problem variables)
     c_objterm::GenericAffExpr  # the objective function of the original sub_problem (should be generated with sub_problem variables)
 
@@ -21,19 +20,65 @@ struct SubSolverJuMP{T} <: SubSolver
     # TODO: implement MIPGap for GBC solver (i.e., solve subproblem heuristically as long as it is not the coefficient of Benders-like cut)?
 end
 
-# TODO: It would maybe be much nicer to have a constructor who takes some struct representing the linking constraints that having them splitt between 3 different inputs
+_default_extra_cuts() = (timelimit -> (false, 0))
 
-function (::Type{SubSolverJuMP{T}})(
-    name, mip_model, A,
-    link_varsC, y_vars, link_constraints_capacities,
-    r_objterm, c_objterm
+function _create_link_varsC(mip_model::JuMP.Model, sub_name, A, y_vars)
+    link_varsC = @variable(mip_model, [a in A], Bin, base_name = "x_copy_$(sub_name)")
+    @constraint(mip_model, [a in A], y_vars[a] <= link_varsC[a])
+    return link_varsC
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    y_vars,
+    r_objterm,
+    c_objterm,
 ) where T
-    SubSolverJuMP{T}(
-      name, mip_model, A,
-      link_varsC, y_vars, link_constraints_capacities,
-      r_objterm, c_objterm,
-      timelimit -> false, 0
-    )
+    return SubSolverJuMP(name, mip_model, A, y_vars, r_objterm, c_objterm, _default_extra_cuts())
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    y_vars,
+    r_objterm,
+    c_objterm,
+    extra_cuts::Function,
+) where T
+    link_varsC = _create_link_varsC(mip_model, name, A, y_vars)
+    return SubSolverJuMP{T}(name, mip_model, A, link_varsC, y_vars, r_objterm, c_objterm, extra_cuts)
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    link_varsC,
+    y_vars,
+    link_constraints_capacities,
+    r_objterm,
+    c_objterm,
+) where T
+    @warn "The deprecated SubSolverJuMP constructor with explicit link_varsC and link_constraints_capacities was used for subsolver $(name). The passed linking copies and capacities are ignored; JuBiC now generates internal linking copies and assumes unit capacities."
+    return SubSolverJuMP(name, mip_model, A, y_vars, r_objterm, c_objterm, _default_extra_cuts())
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    link_varsC,
+    y_vars,
+    link_constraints_capacities,
+    r_objterm,
+    c_objterm,
+    extra_cuts::Function,
+) where T
+    @warn "The deprecated SubSolverJuMP constructor with explicit link_varsC and link_constraints_capacities was used for subsolver $(name). The passed linking copies and capacities are ignored; JuBiC now generates internal linking copies and assumes unit capacities."
+    return SubSolverJuMP(name, mip_model, A, y_vars, r_objterm, c_objterm, extra_cuts)
 end
 
 ####### Generic public functions that support with implementing SubSolverJuMP #######
@@ -131,7 +176,7 @@ end
 
 ####### Implementation of Solver required functions #######
 function capacity_linking(sol::SubSolverJuMP, a, params::SolverParam)
-    return sol.link_constraints_capacities[a]
+    return 1
 end
 
 function check(sol::SubSolverJuMP, params::SolverParam)
@@ -158,12 +203,7 @@ function check(sol::SubSolverJuMP, params::SolverParam)
     end
 
     # check if containers for linking vars/constraints have same size
-    if !(length(sol.link_constraints_capacities) == length(sol.link_varsC))
-        error(
-            "In subsolver $(name(sol)), the capacities in linking constraints do not match the (copied) master linking variables:
-       |capa| = $(length(sol.link_constraints_capacities)) and |link_vars| = $(length(sol.link_varsC)).",
-        )
-    elseif !(length(sol.link_varsC) == length(sol.y_vars))
+    if !(length(sol.link_varsC) == length(sol.y_vars))
         error(
             "In subsolver $(name(sol)), the number of linking variables does not match the number of second level variables in linking constraints! 
       |link_vars| = $(length(sol.link_varsC)) and |y_vars| = $(length(sol.y_vars)).",

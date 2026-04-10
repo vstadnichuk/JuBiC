@@ -44,21 +44,15 @@ function test_gbc_simple_bilevel()
     sub = Model(optimizer)
 
     @variable(sub, y[1:2], Bin)
-    @variable(sub, xc[A], Bin)
-    @constraint(sub, c1, y[1] <= xc[1])
-    @constraint(sub, c2, y[2] <= xc[2])
     @constraint(sub, cB, y[1] == 1)
     sub_obj = @expression(sub, -sum(y[A]))
     @objective(sub, Min, 1 * sub_obj)
     master_sub_obj = 10 * y[2]
-    link_constraints_capacities = Dict(1 => 1.0, 2 => 1.0)
     subS = SubSolverJuMP(
         nsub,
         sub,
         A,
-        xc,
         y,
-        link_constraints_capacities,
         master_sub_obj,
         sub_obj,
         timelimit -> (false, 0)
@@ -126,21 +120,15 @@ function test_gbc_feasibility_cuts()
     sub = Model(optimizer)
 
     @variable(sub, y[1:2], Bin)
-    @variable(sub, xc[A], Bin)
-    @constraint(sub, c1, y[1] <= xc[1])
-    @constraint(sub, c2, y[2] <= xc[2])
     @constraint(sub, cB, y[1] + y[2] == 2)
     sub_obj = @expression(sub, AffExpr(100))
     @objective(sub, Min, sub_obj)
     master_sub_obj = AffExpr(0)
-    link_constraints_capacities = Dict(1 => 1.0, 2 => 1.0)
     subS = SubSolverJuMP(
         nsub,
         sub,
         A,
-        xc,
         y,
-        link_constraints_capacities,
         master_sub_obj,
         sub_obj,
         timelimit -> (false, 0)
@@ -219,19 +207,14 @@ function test_gbc_two_follower()
     sub1 = Model(optimizer)
 
     @variable(sub1, y1[[1]], Bin)
-    @variable(sub1, x1c[A], Bin)
-    @constraint(sub1, c1, y1[1] <= x1c[1])
     sub_obj1 = @expression(sub1, -y1[1])
     @objective(sub1, Min, sub_obj1)
     master_sub_obj1 = 1*y1[1]
-    link_constraints_capacities1 = Dict(1 => 1.0)
     subS1 = SubSolverJuMP(
         nsub1,
         sub1,
         A,
-        x1c,
         y1,
-        link_constraints_capacities1,
         master_sub_obj1,
         sub_obj1,
         timelimit -> (false, 0)
@@ -241,19 +224,14 @@ function test_gbc_two_follower()
     sub2 = Model(optimizer)
 
     @variable(sub2, y2[[1]], Bin)
-    @variable(sub2, x2c[A], Bin)
-    @constraint(sub2, c1, y2[1] <= x2c[1])
     sub_obj2 = @expression(sub2, -y2[1])
     @objective(sub2, Min, sub_obj2)
     master_sub_obj2 = 1*y2[1]
-    link_constraints_capacities2 = Dict(1 => 3.0)
     subS2 = SubSolverJuMP(
         nsub2,
         sub2,
         A,
-        x2c,
         y2,
-        link_constraints_capacities2,
         master_sub_obj2,
         sub_obj2,
         timelimit -> (false, 0)

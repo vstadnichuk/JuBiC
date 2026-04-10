@@ -156,18 +156,11 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
     # build and return the instance
     master = Master(model_upper, A, xdict, [nsub])
 
-    link_constraints_capacities = merge(
-        Dict{String,Float64}(var => regular_linking_data[var][2] for var in regular_linking),
-        Dict{String,Float64}(a => 1.0 for a in all_link_vars)
-    )
-
     subS = SubSolverJuMP(
         nsub,
         model_lower,
         A,
-        upper_copy,
         y_vars,
-        link_constraints_capacities,
         master_sub_obj,
         lower_obj,
         timelimit -> (false, 0)

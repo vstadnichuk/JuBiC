@@ -134,8 +134,15 @@ function merge_subproblems(instance::Instance, solver::SolverWrapper)
     # build new structs
     mainsubname = "mainsub"
     nmaster = Master(instance.master.model, instance.master.A, instance.master.link_vars, [mainsubname], instance.master.partial_decomposition, instance.master.objL2) 
-    nsub = SubSolverJuMP(mainsubname, mainsub, instance.master.A, xlink, xlink, # TODO: setting y=x here is quite a hack but should work for MiBS. Not tested for other solver
-        Dict(a => 1 for a in instance.master.A), sum(values(r_obj_mainsub_ref)), sum(values(c_obj_mainsub_ref)), timelimit -> (false, 0))
+    nsub = SubSolverJuMP(
+        mainsubname,
+        mainsub,
+        instance.master.A,
+        xlink, # TODO: setting y=x here is quite a hack but should work for MiBS. Not tested for other solver
+        sum(values(r_obj_mainsub_ref)),
+        sum(values(c_obj_mainsub_ref)),
+        timelimit -> (false, 0),
+    )
     return Instance(nmaster, [nsub])
 end
 
