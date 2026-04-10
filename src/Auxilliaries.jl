@@ -44,6 +44,51 @@ function new_file_logger(filepath, print_debug)
 end
 
 """
+    capped_nthreads(n)
+
+Cap a requested thread count to the number of threads available on the current
+machine. Always returns at least one thread.
+"""
+function capped_nthreads(n)
+    available_threads = max(1, Sys.CPU_THREADS)
+    requested_threads = max(1, Int(n))
+    return min(requested_threads, available_threads)
+end
+
+"""
+    resolve_nthreads!(stats::RunStats, stat_prefix::String, requested_threads; context=stat_prefix)
+
+Resolve the effective number of threads to use on the current machine, store the
+used value in the run statistics, and emit a warning if the request had to be
+capped.
+"""
+function resolve_nthreads!(
+    stats::RunStats,
+    stat_prefix::String,
+    requested_threads;
+    context=stat_prefix,
+)
+    requested = max(1, Int(requested_threads))
+    used = capped_nthreads(requested)
+    new_stat!(stats, "$(stat_prefix)_used", used)
+
+    if used < requested
+        @warn "Requested $(requested) threads for $(context), but only $(used) thread(s) are available on this machine. JuBiC will use $(used) thread(s) instead."
+    end
+
+    return used
+end
+
+"""
+    used_nthreads(stats::RunStats, stat_prefix::String)
+
+Return the previously resolved thread count stored in the run statistics.
+"""
+function used_nthreads(stats::RunStats, stat_prefix::String)
+    return stats.data["$(stat_prefix)_used"]
+end
+
+"""
     print_collected_cuts(param::SolverParam, sol_to_lazy::Dict)
 
 Print the passed list of JuMP constraints 'sol_to_lazy' to file.

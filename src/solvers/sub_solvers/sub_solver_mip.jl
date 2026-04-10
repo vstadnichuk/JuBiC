@@ -304,7 +304,7 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
 end
 
 function set_nthreads(sol::SubSolverJuMP, n)
-    set_attribute(sol.mip_model, MOI.NumberOfThreads(), n)
+    set_attribute(sol.mip_model, MOI.NumberOfThreads(), capped_nthreads(n))
 end
 
 function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_limit)
@@ -466,4 +466,3 @@ function solve_mip(sol::SubSolverJuMP, time_limit)
         end
     end
 end
-

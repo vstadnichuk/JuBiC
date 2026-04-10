@@ -36,6 +36,8 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "NBigMlagCuts", 0)  # number of Lagrangian cuts computed to obtain better big M coef. 
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "SepaTimeCut", 0)  # time spend in separator for generating cuts only
+    master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
+    sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
 
     # do some initail checks for master and sub solvers
     @debug "Doing some checks if master and sub were created correctly."
@@ -73,9 +75,9 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     # set time limit and number of threads
     true_runtime = param.runtime - runtime_init
     set_time_limit_sec(master.model, true_runtime)
-    set_attribute(master.model, MOI.NumberOfThreads(), param.threads_master)
+    set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     for sub in subs
-        set_nthreads(sub, param.threads_sub_con)
+        set_nthreads(sub, sub_threads)
     end
 
     # add callback to master and solve 
@@ -201,7 +203,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     @variable(myLP, 0 <= g <= parameter.infinity_num)
 
     # set number of threads
-    set_attribute(myLP, MOI.NumberOfThreads(), parameter.threads_sub_con)
+    set_attribute(myLP, MOI.NumberOfThreads(), used_nthreads(parameter.stats, "threads_sub_con"))
 
     # TODO: This parameter combination seems to fix some numeric issues. Seems to have only necglectable impact on runtime
     if parameter.solver isa GurobiSolver
@@ -325,5 +327,3 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
         return
     end
 end
-
-

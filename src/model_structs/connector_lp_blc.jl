@@ -1,6 +1,8 @@
 ## This is a version of the ConnectorLP that solves the Lagrangian dual that appears when approximating Benders-like cuts. 
 ##  Although we share many similarities with ConnectorLP, it essentially solves a different LP. Therefore, we decided to provide a new implementation.
 
+import MathOptInterface as MOI
+
 
 ### Constructor and basic functions ###
 struct ConSubsolCut_BlC
@@ -58,6 +60,7 @@ function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict
     myLP = Model(() -> get_next_optimizer(solver))
     @variable(myLP, infinity_num >= s >= -infinity_num)
     @variable(myLP, k[sub_solver.A] >= 0)
+    set_attribute(myLP, MOI.NumberOfThreads(), used_nthreads(params.stats, "threads_sub_con"))
 
     # TODO: This parameter combination seems to fix some numeric issues. Seems to have only neglectable impact on runtime
     if params.solver isa GurobiSolver
@@ -347,4 +350,3 @@ function check_solution_status_LP(me::ConnectorLP_BlC)
         error("ConnectorLP_BlC $(name(me)) could not be solver to optimality but terminated with status $(status). Connot continue as this is undefined behavior.")
     end
 end
-
