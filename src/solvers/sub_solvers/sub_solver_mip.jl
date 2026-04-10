@@ -330,7 +330,7 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
     check_solution_status(sub_solver)
 
     # construct return value 
-    opt_obj = objective_value(sub_solver.mip_model) + sum([var_non_zero_tolerance*(1-value(sub_solver.link_varsC[a])) for a in sub_solver.A])
+    opt_obj = value(sub_solver.c_objterm - k_term)
     @debug "Optimal solution of sub " * sub_solver.name * " is " * string(opt_obj)
 
     is_violate = Bool(!(sval > opt_obj - var_non_zero_tolerance))

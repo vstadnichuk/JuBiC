@@ -25,6 +25,7 @@ include("solvers/blclag_solver.jl")
 include("solvers/mip_solver.jl")
 include("solvers/mibs_solver.jl")
 include("solvers/solvers.jl")
+include("solvers/batch_solve.jl")
 include("solvers/sub_solvers/labeling.jl")
 include("solvers/sub_solvers/a_star_search.jl")
 
@@ -34,6 +35,7 @@ export extra_cuts_benderslike_JuMP
 export GBCparam, BLCparam, BlCLagparam, MIPparam, MibSparam, SolverParam, CostStructure, AStarSolver, get_next_optimizer, new_stat!, add_stat!, get_stats, output_file_path, should_debbug_print
 export GurobiSolver, SolverWrapper
 export solve_instance!
+export solve_batch!
 export AStarCostState, MASTER_LEVEL, SUB_PROBLEM_LEVEL, CONNECTOR_BASED
 export ParetoCut, PARETO_NONE, PARETO_OPTIMALITY_ONLY, PARETO_OPTIMALITY_AND_FEASIBILITY
 

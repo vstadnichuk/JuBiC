@@ -7,6 +7,8 @@ logs/
 .vscode/
 mibs_errors.txt
 mibs_output.txt
+model.mps
+model.aux
 examples/data/smkp
 examples/BOBILib/instances
 .codex

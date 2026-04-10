@@ -97,7 +97,8 @@ end
     separation_BlC!(sub_solver::SubSolver, sval, gvals, kvals::Dict, param::SolverParam, time_limit)
 
 Solves the separation problem for the Benders-like sub_problem in BlC generation. 
-This involves finding the feasible solution that maximizes 'obj_second_level - sum kvals'. 
+This involves finding the feasible solution that maximizes 'obj_second_level - sum kvals'.
+Attention: You need to ensure that the found second-level solution is bilevel feasible, as otherwise the behaviour is undefined.
 When implementing the function, you can assume that 'kvals' are non negative. 
 
 # Arguments
@@ -152,4 +153,14 @@ function solve_sub_for_x(sub_solver::SubSolver, xvals, params::SolverParam, time
     error(
         "You need to implement the function solving your second level problem for your own SubSolver!",
     )
+end
+
+"""
+    supports_bilevel_subproblem_solver(sub_solver::SubSolver)
+
+Return whether the subsolver can solve the bilevel subproblems required by the
+BlCLag solver. By default, custom subsolvers are assumed not to support this.
+"""
+function supports_bilevel_subproblem_solver(sub_solver::SubSolver)
+    return false
 end

@@ -1,4 +1,158 @@
-using JuBiC, JuMP, Gurobi
+using JuBiC, JuMP, Gurobi, BilevelJuMP
+
+"""
+    generate_gbc_simple_bilevel_instance()
+
+Generate the simple bilevel test instance used for the GBC solver tests.
+
+The upper-level problem is:
+    min x1 - x2 + 10 y2
+
+The lower-level problem is:
+    min -y1 - y2
+    s.t. y1 <= x1, y2 <= x2, y1 = 1
+
+The optimal first-level solution is x1 = 1, x2 = 0, with overall objective 1.
+This function returns the decomposed instance with a `Master` and one
+`SubSolverJuMP`.
+"""
+function generate_gbc_simple_bilevel_instance()
+    A = [1, 2]
+    nsub = "Sub0"
+
+    mm = Model(optimizer)
+    @variable(mm, x[A], Bin)
+    @objective(mm, Min, x[1] - x[2])
+    xdict = Dict(a => x[a] for a in A)
+    master = Master(mm, A, xdict, [nsub])
+
+    sub = Model(optimizer)
+    @variable(sub, y[1:2], Bin)
+    @constraint(sub, cB, y[1] == 1)
+    sub_obj = @expression(sub, -sum(y[A]))
+    @objective(sub, Min, sub_obj)
+    master_sub_obj = 10 * y[2]
+    subS = SubSolverJuMP(
+        nsub,
+        sub,
+        A,
+        y,
+        master_sub_obj,
+        sub_obj,
+        timelimit -> (false, 0),
+    )
+
+    set_silent(sub)
+    return Instance(master, [subS])
+end
+
+"""
+    generate_blc_simple_bilevel_instance()
+
+Generate the corresponding high-point-relaxation instance for the classical BlC
+solver on the same simple bilevel problem as
+`generate_gbc_simple_bilevel_instance`.
+
+The master is the high-point relaxation, i.e., it contains copies of the
+second-level variables and constraints, and the subproblem is the follower model
+used for cut generation. The instance has one subproblem and uses a constant big
+M value of 100 in the tests.
+"""
+function generate_blc_simple_bilevel_instance()
+    A = [1, 2]
+    nsub = "Sub0"
+
+    hpr = Model(optimizer)
+    @variable(hpr, x[A], Bin)
+    @variable(hpr, yh[A], Bin)
+    @constraint(hpr, hpr_link_1, yh[1] <= x[1])
+    @constraint(hpr, hpr_link_2, yh[2] <= x[2])
+    @constraint(hpr, hpr_fix, yh[1] == 1)
+    @objective(hpr, Min, x[1] - x[2] + 10 * yh[2])
+    xdict = Dict(a => x[a] for a in A)
+    sub_obj_hpr = @expression(hpr, -sum(yh[A]))
+    master = BlCMaster(
+        hpr,
+        A,
+        xdict,
+        (a, sub_name) -> 100.0,
+        [nsub],
+        Dict(nsub => sub_obj_hpr),
+    )
+
+    sub = Model(optimizer)
+    @variable(sub, y[1:2], Bin)
+    @constraint(sub, cB, y[1] == 1)
+    sub_obj = @expression(sub, -sum(y[A]))
+    @objective(sub, Min, sub_obj)
+    master_sub_obj = 10 * y[2]
+    subS = SubSolverJuMP(
+        nsub,
+        sub,
+        A,
+        y,
+        master_sub_obj,
+        sub_obj,
+        timelimit -> (false, 0),
+    )
+
+    set_silent(sub)
+    return Instance(master, [subS])
+end
+
+"""
+    generate_blclag_simple_bilevel_instance()
+
+Generate the corresponding high-point-relaxation instance for the BlCLag solver
+on the same simple bilevel problem as
+`generate_gbc_simple_bilevel_instance`.
+
+As for the classical BlC formulation, the master is the HPR with copied
+second-level variables and constraints. In contrast to `BlCMaster`, no big-M
+callback is required because the BlCLag solver generates the Benders-like cuts
+automatically from the Lagrangian dual.
+"""
+function generate_blclag_simple_bilevel_instance()
+    A = [1, 2]
+    nsub = "Sub0"
+
+    hpr = Model(optimizer)
+    @variable(hpr, x[A], Bin)
+    @variable(hpr, yh[A], Bin)
+    @constraint(hpr, hpr_link_1, yh[1] <= x[1])
+    @constraint(hpr, hpr_link_2, yh[2] <= x[2])
+    @constraint(hpr, hpr_fix, yh[1] == 1)
+    @objective(hpr, Min, x[1] - x[2] + 10 * yh[2])
+    xdict = Dict(a => x[a] for a in A)
+    sub_obj_hpr = @expression(hpr, -sum(yh[A]))
+    master = BlCLagMaster(
+        hpr,
+        A,
+        xdict,
+        [nsub],
+        Dict(nsub => sub_obj_hpr),
+    )
+
+    sub = BilevelModel()
+    @variable(Upper(sub), x[A], Bin)
+    @variable(Lower(sub), y[A], Bin)
+    @constraint(Lower(sub), c_link[a in A], y[a] <= x[a])
+    @constraint(Lower(sub), cB, y[1] == 1)
+    sub_obj = @expression(sub, -sum(y[A]))
+    master_sub_obj = @expression(sub, 10 * y[2])
+    @objective(Upper(sub), Min, sub_obj)
+    @objective(Lower(sub), Min, sub_obj)
+    subS = SubSolverMiBS(
+        nsub,
+        sub,
+        A,
+        x,
+        y,
+        master_sub_obj,
+        sub_obj,
+    )
+    return Instance(master, [subS])
+end
 
 
 """
@@ -26,41 +180,7 @@ The lower-level problem is:
 The optimal solution is: x1 = 1 and x2 = 0.
 """
 function test_gbc_simple_bilevel()
-    # common ressources
-    A = [1, 2]
-
-    # names of subs
-    nsub = "Sub0"
-
-    # master MIP
-    mm = Model(optimizer)
-
-    @variable(mm, x[A], Bin)
-    @objective(mm, Min, x[1] - x[2])
-    xdict = Dict(a => x[a] for a in A)
-    master = Master(mm, A, xdict, [nsub])
-
-    # subproblem 
-    sub = Model(optimizer)
-
-    @variable(sub, y[1:2], Bin)
-    @constraint(sub, cB, y[1] == 1)
-    sub_obj = @expression(sub, -sum(y[A]))
-    @objective(sub, Min, 1 * sub_obj)
-    master_sub_obj = 10 * y[2]
-    subS = SubSolverJuMP(
-        nsub,
-        sub,
-        A,
-        y,
-        master_sub_obj,
-        sub_obj,
-        timelimit -> (false, 0)
-    )
-
-    # set model to silent and continue
-    set_silent(sub)
-    model = Instance(master, [subS])
+    model = generate_gbc_simple_bilevel_instance()
 
     parameter = GBCparam(
         GurobiSolver(Gurobi.Env()),
@@ -257,7 +377,70 @@ function test_gbc_two_follower()
     @test haskey(stats.data, "Opt") && stats.data["Opt"] ≈ 0
 end
 
+"""
+    test_blclag_requires_bilevel_subsolver()
+
+Check that BlCLag rejects subsolvers that cannot solve bilevel follower
+problems. This protects the requirement that BlCLag currently only supports the
+MiBS-based bilevel subsolver implementation.
+"""
+function test_blclag_requires_bilevel_subsolver()
+    A = [1, 2]
+    nsub = "SubInvalidBlCLag"
+
+    hpr = Model(optimizer)
+    @variable(hpr, x[A], Bin)
+    @variable(hpr, yh[A], Bin)
+    @constraint(hpr, hpr_link_1, yh[1] <= x[1])
+    @constraint(hpr, hpr_link_2, yh[2] <= x[2])
+    @constraint(hpr, hpr_fix, yh[1] == 1)
+    @objective(hpr, Min, x[1] - x[2] + 10 * yh[2])
+    xdict = Dict(a => x[a] for a in A)
+    sub_obj_hpr = @expression(hpr, -sum(yh[A]))
+    master = BlCLagMaster(hpr, A, xdict, [nsub], Dict(nsub => sub_obj_hpr))
+
+    sub = Model(optimizer)
+    @variable(sub, y[A], Bin)
+    @constraint(sub, cB, y[1] == 1)
+    sub_obj = @expression(sub, -sum(y[A]))
+    @objective(sub, Min, sub_obj)
+    master_sub_obj = 10 * y[2]
+    subS = SubSolverJuMP(
+        nsub,
+        sub,
+        A,
+        y,
+        master_sub_obj,
+        sub_obj,
+        timelimit -> (false, 0),
+    )
+    set_silent(sub)
+
+    model = Instance(master, [subS])
+    outdir = logging_folder * "/blclag_invalid_subsolver"
+    mkpath(outdir)
+    parameter = BlCLagparam(
+        GurobiSolver(Gurobi.Env()),
+        true,
+        outdir,
+        "lp",
+        PARETO_OPTIMALITY_ONLY,
+        true,
+        3600,
+    )
+
+    err = try
+        solve_instance!(model, parameter)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("Please use SubSolverMiBS.", sprint(showerror, err))
+end
+
 
 test_gbc_simple_bilevel()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
+test_blclag_requires_bilevel_subsolver()

@@ -29,6 +29,11 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     @debug "Doing some checks if master and sub were created correctly."
     check(master, param)
     for sub in subs
+        if !supports_bilevel_subproblem_solver(sub)
+            error(
+                "BlCLagSolver currently requires a bilevel-capable subsolver. The subsolver $(name(sub)) of type $(typeof(sub)) is not supported. Please use SubSolverMiBS.",
+            )
+        end
         check(sub, param)
     end
 
