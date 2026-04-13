@@ -1,6 +1,8 @@
 using JuBiC
 using JuMP
 using Graphs
+using Gurobi
+using Base.Threads
 
 include("hndp_network_generation_v2.jl")
 include("hndp_astar_wrapper_v2.jl")
@@ -228,7 +230,25 @@ function build_hndp_sd_auto_instance(
 end
 
 """
-    build_hndp_path_instance(hndp, solver; enumeration_time_limit)
+    build_hndp_path_instance(hndp, solver; enumeration_time_limit, parallelize=false)
+
+Wrapper around the sequential and parallel path-model builders. Set
+`parallelize=true` to use the parallel precomputation variant.
+"""
+function build_hndp_path_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    enumeration_time_limit::Float64,
+    parallelize::Bool=false,
+)
+    if parallelize
+        return build_hndp_path_instance_parallel(hndp, solver; enumeration_time_limit=enumeration_time_limit)
+    end
+    return build_hndp_path_instance_sequential(hndp, solver; enumeration_time_limit=enumeration_time_limit)
+end
+
+"""
+    build_hndp_path_instance_sequential(hndp, solver; enumeration_time_limit)
 
 Build the path-based HNDP reformulation. For each user, JuBiC first computes a
 path-length bound from the fixed-arc network. Then it enumerates all feasible
@@ -249,7 +269,7 @@ Returns:
   path enumeration
 - `path_counts`: number of enumerated paths for each user
 """
-function build_hndp_path_instance(
+function build_hndp_path_instance_sequential(
     hndp::HNDPwC,
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
@@ -324,8 +344,89 @@ function build_hndp_path_instance(
     return Instance(MIPMaster(mip), nothing), total_enum_runtime, path_counts
 end
 
+"""
+    build_hndp_path_instance_parallel(hndp, solver; enumeration_time_limit)
+
+Parallel version of the path-model builder. User-specific path-bound
+computations and path enumerations are run in parallel, while the final JuMP
+model is built serially afterwards. The time budget is interpreted as wall-clock
+time for the precomputation stage only.
+
+If any worker times out, the function returns an empty MIP model together with
+`enum_runtime == enumeration_time_limit` and an empty path-count dictionary.
+"""
+function build_hndp_path_instance_parallel(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    enumeration_time_limit::Float64,
+)
+    @info "Starting generation of the parallel path-based HNDP reformulation."
+    all_arcs = _hndp_all_arcs(hndp)
+    deadline = time() + enumeration_time_limit
+
+    tasks = Dict{String,Task}()
+    for user in hndp.users
+        local_user = user
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+    end
+
+    user_results = Dict{String,Any}()
+    any_timeout = false
+    for user in hndp.users
+        result = fetch(tasks[string(user.uname)])
+        user_results[string(user.uname)] = result
+        any_timeout |= result.timed_out
+    end
+
+    if any_timeout
+        @warn "Parallel path precomputation hit the global wall-clock time limit. Returning an empty path-based model by convention."
+        return _empty_path_instance(solver), enumeration_time_limit, Dict{String,Int}()
+    end
+
+    mip = Model(() -> get_next_optimizer(solver))
+    @variable(mip, x[all_arcs], Bin)
+    _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+
+    leader_terms = Dict{String,Any}()
+    path_counts = Dict{String,Int}()
+    for user in hndp.users
+        result = user_results[string(user.uname)]
+        if result.used_fallback
+            @warn "No feasible path was found in the fixed-arc network for user $(user.uname). Falling back to the n-1 edges heuristic bound $(result.bound)."
+        end
+
+        path_counts[string(user.uname)] = length(result.paths)
+        leader_obj, follower_obj = _add_user_path_constraints!(
+            mip,
+            user,
+            result.paths,
+            x;
+            add_strong_duality=true,
+        )
+        user_name = string(user.uname)
+        opt_l2 = @variable(mip, base_name = "optL2_path_$(user_name)")
+        @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_path_$(user_name)")
+        leader_terms[user_name] = leader_obj
+    end
+
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
+    @variable(mip, construction_cost_var)
+    @constraint(mip, construction_cost_var == constructioncost, base_name = "construction_cost")
+    @objective(mip, Min, construction_cost_var + sum(values(leader_terms)))
+
+    enum_runtime = min(enumeration_time_limit, maximum((result.runtime for result in values(user_results)); init=0.0))
+    @info "Finished generation of the parallel path-based HNDP reformulation."
+    return Instance(MIPMaster(mip), nothing), enum_runtime, path_counts
+end
+
 function _hndp_all_arcs(hndp::HNDPwC)
     return [(src(e), dst(e)) for e in edges(hndp.mygraph)]
+end
+
+function _empty_path_instance(solver::SolverWrapper)
+    mip = Model(() -> get_next_optimizer(solver))
+    @objective(mip, Min, 0)
+    return Instance(MIPMaster(mip), nothing)
 end
 
 """
@@ -517,6 +618,7 @@ function _fixed_arc_path_bound(user::User, hndp::HNDPwC, all_arcs, solver::Solve
 
     model = Model(() -> get_next_optimizer(solver))
     set_time_limit_sec(model, remaining_time)
+    set_attribute(model, MOI.NumberOfThreads(), 1)
     @variable(model, flow[a in all_arcs], Bin)
 
     for a in all_arcs
@@ -632,6 +734,41 @@ function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float6
         throw(ArgumentError("No feasible path was enumerated for user $(user.uname) within the path bound $(length_bound)."))
     end
     return paths, min(time() - start_time, max(0.0, deadline - start_time)), timed_out
+end
+
+function _path_precompute_solver(solver::SolverWrapper)
+    return solver
+end
+
+function _path_precompute_solver(solver::GurobiSolver)
+    # Gurobi environments are not thread-safe, so each worker gets its own
+    # environment for the precomputation phase.
+    return GurobiSolver()
+end
+
+function _compute_user_path_data(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper, deadline::Float64)
+    local_solver = _path_precompute_solver(solver)
+    start_time = time()
+    bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, local_solver, deadline)
+    if timed_out
+        return (
+            bound=bound,
+            used_fallback=true,
+            paths=HNDPPath[],
+            timed_out=true,
+            runtime=min(time() - start_time, max(0.0, deadline - start_time)),
+        )
+    end
+
+    paths, enum_runtime, timed_out = _enumerate_user_paths_v2(user, hndp, bound, deadline)
+    total_runtime = min(bound_runtime + enum_runtime, max(0.0, deadline - start_time))
+    return (
+        bound=bound,
+        used_fallback=used_fallback,
+        paths=paths,
+        timed_out=timed_out,
+        runtime=total_runtime,
+    )
 end
 
 """

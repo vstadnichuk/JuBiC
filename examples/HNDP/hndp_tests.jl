@@ -64,11 +64,11 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                 # create instance
                 inst = to_GBCInstance(
                     hndpt,
-                    GurobiSolver(Gurobi.Env());
+                    GurobiSolver();
                     partial_dec=partial_decomposition,
                 )
                 gbc_param = GBCparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderGBC,
                     "lp",
@@ -94,13 +94,13 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                 subsolvertype = SGBC_MIP_CYCLEFREE 
                 inst = to_GBCInstance(
                     hndpt,
-                    GurobiSolver(Gurobi.Env());
+                    GurobiSolver();
                     partial_dec=partial_decomposition, 
                     partial_objL2=partial_decomposition,
                     subtype = subsolvertype
                 )
                 gbclag_param = GBCparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderGBCLag,
                     "lp",
@@ -126,9 +126,9 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                 create_folder_if_not_exists(myfolderBlC)
 
                 # create instance
-                inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()))
+                inst = to_BlCInstance(hndpt, GurobiSolver())
                 blc_param =
-                    BLCparam(GurobiSolver(Gurobi.Env()), true, myfolderBlC, "lp", time_limit)
+                    BLCparam(GurobiSolver(), true, myfolderBlC, "lp", time_limit)
 
                 # set parameter of instance
                 new_stat!(get_stats(blc_param), "seed", 42)
@@ -146,11 +146,11 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                 # create instance
                 inst = to_BlCInstance(
                     hndpt,
-                    GurobiSolver(Gurobi.Env());
+                    GurobiSolver();
                     subsolver=SBlCLAG_MIP_CYCLEFREE
                 )
                 blclag_param = BlCLagparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderBlCLag,
                     "lp",
@@ -175,11 +175,11 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                 # create instance
                 inst = to_BlCInstance(
                     hndpt,
-                    GurobiSolver(Gurobi.Env());
+                    GurobiSolver();
                     subsolver=SBlCLAG_MiBS
                 )
                 blclagmibs_param = BlCLagparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderBlCLagMiBS,
                     "lp",
@@ -204,11 +204,11 @@ function test_toy_HNDPwC(hsolver=["GBC", "BlC", "GBCLag", "BlCLag", "BlCLagMiBS"
                 # create instance
                 inst = to_GBCInstance(
                     hndpt,
-                    GurobiSolver(Gurobi.Env());
+                    GurobiSolver();
                     partial_dec=false,
                     mibs_correct=true
                 )
-                inst_mibs = transform_GBC_to_MibS(inst, GurobiSolver(Gurobi.Env()))
+                inst_mibs = transform_GBC_to_MibS(inst, GurobiSolver())
                 mibs_param = MibSparam(
                     true,
                     myfolderMiBS,
@@ -267,12 +267,12 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 subsolvertype = if cycle_free_GBC SGBC_MIP else SGBC_MIP_CYCLEFREE end
                 inst = to_GBCInstance(
                     hndpt,
-                    GurobiSolver(Gurobi.Env());
+                    GurobiSolver();
                     partial_dec=partial_decomposition, 
                     subtype=subsolvertype
                 )
                 gbc_param = GBCparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderGBC,
                     "lp",
@@ -300,13 +300,13 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                     subsolvertype = SGBC_MIP_CYCLEFREE
                     inst = to_GBCInstance(
                         hndpt,
-                        GurobiSolver(Gurobi.Env());
+                        GurobiSolver();
                         partial_dec = partial_decomposition, 
                         partial_objL2 = partial_decomposition,
                         subtype = subsolvertype
                     )
                     gbclag_param = GBCparam(
-                        GurobiSolver(Gurobi.Env()),
+                        GurobiSolver(),
                         true,
                         myfolderGBCLag,
                         "lp",
@@ -337,9 +337,9 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 create_folder_if_not_exists(myfolderBlC)
 
                 # create instance
-                inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP) # we need MIP subsolver for negative cycles right now
+                inst = to_BlCInstance(hndpt, GurobiSolver(); subsolver = SBlC_MIP) # we need MIP subsolver for negative cycles right now
                 blc_param =
-                    BLCparam(GurobiSolver(Gurobi.Env()), true, myfolderBlC, "lp", time_limit)
+                    BLCparam(GurobiSolver(), true, myfolderBlC, "lp", time_limit)
 
                 # set parameter of instance
                 new_stat!(get_stats(blc_param), "seed", 42)
@@ -357,9 +357,9 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
 
                 # create instance
                 subsolvertype = if cycle_free_GBC SBlCLAG_MIP_CYCLEFREE else SGBC_MiBS end
-                inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver=subsolvertype) 
+                inst = to_BlCInstance(hndpt, GurobiSolver(); subsolver=subsolvertype) 
                 blclag_param =
-                    BlCLagparam(GurobiSolver(Gurobi.Env()), true, myfolderBlCLag, "lp", time_limit)
+                    BlCLagparam(GurobiSolver(), true, myfolderBlCLag, "lp", time_limit)
 
                 # set parameter of instance
                 new_stat!(get_stats(blclag_param), "seed", 42)
@@ -378,11 +378,11 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 # create instance
                 inst = to_GBCInstance(
                     hndpt,
-                    GurobiSolver(Gurobi.Env());
+                    GurobiSolver();
                     partial_dec=false,
                     mibs_correct=true
                 )
-                inst_mibs = transform_GBC_to_MibS(inst, GurobiSolver(Gurobi.Env()))
+                inst_mibs = transform_GBC_to_MibS(inst, GurobiSolver())
                 mibs_param = MibSparam(
                     true,
                     myfolderMiBS,
@@ -408,10 +408,10 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 # create instance
                 inst = to_MIPInstance_arc(
                     hndpt,
-                    GurobiSolver(Gurobi.Env())
+                    GurobiSolver()
                 )
                 ca_param = MIPparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderCA,
                     "lp",
@@ -439,11 +439,11 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 # create instance
                 inst, enumtime, _, _, _ = to_MIPInstance_path(
                     hndpt,
-                    GurobiSolver(Gurobi.Env()), 
+                    GurobiSolver(), 
                     time_limit
                 )
                 cp_param = MIPparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderCP,
                     "lp",
@@ -473,11 +473,11 @@ function test_negative_HNDP(hsolver=["GBC", "GBCLag", "BlC", "BlCLag", "BlCLagMi
                 # create instance
                 inst, enumtime, nbad_users = to_MIPInstance_hybrid(
                     hndpt,
-                    GurobiSolver(Gurobi.Env()), 
+                    GurobiSolver(), 
                     0.1 # time for enumeration of paths. You can play around with it to obtain paths or arcs for the one user we have in the toy example
                 )
                 ch_param = MIPparam(
-                    GurobiSolver(Gurobi.Env()),
+                    GurobiSolver(),
                     true,
                     myfolderCP,
                     "lp",
@@ -618,13 +618,13 @@ function test_HNDPwC(json_path::String)
             hndpt = hndps[u, al, nr]
             inst = to_GBCInstance(
                 hndpt,
-                GurobiSolver(Gurobi.Env());
+                GurobiSolver();
                 partial_dec=partdec,
                 partial_objL2=blc_gbc,
                 subtype = solvertype
             )
             gbc_param = GBCparam(
-                GurobiSolver(Gurobi.Env()),
+                GurobiSolver(),
                 debug_mode,
                 myfolderrun,
                 "lp",
@@ -669,8 +669,8 @@ function test_HNDPwC(json_path::String)
 
             # create instance
             hndpt = hndps[u, al, nr]
-            inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver=SBlC_MIP, fixedBigM=false)
-            blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
+            inst = to_BlCInstance(hndpt, GurobiSolver(); subsolver=SBlC_MIP, fixedBigM=false)
+            blc_param = BLCparam(GurobiSolver(), debug_mode, myfolderrun, "lp", time_limit)
 
             # set parameter of instance
             new_stat!(get_stats(blc_param), "fixnetwork", fixnetwork)
@@ -713,11 +713,11 @@ function test_HNDPwC(json_path::String)
             hndpt = hndps[u, al, nr]
             inst = to_BlCInstance(
                 hndpt, 
-                GurobiSolver(Gurobi.Env()); 
+                GurobiSolver(); 
                 subsolver = subsolvertype
             )
             blclag_param = BlCLagparam(
-                GurobiSolver(Gurobi.Env()),
+                GurobiSolver(),
                 debug_mode,
                 myfolderrun,
                 "lp",
@@ -757,11 +757,11 @@ function test_HNDPwC(json_path::String)
             hndpt = hndps[u, al, nr]
             inst = to_GBCInstance(
                 hndpt, 
-                GurobiSolver(Gurobi.Env());
+                GurobiSolver();
                 partial_dec = false,
                 mibs_correct = true
             )
-            instance_mibs = transform_GBC_to_MibS(inst, GurobiSolver(Gurobi.Env()))  # transform GBC to MiBS
+            instance_mibs = transform_GBC_to_MibS(inst, GurobiSolver())  # transform GBC to MiBS
             mibs_param = MibSparam(
                 debug_mode,
                 myfolderrun
@@ -888,12 +888,12 @@ function test_HNDPfix(json_file_path)
                                 subsolvertype = if cycle_free_GBC SGBC_MIP_CYCLEFREE else SGBC_MIP end
                                 inst = to_GBCInstance(
                                     hndpt,
-                                    GurobiSolver(Gurobi.Env());
+                                    GurobiSolver();
                                     partial_dec=partial_decomposition,
                                     subtype = subsolvertype
                                 )
                                 gbc_param = GBCparam(
-                                    GurobiSolver(Gurobi.Env()),
+                                    GurobiSolver(),
                                     debug_mode,
                                     myfolderrun,
                                     "lp",
@@ -949,9 +949,9 @@ function test_HNDPfix(json_file_path)
                                 with_logger(loggerBlC) do
                                     # create instance
                                     hndpt = hndps[u, nr, be]
-                                    inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()); subsolver = SBlC_MIP)
+                                    inst = to_BlCInstance(hndpt, GurobiSolver(); subsolver = SBlC_MIP)
                                     @debug "Time limit is set to $time_limit"
-                                    blc_param = BLCparam(GurobiSolver(Gurobi.Env()), debug_mode, myfolderrun, "lp", time_limit)
+                                    blc_param = BLCparam(GurobiSolver(), debug_mode, myfolderrun, "lp", time_limit)
 
                                     # set parameter of instance
                                     new_stat!(get_stats(blc_param), "U", u)
@@ -1013,9 +1013,9 @@ function test_HNDPfix(json_file_path)
                                 with_logger(loggerCA) do
                                     # create instance
                                     hndpt = hndps[u, nr, be]
-                                    inst = to_MIPInstance_arc(hndpt, GurobiSolver(Gurobi.Env()); fixedBigM=fixBigM, indicator=indicator, boundsL2vars=boundsL2vars)
+                                    inst = to_MIPInstance_arc(hndpt, GurobiSolver(); fixedBigM=fixBigM, indicator=indicator, boundsL2vars=boundsL2vars)
                                     ca_param = MIPparam(
-                                        GurobiSolver(Gurobi.Env()),
+                                        GurobiSolver(),
                                         debug_mode,
                                         myfolderrun,
                                         "lp",
@@ -1067,9 +1067,9 @@ function test_HNDPfix(json_file_path)
                             with_logger(loggerCP) do
                                 # create instance
                                 hndpt = hndps[u, nr, be]
-                                inst, enumtime, sp_enumtimes, enum_enumtimes, npaths = to_MIPInstance_path(hndpt, GurobiSolver(Gurobi.Env()), time_limit)
+                                inst, enumtime, sp_enumtimes, enum_enumtimes, npaths = to_MIPInstance_path(hndpt, GurobiSolver(), time_limit)
                                 cp_param = MIPparam(
-                                    GurobiSolver(Gurobi.Env()),
+                                    GurobiSolver(),
                                     debug_mode,
                                     myfolderrun,
                                     "lp",
@@ -1129,9 +1129,9 @@ function test_HNDPfix(json_file_path)
                             with_logger(loggerCH) do
                                 # create instance
                                 hndpt = hndps[u, nr, be]
-                                inst, enumtime, nbad_users = to_MIPInstance_hybrid(hndpt, GurobiSolver(Gurobi.Env()), time_enum_hybrid; fixedBigM=true)
+                                inst, enumtime, nbad_users = to_MIPInstance_hybrid(hndpt, GurobiSolver(), time_enum_hybrid; fixedBigM=true)
                                 ch_param = MIPparam(
-                                    GurobiSolver(Gurobi.Env()),
+                                    GurobiSolver(),
                                     debug_mode,
                                     myfolderrun,
                                     "lp",

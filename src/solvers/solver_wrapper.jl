@@ -8,6 +8,29 @@ struct GurobiSolver <: SolverWrapper
     env::Any  # The enviroment for the currernt solver 
 end
 
+"""
+    silent_gurobi_env()
+
+Create a Gurobi environment with console output disabled. This suppresses the
+license and initialization lines emitted by `Gurobi.Env()` itself; model-level
+`set_silent(...)` only applies after the environment already exists.
+"""
+function silent_gurobi_env()
+    return Gurobi.Env(Dict{String,Any}("OutputFlag" => 0))
+end
+
+"""
+    GurobiSolver(; silent=true)
+
+Convenience constructor for a Gurobi-based solver wrapper. By default we create
+the underlying `Gurobi.Env` in silent mode to avoid confusing initialization
+messages for end users.
+"""
+function GurobiSolver(; silent::Bool=true)
+    env = silent ? silent_gurobi_env() : Gurobi.Env()
+    return GurobiSolver(env)
+end
+
 
 
 """

@@ -18,7 +18,7 @@ write_to_file(compact_two_stage_model, "test_read_with_L2.lp")
 #write_to_file(compact_two_stage_neg, "test_read_with_L2_neg.lp")
 
 # test construction of GBCSolver instances
-#=instance1 = two_stage_JuBiC("examples/data/smkp/smkp_1.cor", "examples/data/smkp/smkp_1.sto", GurobiSolver(Gurobi.Env()))
+#=instance1 = two_stage_JuBiC("examples/data/smkp/smkp_1.cor", "examples/data/smkp/smkp_1.sto", GurobiSolver())
 write_to_file(instance1.master.model, "test_read_jmaster.lp")
 for sub in instance1.subproblems 
     write_to_file(sub.mip_model, "test_read_S$(sub.name).lp")
@@ -28,7 +28,6 @@ end =#
 # solve both models with negative and without negative variables
 #test_neg_compact(50)
 #test_twosatge_JuBiC(50)
-
 
 
 

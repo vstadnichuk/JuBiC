@@ -119,12 +119,12 @@ sub_solver = SubSolverJuMP(
 
 ### Step 5: Define the Parameters
 
-In this step, we will define the parameters for solving the bilevel instance using the GBC method and creating an output directory. As mentioned earlier, we use the Gurobi solver in this example for solving the MIP. If you prefer another solver, you should replace `GurobiSolver(Gurobi.Env())` with our own solver that inherits from `SolverWrapper`, and implement the required `get_next_optimizer()` method. 
+In this step, we will define the parameters for solving the bilevel instance using the GBC method and creating an output directory. As mentioned earlier, we use the Gurobi solver in this example for solving the MIP. If you prefer another solver, you should replace `GurobiSolver()` with your own solver that inherits from `SolverWrapper`, and implement the required `get_next_optimizer()` method. 
 
 ```julia
 # Set up the solver parameters
 params = GBCparam(
-    GurobiSolver(Gurobi.Env()),     # Solver used
+    GurobiSolver(),     # Solver used
     false,                          # Disable debug output
     "./output",                     # Output directory
     "lp",                           # Output file format

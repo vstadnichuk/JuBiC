@@ -391,7 +391,7 @@ end
 function _build_mip_solver_wrapper(config::Dict{String,Any})
     mip_solver = _required_string(config, "mip_solver")
     if mip_solver == "Gurobi"
-        return GurobiSolver(Gurobi.Env())
+        return GurobiSolver()
     end
     error("Unsupported MIP solver '$(mip_solver)' in experiment configuration.")
 end

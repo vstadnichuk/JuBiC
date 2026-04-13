@@ -162,7 +162,7 @@ function test_gbc_simple_bilevel_with_blc_subsolver()
     outdir = logging_folder * "/gbc_simple_bilevel_blc_subsolver"
     mkpath(outdir)
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         outdir,
         "lp",
@@ -179,7 +179,7 @@ function test_blclag_simple_bilevel_with_blc_subsolver()
     outdir = logging_folder * "/blclag_simple_bilevel_blc_subsolver"
     mkpath(outdir)
     parameter = BlCLagparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         outdir,
         "lp",
@@ -198,7 +198,7 @@ function test_gbc_simple_bilevel_with_blc_subsolver_auto_oracle()
     outdir = logging_folder * "/gbc_simple_bilevel_blc_subsolver_auto_oracle"
     mkpath(outdir)
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         outdir,
         "lp",
@@ -215,7 +215,7 @@ function test_blclag_simple_bilevel_with_blc_subsolver_auto_oracle()
     outdir = logging_folder * "/blclag_simple_bilevel_blc_subsolver_auto_oracle"
     mkpath(outdir)
     parameter = BlCLagparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         outdir,
         "lp",

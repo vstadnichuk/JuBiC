@@ -19,8 +19,8 @@ myfolderBlC = logging_folder * "/BlCSolver"
 mkpath(myfolderBlC)
 
 # create instance
-inst = to_BlCInstance(hndpt, GurobiSolver(Gurobi.Env()))
-blc_param = BLCparam(GurobiSolver(Gurobi.Env()), false, myfolderBlC, "lp", 10000)
+inst = to_BlCInstance(hndpt, GurobiSolver())
+blc_param = BLCparam(GurobiSolver(), false, myfolderBlC, "lp", 10000)
 
 # set parameter of instance
 JuBiC.new_stat!(JuBiC.get_stats(blc_param), "seed", 42)
@@ -40,7 +40,7 @@ parameters = []
 # Append the current examples to the instances and parameters
 simple_bilevel_instance = simple_bilevel_example()
 simple_bilevel_parameter = GBCparam(
-    GurobiSolver(Gurobi.Env()),
+    GurobiSolver(),
     false,
     logging_folder * "/simple_bilevel_example",
     "lp",

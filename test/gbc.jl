@@ -183,7 +183,7 @@ function test_gbc_simple_bilevel()
     model = generate_gbc_simple_bilevel_instance()
 
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         logging_folder * "/gbc_simple_bilevel",
         "lp",
@@ -260,7 +260,7 @@ function test_gbc_feasibility_cuts()
 
     gbc_logging_folder = logging_folder * "/gbc_feasibility_cuts"
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         gbc_logging_folder,
         "lp",
@@ -364,7 +364,7 @@ function test_gbc_two_follower()
     model = Instance(master, [subS1, subS2])
 
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         logging_folder * "/gbc_two_follower",
         "lp",
@@ -420,7 +420,7 @@ function test_blclag_requires_bilevel_subsolver()
     outdir = logging_folder * "/blclag_invalid_subsolver"
     mkpath(outdir)
     parameter = BlCLagparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         outdir,
         "lp",

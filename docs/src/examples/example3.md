@@ -363,7 +363,7 @@ instance = define_instance(arcs, opening_costs, n_nodes, sources, targets, trans
 
 
 # Set up the solver parameters
-params = GBCparam(GurobiSolver(Gurobi.Env()), true, "./output", "lp", PARETO_OPTIMALITY_ONLY)
+params = GBCparam(GurobiSolver(), true, "./output", "lp", PARETO_OPTIMALITY_ONLY)
 
 # Create output directory if it doesn't exist
 mkpath("./output")

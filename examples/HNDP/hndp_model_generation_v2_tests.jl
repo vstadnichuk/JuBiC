@@ -159,7 +159,7 @@ end
 
 function _run_hndp_model_pair_test(big_m_mode::Symbol)
     hndp = build_toy_hndp_two_users()
-    solver = GurobiSolver(Gurobi.Env())
+    solver = GurobiSolver()
 
     blc_instance = build_hndp_blc_instance(hndp, solver; big_m_mode=big_m_mode)
     sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=big_m_mode)
@@ -180,7 +180,7 @@ function _run_hndp_model_pair_test(big_m_mode::Symbol)
 end
 
 function _run_hndp_blc_astar_pair_test(hndp::HNDPwC, big_m_mode::Symbol, expected_opt::Union{Nothing,Float64}=nothing)
-    solver = GurobiSolver(Gurobi.Env())
+    solver = GurobiSolver()
 
     blc_mip_instance = build_hndp_blc_instance(
         hndp,
@@ -208,7 +208,7 @@ end
 
 function _run_hndp_path_model_test()
     hndp = build_toy_hndp_two_users()
-    solver = GurobiSolver(Gurobi.Env())
+    solver = GurobiSolver()
 
     blc_instance = build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
     sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
@@ -231,7 +231,7 @@ end
 
 function _run_hndp_path_model_all_decision_arcs_test()
     hndp = build_toy_hndp_two_users_all_decision_arcs()
-    solver = GurobiSolver(Gurobi.Env())
+    solver = GurobiSolver()
 
     blc_instance = build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_N_MINUS_ONE)
     sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=HNDP_BIGM_N_MINUS_ONE)
@@ -260,7 +260,7 @@ end
 
 function _run_hndp_path_model_weighted_test()
     hndp = build_toy_hndp_weighted_user()
-    solver = GurobiSolver(Gurobi.Env())
+    solver = GurobiSolver()
 
     blc_instance = build_hndp_blc_instance(
         hndp,
@@ -281,12 +281,43 @@ function _run_hndp_path_model_weighted_test()
     @test path_stats.data["Opt"] ≈ 0 atol = 1e-6
 end
 
+function _run_hndp_path_parallel_equivalence_test(hndp::HNDPwC, expected_opt::Float64)
+    solver = GurobiSolver()
+
+    seq_instance, seq_runtime, seq_counts = build_hndp_path_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=60.0,
+        parallelize=false,
+    )
+    par_instance, par_runtime, par_counts = build_hndp_path_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=60.0,
+        parallelize=true,
+    )
+
+    seq_stats = solve_instance!(seq_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    par_stats = solve_instance!(par_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+
+    @test seq_runtime >= 0
+    @test par_runtime >= 0
+    @test seq_counts == par_counts
+    @test haskey(seq_stats.data, "Opt")
+    @test haskey(par_stats.data, "Opt")
+    @test seq_stats.data["Opt"] ≈ par_stats.data["Opt"] atol = 1e-6
+    @test par_stats.data["Opt"] ≈ expected_opt atol = 1e-6
+end
+
 @testset "HNDP Model Generation V2 Tests" begin
     _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
     _run_hndp_model_pair_test(HNDP_BIGM_N_MINUS_ONE)
     _run_hndp_path_model_test()
     _run_hndp_path_model_all_decision_arcs_test()
     _run_hndp_path_model_weighted_test()
+    _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users(), -7.0)
+    _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
+    _run_hndp_path_parallel_equivalence_test(build_toy_hndp_weighted_user(), 0.0)
     _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
     _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
     _run_hndp_blc_astar_pair_test(build_toy_hndp_weighted_user(), HNDP_BIGM_FIXED_NETWORK_PATH)
