@@ -3,9 +3,12 @@ using JuMP
 using Graphs
 
 include("hndp_network_generation_v2.jl")
+include("hndp_astar_wrapper_v2.jl")
 
 const HNDP_BIGM_FIXED_NETWORK_PATH = :fixed_network_path
 const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive
+const HNDP_SUBPROBLEM_MIP = :mip
+const HNDP_SUBPROBLEM_ASTAR = :astar
 
 """
     _fix_non_decision_arcs!(model, xvars, decision_arcs)
@@ -23,15 +26,21 @@ function _fix_non_decision_arcs!(model::JuMP.Model, xvars, decision_arcs)
 end
 
 """
-    build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
+    build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH, subproblem_method=HNDP_SUBPROBLEM_MIP)
 
-Build a JuBiC `BlCMaster` instance for the passed HNDP network.
+Build a JuBiC `BlCMaster` instance for the passed HNDP network. The follower
+subproblems can be solved either as MIPs or via the generic JuBiC A* / labeling
+framework.
 """
 function build_hndp_blc_instance(
     hndp::HNDPwC,
     solver::SolverWrapper;
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+    subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
 )
+    subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_ASTAR) ||
+        throw(ArgumentError("Unknown HNDP BlC subproblem method $(subproblem_method)."))
+
     all_arcs = _hndp_all_arcs(hndp)
     user_names = [string(user.uname) for user in hndp.users]
 
@@ -72,30 +81,34 @@ function build_hndp_blc_instance(
 
     subs = Any[]
     for user in hndp.users
-        sub_model = Model(() -> get_next_optimizer(solver))
-        leader_obj, follower_obj, flow = _add_user_flow_constraints!(
-            sub_model,
-            user,
-            hndp,
-            all_arcs;
-            xvars=nothing,
-            binary_flow=true,
-            add_strong_duality=false,
-        )
-        @objective(sub_model, Min, follower_obj)
-        set_silent(sub_model)
-        y_vars = Dict(a => flow[a] for a in hndp.edgeA)
-        push!(
-            subs,
-            SubSolverJuMP(
-                string(user.uname),
+        if subproblem_method == HNDP_SUBPROBLEM_MIP
+            sub_model = Model(() -> get_next_optimizer(solver))
+            leader_obj, follower_obj, flow = _add_user_flow_constraints!(
                 sub_model,
-                hndp.edgeA,
-                y_vars,
-                leader_obj,
-                follower_obj,
-            ),
-        )
+                user,
+                hndp,
+                all_arcs;
+                xvars=nothing,
+                binary_flow=true,
+                add_strong_duality=false,
+            )
+            @objective(sub_model, Min, follower_obj)
+            set_silent(sub_model)
+            y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+            push!(
+                subs,
+                SubSolverJuMP(
+                    string(user.uname),
+                    sub_model,
+                    hndp.edgeA,
+                    y_vars,
+                    leader_obj,
+                    follower_obj,
+                ),
+            )
+        else
+            push!(subs, build_hndp_astar_user(user, hndp, hndp.edgeA))
+        end
     end
 
     return Instance(master, subs)
