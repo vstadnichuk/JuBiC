@@ -31,7 +31,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     for sub in subs
         if !supports_bilevel_subproblem_solver(sub)
             error(
-                "BlCLagSolver currently requires a bilevel-capable subsolver. The subsolver $(name(sub)) of type $(typeof(sub)) is not supported. Please use SubSolverMiBS.",
+                "BlCLagSolver currently requires a bilevel-capable subsolver. The subsolver $(name(sub)) of type $(typeof(sub)) is not supported.",
             )
         end
         check(sub, param)

@@ -381,8 +381,8 @@ end
     test_blclag_requires_bilevel_subsolver()
 
 Check that BlCLag rejects subsolvers that cannot solve bilevel follower
-problems. This protects the requirement that BlCLag currently only supports the
-MiBS-based bilevel subsolver implementation.
+problems. This protects the requirement that BlCLag only runs with subsolvers
+that explicitly support bilevel follower solves.
 """
 function test_blclag_requires_bilevel_subsolver()
     A = [1, 2]
@@ -436,7 +436,7 @@ function test_blclag_requires_bilevel_subsolver()
         e
     end
     @test err isa ErrorException
-    @test occursin("Please use SubSolverMiBS.", sprint(showerror, err))
+    @test occursin("requires a bilevel-capable subsolver", sprint(showerror, err))
 end
 
 

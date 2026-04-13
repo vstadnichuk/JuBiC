@@ -24,6 +24,10 @@ with_logger(logger) do
         include("gbc.jl")
     end
 
+    @testset "Bilevel SubSolver Tests" begin
+        include("bilevel_subsolver.jl")
+    end
+
     @testset "Batch Solver Tests" begin
         include("batch.jl")
     end
