@@ -8,6 +8,21 @@ const HNDP_BIGM_FIXED_NETWORK_PATH = :fixed_network_path
 const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive
 
 """
+    _fix_non_decision_arcs!(model, xvars, decision_arcs)
+
+Fix all non-decision arcs to one. In the HNDP setting, only arcs in
+`decision_arcs` are controlled by the leader; every other arc belongs to the
+fixed network and is therefore always available.
+"""
+function _fix_non_decision_arcs!(model::JuMP.Model, xvars, decision_arcs)
+    for arc in eachindex(xvars)
+        if !(arc in decision_arcs)
+            @constraint(model, xvars[arc] == 1, base_name = "fix_$(arc)")
+        end
+    end
+end
+
+"""
     build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
 
 Build a JuBiC `BlCMaster` instance for the passed HNDP network.
@@ -22,11 +37,7 @@ function build_hndp_blc_instance(
 
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
-    for arc in all_arcs
-        if !(arc in hndp.edgeA)
-            @constraint(hpr, x[arc] == 1, base_name = "fix_$(arc)")
-        end
-    end
+    _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
 
     master_terms = Dict{String,Any}()
     sub_terms = Dict{String,Any}()
@@ -49,7 +60,7 @@ function build_hndp_blc_instance(
         sub_terms[user_name] = opt_l2
     end
 
-    constructioncost = sum(hndp.edge_price[a] * x[a] for a in hndp.edgeA)
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @variable(hpr, construction_cost_var)
     @constraint(hpr, construction_cost_var == constructioncost, base_name = "construction_cost")
     @objective(hpr, Min, construction_cost_var + sum(values(master_terms)))
@@ -110,11 +121,7 @@ function build_hndp_sd_instance(
     all_arcs = _hndp_all_arcs(hndp)
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
-    for arc in all_arcs
-        if !(arc in hndp.edgeA)
-            @constraint(mip, x[arc] == 1, base_name = "fix_$(arc)")
-        end
-    end
+    _fix_non_decision_arcs!(mip, x, hndp.edgeA)
 
     big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
     big_m_function(a, uname) = big_m_by_user[string(uname)]
@@ -139,7 +146,7 @@ function build_hndp_sd_instance(
         leader_terms[user_name] = leader_obj
     end
 
-    constructioncost = sum(hndp.edge_price[a] * x[a] for a in hndp.edgeA)
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @variable(mip, construction_cost_var)
     @constraint(mip, construction_cost_var == constructioncost, base_name = "construction_cost")
     @objective(mip, Min, construction_cost_var + sum(values(leader_terms)))
@@ -169,12 +176,8 @@ function build_hndp_sd_auto_instance(
     all_arcs = _hndp_all_arcs(hndp)
     master_model = Model()
     @variable(master_model, x[all_arcs], Bin)
-    for arc in all_arcs
-        if !(arc in hndp.edgeA)
-            @constraint(master_model, x[arc] == 1, base_name = "fix_$(arc)")
-        end
-    end
-    constructioncost = sum(hndp.edge_price[a] * x[a] for a in hndp.edgeA)
+    _fix_non_decision_arcs!(master_model, x, hndp.edgeA)
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @objective(master_model, Min, constructioncost)
 
     subs = Any[]
@@ -211,10 +214,115 @@ function build_hndp_sd_auto_instance(
     return build_strong_duality_mip_instance(master_model, xdec, subs, big_m_function)
 end
 
+"""
+    build_hndp_path_instance(hndp, solver; enumeration_time_limit)
+
+Build the path-based HNDP reformulation. For each user, JuBiC first computes a
+path-length bound from the fixed-arc network. Then it enumerates all feasible
+paths in the full network whose follower cost is below that bound and builds a
+path-based strong-duality model from this LP formulation.
+
+If no feasible path exists in the fixed-arc network, JuBiC falls back to the
+`n - 1` heuristic bound based on the user costs and logs a warning.
+
+The `enumeration_time_limit` is a global budget for all fixed-arc path-bound
+computations and all path-enumeration work inside this function. If the budget
+is exhausted, JuBiC returns the model built so far and reports
+`enum_runtime == enumeration_time_limit` by convention.
+
+Returns:
+- `instance`: the generated JuBiC MIP instance
+- `enum_runtime`: the cumulative runtime spent on path-bound computation and
+  path enumeration
+- `path_counts`: number of enumerated paths for each user
+"""
+function build_hndp_path_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    enumeration_time_limit::Float64,
+)
+    @info "Starting generation of the path-based HNDP reformulation."
+    all_arcs = _hndp_all_arcs(hndp)
+
+    mip = Model(() -> get_next_optimizer(solver))
+    @variable(mip, x[all_arcs], Bin)
+    _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+
+    total_enum_runtime = 0.0
+    path_counts = Dict{String,Int}()
+    leader_terms = Dict{String,Any}()
+    deadline = time() + enumeration_time_limit
+    for user in hndp.users
+        if time() >= deadline
+            @warn "The global path-enumeration time budget was exhausted before processing user $(user.uname). Returning the partial path-based model built so far."
+            total_enum_runtime = enumeration_time_limit
+            break
+        end
+
+        bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, solver, deadline)
+        total_enum_runtime += bound_runtime
+        total_enum_runtime = min(total_enum_runtime, enumeration_time_limit)
+        if timed_out
+            @warn "The global path-enumeration time budget was exhausted while computing the fixed-arc path bound for user $(user.uname). Returning the partial path-based model built so far."
+            total_enum_runtime = enumeration_time_limit
+            break
+        end
+        if used_fallback
+            @warn "No feasible path was found in the fixed-arc network for user $(user.uname). Falling back to the n-1 edges heuristic bound $(bound)."
+        end
+
+        paths, enum_runtime, timed_out = _enumerate_user_paths_v2(user, hndp, bound, deadline)
+        total_enum_runtime += enum_runtime
+        total_enum_runtime = min(total_enum_runtime, enumeration_time_limit)
+        path_counts[string(user.uname)] = length(paths)
+
+        if isempty(paths)
+            @warn "No path was enumerated for user $(user.uname) before the global time budget was exhausted. Returning the partial path-based model built so far."
+            total_enum_runtime = enumeration_time_limit
+            break
+        end
+
+        if timed_out
+            @warn "The global path-enumeration time budget was exhausted while enumerating paths for user $(user.uname). The partial set of paths found so far will be used, and no further users will be processed."
+            total_enum_runtime = enumeration_time_limit
+        end
+
+        leader_obj, follower_obj = _add_user_path_constraints!(
+            mip,
+            user,
+            paths,
+            x;
+            add_strong_duality=true,
+        )
+        user_name = string(user.uname)
+        opt_l2 = @variable(mip, base_name = "optL2_path_$(user_name)")
+        @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_path_$(user_name)")
+        leader_terms[user_name] = leader_obj
+
+        timed_out && break
+    end
+
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
+    @variable(mip, construction_cost_var)
+    @constraint(mip, construction_cost_var == constructioncost, base_name = "construction_cost")
+    @objective(mip, Min, construction_cost_var + sum(values(leader_terms)))
+
+    @info "Finished generation of the path-based HNDP reformulation."
+    return Instance(MIPMaster(mip), nothing), total_enum_runtime, path_counts
+end
+
 function _hndp_all_arcs(hndp::HNDPwC)
     return [(src(e), dst(e)) for e in edges(hndp.mygraph)]
 end
 
+"""
+    _add_user_flow_constraints!(...)
+
+Add the arc-based follower formulation for one HNDP user. Depending on the
+flags, this can be either the binary shortest-path / constrained-shortest-path
+subproblem used in decomposition models or its continuous strong-duality
+reformulation used in compact MIP models.
+"""
 function _add_user_flow_constraints!(
     model::JuMP.Model,
     user::User,
@@ -295,6 +403,14 @@ function _add_user_flow_constraints!(
     return leader_obj, follower_obj, flow
 end
 
+"""
+    _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
+
+Compute one big-M value per user for the arc-based strong-duality and BlC
+models. The current implementation intentionally uses MIP solves for the
+fixed-network path bound, because this keeps the logic uniform for constrained
+shortest paths with optional weight limits.
+"""
 function _derive_user_big_m_values(hndp::HNDPwC, all_arcs, solver::SolverWrapper, big_m_mode::Symbol)
     big_m_mode in (HNDP_BIGM_FIXED_NETWORK_PATH, HNDP_BIGM_N_MINUS_ONE) ||
         throw(ArgumentError("Unknown HNDP big-M mode $(big_m_mode)."))
@@ -316,6 +432,14 @@ function _derive_user_big_m_values(hndp::HNDPwC, all_arcs, solver::SolverWrapper
     return values
 end
 
+"""
+    _fixed_network_path_cost(user, hndp, all_arcs, solver)
+
+Solve the follower problem on the fixed network only, i.e. with all decision
+arcs removed. We only use the resulting objective value as a valid path-cost
+bound; because costs are assumed to be nonnegative, potential zero-cost cycles
+do not invalidate the bound.
+"""
 function _fixed_network_path_cost(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper)
     model = Model(() -> get_next_optimizer(solver))
     @variable(model, flow[a in all_arcs], Bin)
@@ -350,4 +474,192 @@ function _fixed_network_path_cost(user::User, hndp::HNDPwC, all_arcs, solver::So
         return nothing
     end
     throw(ArgumentError("Unexpected status $(status) while computing fixed-network big-M for user $(user.uname)."))
+end
+
+function _n_minus_one_user_bound(user::User, hndp::HNDPwC, all_arcs)
+    costs = sort([user.mcost[a...] for a in all_arcs], rev=true)
+    n_take = min(length(costs), max(nv(hndp.mygraph) - 1, 1))
+    return Float64(sum(costs[1:n_take]))
+end
+
+"""
+    _fixed_arc_path_bound(user, hndp, all_arcs, solver, deadline)
+
+Compute the path-length threshold used by the path reformulation. JuBiC first
+tries to solve the follower problem on the fixed-arc network. If no such path
+exists, the function falls back to the `n - 1` heuristic bound and reports that
+fallback to the caller. The solve respects the remaining global deadline and
+reports whether that budget was exhausted.
+"""
+function _fixed_arc_path_bound(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper, deadline::Float64)
+    start_time = time()
+    fixed_arcs = Set(a for a in all_arcs if !(a in hndp.edgeA))
+    remaining_time = deadline - start_time
+    if remaining_time <= 0
+        return _n_minus_one_user_bound(user, hndp, all_arcs), 0.0, true, true
+    end
+    if isempty(fixed_arcs)
+        return _n_minus_one_user_bound(user, hndp, all_arcs), time() - start_time, true, false
+    end
+
+    model = Model(() -> get_next_optimizer(solver))
+    set_time_limit_sec(model, remaining_time)
+    @variable(model, flow[a in all_arcs], Bin)
+
+    for a in all_arcs
+        if !(a in fixed_arcs)
+            @constraint(model, flow[a] == 0, base_name = "forbid_comp_$(user.uname)_$(a)")
+        end
+    end
+
+    if !isnothing(user.weighlimit)
+        @constraint(
+            model,
+            sum(user.mweight[a...] * flow[a] for a in all_arcs) <= user.weighlimit,
+            base_name = "weight_comp_$(user.uname)",
+        )
+    end
+
+    for node in vertices(hndp.mygraph)
+        rhs = node == user.origin ? 1 : (node == user.destination ? -1 : 0)
+        outgoing = sum((flow[(node, neigh)] for neigh in outneighbors(hndp.mygraph, node)); init=0.0)
+        incoming = sum((flow[(neigh, node)] for neigh in inneighbors(hndp.mygraph, node)); init=0.0)
+        @constraint(model, outgoing - incoming == rhs, base_name = "flow_comp_$(user.uname)_$(node)")
+    end
+
+    @objective(model, Min, sum(user.mcost[a...] * flow[a] for a in all_arcs))
+    set_silent(model)
+    optimize!(model)
+
+    status = termination_status(model)
+    runtime = time() - start_time
+    if status == MOI.OPTIMAL || status == MOI.LOCALLY_SOLVED
+        return objective_value(model), runtime, false, false
+    elseif status == MOI.INFEASIBLE
+        return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, false
+    elseif status == MOI.TIME_LIMIT
+        return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, true
+    end
+    throw(ArgumentError("Unexpected status $(status) while computing the fixed-arc path bound for user $(user.uname)."))
+end
+
+struct HNDPPath
+    arcs::Vector{Tuple{Int,Int}}
+    cost::Float64
+    risk::Float64
+    weight::Float64
+end
+
+"""
+    _enumerate_user_paths_v2(user, hndp, length_bound, deadline)
+
+Enumerate all feasible simple paths for one user whose cost is at most
+`length_bound`. The DFS keeps a `visited` node set, so paths with cycles are
+never generated. This is important because the path reformulation should work on
+simple follower paths even if the graph itself contains cycles. The search
+stops once the shared global deadline is reached and then returns the paths
+found so far together with a timeout flag.
+"""
+function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float64, deadline::Float64)
+    start_time = time()
+    mincostpairs = floyd_warshall_shortest_paths(hndp.mygraph, user.mcost)
+    paths = HNDPPath[]
+    visited = Set{Int}([user.origin])
+    timed_out = false
+
+    function dfs(node::Int, arcs::Vector{Tuple{Int,Int}}, cost::Float64, risk::Float64, weight::Float64)
+        if time() >= deadline
+            timed_out = true
+            return
+        end
+
+        if node == user.destination
+            push!(paths, HNDPPath(copy(arcs), cost, risk, weight))
+            return
+        end
+
+        for next_node in outneighbors(hndp.mygraph, node)
+            # Restrict the enumeration to simple paths by preventing node revisits.
+            next_node in visited && continue
+            edge = (node, next_node)
+            edge_cost = user.mcost[edge...]
+            edge_weight = isnothing(user.mweight) ? 0.0 : user.mweight[edge...]
+            new_cost = cost + edge_cost
+            new_weight = weight + edge_weight
+
+            if !isnothing(user.weighlimit) && new_weight > user.weighlimit
+                continue
+            end
+            if new_cost > length_bound
+                continue
+            end
+
+            remaining_cost = mincostpairs.dists[next_node, user.destination]
+            if isfinite(remaining_cost) && new_cost + remaining_cost > length_bound
+                continue
+            end
+
+            push!(arcs, edge)
+            push!(visited, next_node)
+            dfs(
+                next_node,
+                arcs,
+                new_cost,
+                risk + user.mrisk[edge...],
+                new_weight,
+            )
+            pop!(arcs)
+            delete!(visited, next_node)
+            timed_out && return
+        end
+    end
+
+    dfs(user.origin, Tuple{Int,Int}[], 0.0, 0.0, 0.0)
+    if isempty(paths) && !timed_out
+        throw(ArgumentError("No feasible path was enumerated for user $(user.uname) within the path bound $(length_bound)."))
+    end
+    return paths, min(time() - start_time, max(0.0, deadline - start_time)), timed_out
+end
+
+"""
+    _add_user_path_constraints!(mip, user, paths, xvars; add_strong_duality)
+
+Add the path-based follower formulation for one user. Path variables form a
+convex combination of enumerated feasible paths, while the linking constraints
+ensure that a path can only be selected if each of its arcs is available in the
+leader solution.
+"""
+function _add_user_path_constraints!(
+    mip::JuMP.Model,
+    user::User,
+    paths::Vector{HNDPPath},
+    xvars;
+    add_strong_duality::Bool,
+)
+    λ = @variable(mip, [p in eachindex(paths)], lower_bound = 0, base_name = "λ_$(user.uname)")
+    @constraint(mip, sum(λ) == 1, base_name = "cover_$(user.uname)")
+
+    for (p_idx, path) in enumerate(paths)
+        for a in path.arcs
+            @constraint(mip, λ[p_idx] <= xvars[a], base_name = "path_link_$(user.uname)_$(p_idx)_$(a)")
+        end
+    end
+
+    leader_obj = @expression(mip, sum(paths[p].risk * λ[p] for p in eachindex(paths)))
+    follower_obj = @expression(mip, sum(paths[p].cost * λ[p] for p in eachindex(paths)))
+
+    if add_strong_duality
+        max_path_cost = maximum(path.cost for path in paths)
+        π = @variable(mip, base_name = "pi_path_$(user.uname)")
+        for (p_idx, path) in enumerate(paths)
+            @constraint(
+                mip,
+                π <= path.cost + sum((max_path_cost - path.cost) * (1 - xvars[a]) for a in path.arcs),
+                base_name = "path_dual_$(user.uname)_$(p_idx)",
+            )
+        end
+        @constraint(mip, follower_obj == π, base_name = "path_sd_$(user.uname)")
+    end
+
+    return leader_obj, follower_obj
 end

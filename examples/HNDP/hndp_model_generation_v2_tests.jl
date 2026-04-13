@@ -54,6 +54,57 @@ function build_toy_hndp_two_users()
     return HNDPwC(graph, users, decision_arcs, edge_price, nothing)
 end
 
+"""
+    build_toy_hndp_two_users_all_decision_arcs()
+
+Variant of the two-user HNDP test instance without any fixed-arc competitor
+network. All arcs are decision arcs, so the path-based model must fall back to
+the `n-1` heuristic bound before enumerating feasible paths.
+"""
+function build_toy_hndp_two_users_all_decision_arcs()
+    graph = DiGraph(8)
+    all_decision_arcs = [(1, 2), (2, 4), (5, 6), (6, 8), (1, 3), (3, 4), (5, 7), (7, 8)]
+    for arc in all_decision_arcs
+        add_edge!(graph, arc...)
+    end
+
+    n = nv(graph)
+    risk = zeros(Int, n, n)
+    cost = zeros(Int, n, n)
+    weight = zeros(Int, n, n)
+
+    cost[1, 2] = 4
+    cost[2, 4] = 5
+    cost[1, 3] = 2
+    cost[3, 4] = 2
+
+    cost[5, 6] = 3
+    cost[6, 8] = 4
+    cost[5, 7] = 1
+    cost[7, 8] = 2
+
+    risk[1, 3] = -5
+    risk[3, 4] = -5
+    risk[5, 7] = -4
+    risk[7, 8] = -4
+
+    users = User[
+        User("U1", 1, 4, risk, cost, weight, nothing),
+        User("U2", 5, 8, risk, cost, weight, nothing),
+    ]
+    edge_price = Dict(
+        (1, 2) => 6,
+        (2, 4) => 6,
+        (5, 6) => 5,
+        (6, 8) => 5,
+        (1, 3) => 3,
+        (3, 4) => 3,
+        (5, 7) => 2,
+        (7, 8) => 3,
+    )
+    return HNDPwC(graph, users, all_decision_arcs, edge_price, nothing)
+end
+
 function _run_hndp_model_pair_test(big_m_mode::Symbol)
     hndp = build_toy_hndp_two_users()
     solver = GurobiSolver(Gurobi.Env())
@@ -76,7 +127,61 @@ function _run_hndp_model_pair_test(big_m_mode::Symbol)
     @test blc_stats.data["Opt"] ≈ -7 atol = 1e-6
 end
 
+function _run_hndp_path_model_test()
+    hndp = build_toy_hndp_two_users()
+    solver = GurobiSolver(Gurobi.Env())
+
+    blc_instance = build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
+    sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
+    path_instance, enum_runtime, path_counts = build_hndp_path_instance(hndp, solver; enumeration_time_limit=60.0)
+
+    blc_param = BLCparam(solver, false, mktempdir(), "lp", 60)
+    sd_param = MIPparam(solver, false, mktempdir(), "lp", 60)
+    path_param = MIPparam(solver, false, mktempdir(), "lp", 60)
+
+    blc_stats = solve_instance!(blc_instance, blc_param)
+    sd_stats = solve_instance!(sd_instance, sd_param)
+    path_stats = solve_instance!(path_instance, path_param)
+
+    @test enum_runtime >= 0
+    @test all(v >= 1 for v in values(path_counts))
+    @test blc_stats.data["Opt"] ≈ sd_stats.data["Opt"] atol = 1e-6
+    @test blc_stats.data["Opt"] ≈ path_stats.data["Opt"] atol = 1e-6
+    @test path_stats.data["Opt"] ≈ -7 atol = 1e-6
+end
+
+function _run_hndp_path_model_all_decision_arcs_test()
+    hndp = build_toy_hndp_two_users_all_decision_arcs()
+    solver = GurobiSolver(Gurobi.Env())
+
+    blc_instance = build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_N_MINUS_ONE)
+    sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=HNDP_BIGM_N_MINUS_ONE)
+    path_instance, enum_runtime, path_counts = build_hndp_path_instance(hndp, solver; enumeration_time_limit=60.0)
+
+    blc_param = BLCparam(solver, false, mktempdir(), "lp", 60)
+    sd_param = MIPparam(solver, false, mktempdir(), "lp", 60)
+    path_param = MIPparam(solver, false, mktempdir(), "lp", 60)
+
+    blc_stats = solve_instance!(blc_instance, blc_param)
+    sd_stats = solve_instance!(sd_instance, sd_param)
+    path_stats = solve_instance!(path_instance, path_param)
+
+    @test enum_runtime >= 0
+    @test all(v >= 1 for v in values(path_counts))
+    @test haskey(blc_stats.data, "Opt")
+    @test haskey(sd_stats.data, "Opt")
+    @test haskey(path_stats.data, "Opt")
+    @test blc_stats.data["Opt"] ≈ sd_stats.data["Opt"] atol = 1e-6
+    @test blc_stats.data["Opt"] ≈ path_stats.data["Opt"] atol = 1e-6
+    @test sd_stats.data["Opt"] ≈ path_stats.data["Opt"] atol = 1e-6
+    # With no fixed-arc network available, all three formulations fall back to
+    # the same all-decision-arc design problem.
+    @test path_stats.data["Opt"] ≈ 15 atol = 1e-6
+end
+
 @testset "HNDP Model Generation V2 Tests" begin
     _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
     _run_hndp_model_pair_test(HNDP_BIGM_N_MINUS_ONE)
+    _run_hndp_path_model_test()
+    _run_hndp_path_model_all_decision_arcs_test()
 end
