@@ -396,7 +396,7 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
         check_solution_status(sol)
 
         # evaluate solution
-        y_vals = value.(sol.y_vars)
+        y_vals = sol.y_vars isa AbstractDict ? Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) : value.(sol.y_vars)
         osol = objective_value(sol.mip_model)
         @debug "We found an solution for sub_problem $(sol.name) with value $(osol)."
 
