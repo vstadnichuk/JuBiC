@@ -1,0 +1,37 @@
+{
+  "instance_output": {
+    "folder": "examples/HNDP/generated_instances",
+    "graph_format": "gexf"
+  },
+  "parameter_seeds": [0, 1],
+  "instances": [
+    {
+      "name": "csp_sioux",
+      "instance_type": "constrained_shortest_path",
+      "topologies": ["sioux_falls"],
+      "nusers": [5, 10],
+      "length_constrained": [true, false],
+      "length_slack": [0.2],
+      "user_parameter_mode": ["shared", "per_user"],
+      "two_stage": [false],
+      "max_cost": 100,
+      "max_risk": 100,
+      "max_weight": 100,
+      "construction_cost": 0
+    },
+    {
+      "name": "competition_sioux",
+      "instance_type": "competition",
+      "topologies": ["layered_sioux_falls"],
+      "nusers": [5],
+      "length_constrained": [true, false],
+      "length_slack": [0.2],
+      "competitor_cost_factor": [0.8, 1.0],
+      "user_parameter_mode": ["shared", "per_user"],
+      "max_cost": 100,
+      "max_risk": 100,
+      "max_weight": 100,
+      "construction_cost": 0
+    }
+  ]
+}
