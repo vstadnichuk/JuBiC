@@ -9,6 +9,11 @@ function solve_with_MIP!(inst::Instance, param::MIPparam)
     new_stat!(param.stats, "Solver", "MIPSolver")
     new_stat!(param.stats, "time_limit", param.runtime)
 
+    # Ensure that the wrapped model has the optimizer requested by the current
+    # parameters. This is especially useful for generated wrapper models that
+    # were built without an attached optimizer.
+    set_optimizer(mipm.mymip, () -> get_next_optimizer(param.solver))
+
     # write model to lp file and set path to log file
     try
         write_to_file(mipm.mymip, param.output_folder_path * "/MIPinstance.$(param.file_format_output)")

@@ -147,6 +147,70 @@ function build_hndp_sd_instance(
     return Instance(MIPMaster(mip), nothing)
 end
 
+"""
+    build_hndp_sd_auto_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
+
+Build an HNDP strong-duality reformulation using the experimental generic JuBiC
+wrapper around `SubSolverJuMP` LP followers.
+
+This builder is currently experimental. It is useful for prototyping and
+cross-checking formulations, but it is not yet considered part of the stable
+HNDP model-generation pipeline.
+"""
+function build_hndp_sd_auto_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+)
+    @info "The automated HNDP strong-duality reformulation is currently experimental."
+    any(!isnothing(user.weighlimit) for user in hndp.users) &&
+        throw(ArgumentError("The automated strong-duality HNDP formulation is currently only supported for instances without weight bounds."))
+
+    all_arcs = _hndp_all_arcs(hndp)
+    master_model = Model()
+    @variable(master_model, x[all_arcs], Bin)
+    for arc in all_arcs
+        if !(arc in hndp.edgeA)
+            @constraint(master_model, x[arc] == 1, base_name = "fix_$(arc)")
+        end
+    end
+    constructioncost = sum(hndp.edge_price[a] * x[a] for a in hndp.edgeA)
+    @objective(master_model, Min, constructioncost)
+
+    subs = Any[]
+    for user in hndp.users
+        sub_model = Model()
+        leader_obj, follower_obj, flow = _add_user_flow_constraints!(
+            sub_model,
+            user,
+            hndp,
+            all_arcs;
+            xvars=nothing,
+            binary_flow=false,
+            add_strong_duality=false,
+        )
+        @objective(sub_model, Min, follower_obj)
+        set_silent(sub_model)
+        y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+        push!(
+            subs,
+            SubSolverJuMP(
+                string(user.uname),
+                sub_model,
+                hndp.edgeA,
+                y_vars,
+                leader_obj,
+                follower_obj,
+            ),
+        )
+    end
+
+    big_m_values = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
+    big_m_function(a, uname) = big_m_values[string(uname)]
+    xdec = Dict(a => x[a] for a in hndp.edgeA)
+    return build_strong_duality_mip_instance(master_model, xdec, subs, big_m_function)
+end
+
 function _hndp_all_arcs(hndp::HNDPwC)
     return [(src(e), dst(e)) for e in edges(hndp.mygraph)]
 end
