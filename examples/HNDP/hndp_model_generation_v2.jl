@@ -11,6 +11,7 @@ const HNDP_BIGM_FIXED_NETWORK_PATH = :fixed_network_path
 const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive
 const HNDP_SUBPROBLEM_MIP = :mip
 const HNDP_SUBPROBLEM_ASTAR = :astar
+const HNDP_HYBRID_FALLBACK_SD = :sd
 
 """
     _fix_non_decision_arcs!(model, xvars, decision_arcs)
@@ -83,37 +84,173 @@ function build_hndp_blc_instance(
 
     subs = Any[]
     for user in hndp.users
-        if subproblem_method == HNDP_SUBPROBLEM_MIP
-            sub_model = Model(() -> get_next_optimizer(solver))
-            leader_obj, follower_obj, flow = _add_user_flow_constraints!(
-                sub_model,
-                user,
-                hndp,
-                all_arcs;
-                xvars=nothing,
-                binary_flow=true,
-                add_strong_duality=false,
-            )
-            @objective(sub_model, Min, follower_obj)
-            set_silent(sub_model)
-            y_vars = Dict(a => flow[a] for a in hndp.edgeA)
-            push!(
-                subs,
-                SubSolverJuMP(
-                    string(user.uname),
-                    sub_model,
-                    hndp.edgeA,
-                    y_vars,
-                    leader_obj,
-                    follower_obj,
-                ),
-            )
-        else
-            push!(subs, build_hndp_astar_user(user, hndp, hndp.edgeA))
-        end
+        push!(subs, _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, subproblem_method))
     end
 
     return Instance(master, subs)
+end
+
+function _build_hndp_blc_subsolver(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+    subproblem_method::Symbol,
+)
+    if subproblem_method == HNDP_SUBPROBLEM_MIP
+        sub_model = Model(() -> get_next_optimizer(solver))
+        leader_obj, follower_obj, flow = _add_user_flow_constraints!(
+            sub_model,
+            user,
+            hndp,
+            all_arcs;
+            xvars=nothing,
+            binary_flow=true,
+            add_strong_duality=false,
+        )
+        @objective(sub_model, Min, follower_obj)
+        set_silent(sub_model)
+        y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+        return SubSolverJuMP(
+            string(user.uname),
+            sub_model,
+            hndp.edgeA,
+            y_vars,
+            leader_obj,
+            follower_obj,
+        )
+    elseif subproblem_method == HNDP_SUBPROBLEM_ASTAR
+        return build_hndp_astar_user(user, hndp, hndp.edgeA)
+    end
+
+    throw(ArgumentError("Unknown HNDP BlC subproblem method $(subproblem_method)."))
+end
+
+"""
+    build_hndp_hybrid_blc_instance(
+        hndp,
+        solver;
+        enumeration_time_limit,
+        big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+    )
+
+Build a mixed BlC instance for HNDP. Users whose path sets are fully enumerated
+before the shared wall-clock deadline are modeled exactly inside the HPR via the
+compact path formulation. Users that miss the deadline remain genuine BlC
+subproblems and are the only users listed in the `BlCMaster` bookkeeping.
+
+This lets BlC focus its decomposition machinery on the hard users while keeping
+the easy users exact and compact in the master.
+
+Returns:
+- `instance`: the generated JuBiC BlC instance
+- `enum_runtime`: wall-clock time spent in the parallel precomputation stage
+- `path_counts`: number of enumerated paths for each path-mode user
+- `fallback_users`: names of users that were added as BlC subproblems
+"""
+function build_hndp_hybrid_blc_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    enumeration_time_limit::Float64,
+    big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+    subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
+)
+    subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_ASTAR) ||
+        throw(ArgumentError("Unknown HNDP BlC subproblem method $(subproblem_method)."))
+
+    @info "Starting generation of the hybrid BlC HNDP reformulation."
+    all_arcs = _hndp_all_arcs(hndp)
+    deadline = time() + enumeration_time_limit
+
+    tasks = Dict{String,Task}()
+    for user in hndp.users
+        local_user = user
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+    end
+
+    user_results = Dict{String,Any}()
+    for user in hndp.users
+        user_results[string(user.uname)] = fetch(tasks[string(user.uname)])
+    end
+
+    user_names = [string(user.uname) for user in hndp.users]
+    hpr = Model(() -> get_next_optimizer(solver))
+    @variable(hpr, x[all_arcs], Bin)
+    _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+
+    master_terms = Dict{String,Any}()
+    sub_terms = Dict{String,Any}()
+    subs = Any[]
+    path_counts = Dict{String,Int}()
+    fallback_users = String[]
+
+    for user in hndp.users
+        uname = string(user.uname)
+        result = user_results[uname]
+
+        if !result.timed_out
+            if result.used_fallback
+                @warn "No feasible path was found in the fixed-arc network for user $(user.uname). Falling back to the n-1 edges heuristic bound $(result.bound) before path enumeration."
+            end
+
+            path_counts[uname] = length(result.paths)
+            leader_obj, follower_obj = _add_user_path_constraints!(
+                hpr,
+                user,
+                result.paths,
+                x;
+                add_strong_duality=true,
+            )
+            opt_l1 = @variable(hpr, base_name = "optL1_hybrid_blc_path_$(uname)")
+            opt_l2 = @variable(hpr, base_name = "optL2_hybrid_blc_path_$(uname)")
+            @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_hybrid_blc_path_$(uname)")
+            @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_blc_path_$(uname)")
+            master_terms[uname] = opt_l1
+            continue
+        end
+
+        push!(fallback_users, uname)
+        @warn "Path enumeration reached the global deadline for user $(user.uname). Keeping this user as a BlC subproblem."
+
+        leader_obj, follower_obj, _ = _add_user_flow_constraints!(
+            hpr,
+            user,
+            hndp,
+            all_arcs;
+            xvars=x,
+            binary_flow=true,
+            add_strong_duality=false,
+        )
+        opt_l1 = @variable(hpr, base_name = "optL1_hybrid_blc_fallback_$(uname)")
+        opt_l2 = @variable(hpr, base_name = "optL2_hybrid_blc_fallback_$(uname)")
+        @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_hybrid_blc_fallback_$(uname)")
+        @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_blc_fallback_$(uname)")
+        master_terms[uname] = opt_l1
+        sub_terms[uname] = opt_l2
+
+        push!(subs, _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, subproblem_method))
+    end
+
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
+    @variable(hpr, construction_cost_var)
+    @constraint(hpr, construction_cost_var == constructioncost, base_name = "construction_cost")
+    @objective(hpr, Min, construction_cost_var + sum(values(master_terms)))
+
+    big_m_by_user = Dict{String,Float64}()
+    if !isempty(fallback_users)
+        derived_big_m = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
+        for uname in fallback_users
+            big_m_by_user[uname] = derived_big_m[uname]
+        end
+    end
+    big_m_function(a, uname) = get(big_m_by_user, string(uname), 0.0)
+    xdec = Dict(a => x[a] for a in hndp.edgeA)
+    master = BlCMaster(hpr, hndp.edgeA, xdec, big_m_function, fallback_users, sub_terms)
+
+    enum_runtime = min(enumeration_time_limit, maximum((result.runtime for result in values(user_results)); init=0.0))
+    @info "Finished generation of the hybrid BlC HNDP reformulation."
+    return Instance(master, subs), enum_runtime, path_counts, fallback_users
 end
 
 """
@@ -419,6 +556,125 @@ function build_hndp_path_instance_parallel(
     return Instance(MIPMaster(mip), nothing), enum_runtime, path_counts
 end
 
+"""
+    build_hndp_hybrid_instance(
+        hndp,
+        solver;
+        enumeration_time_limit,
+        fallback_mode=HNDP_HYBRID_FALLBACK_SD,
+        big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+        indicator_constraints=false,
+        bound_duals=true,
+    )
+
+Build the parallel hybrid HNDP reformulation. Every user gets the same global
+wall-clock deadline for the path precomputation stage. Users whose feasible
+paths are fully enumerated before the deadline are modeled with the compact
+path formulation; users that time out fall back to an alternative formulation.
+
+The implementation is intentionally designed around a small fallback dispatch so
+that additional fallback formulations can be added later. For now, the only
+implemented fallback is the compact strong-duality formulation `:sd`.
+
+Returns:
+- `instance`: the generated JuBiC MIP instance
+- `enum_runtime`: wall-clock time spent in the parallel precomputation stage
+- `path_counts`: number of enumerated paths for each path-mode user
+- `fallback_users`: names of users that were modeled with the fallback
+"""
+function build_hndp_hybrid_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    enumeration_time_limit::Float64,
+    fallback_mode::Symbol=HNDP_HYBRID_FALLBACK_SD,
+    big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+    indicator_constraints::Bool=false,
+    bound_duals::Bool=true,
+)
+    _validate_hybrid_fallback_mode(fallback_mode)
+    @info "Starting generation of the parallel hybrid HNDP reformulation."
+
+    all_arcs = _hndp_all_arcs(hndp)
+    deadline = time() + enumeration_time_limit
+
+    tasks = Dict{String,Task}()
+    for user in hndp.users
+        local_user = user
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+    end
+
+    user_results = Dict{String,Any}()
+    for user in hndp.users
+        user_results[string(user.uname)] = fetch(tasks[string(user.uname)])
+    end
+
+    mip = Model(() -> get_next_optimizer(solver))
+    @variable(mip, x[all_arcs], Bin)
+    _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+
+    leader_terms = Dict{String,Any}()
+    path_counts = Dict{String,Int}()
+    fallback_users = String[]
+    big_m_values = nothing
+
+    for user in hndp.users
+        uname = string(user.uname)
+        result = user_results[uname]
+
+        if !result.timed_out
+            if result.used_fallback
+                @warn "No feasible path was found in the fixed-arc network for user $(user.uname). Falling back to the n-1 edges heuristic bound $(result.bound) before path enumeration."
+            end
+
+            path_counts[uname] = length(result.paths)
+            leader_obj, follower_obj = _add_user_path_constraints!(
+                mip,
+                user,
+                result.paths,
+                x;
+                add_strong_duality=true,
+            )
+            opt_l2 = @variable(mip, base_name = "optL2_hybrid_path_$(uname)")
+            @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_path_$(uname)")
+            leader_terms[uname] = leader_obj
+            continue
+        end
+
+        push!(fallback_users, uname)
+        @warn "Path enumeration reached the global deadline for user $(user.uname). Using fallback formulation $(fallback_mode) for this user."
+
+        if isnothing(big_m_values)
+            big_m_values = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
+        end
+        big_m_function(a, fallback_uname) = big_m_values[string(fallback_uname)]
+
+        leader_obj, follower_obj = _add_hybrid_fallback_user!(
+            mip,
+            user,
+            hndp,
+            all_arcs,
+            x,
+            solver;
+            fallback_mode=fallback_mode,
+            big_m_function=big_m_function,
+            indicator_constraints=indicator_constraints,
+            bound_duals=bound_duals,
+        )
+        opt_l2 = @variable(mip, base_name = "optL2_hybrid_fallback_$(uname)")
+        @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_fallback_$(uname)")
+        leader_terms[uname] = leader_obj
+    end
+
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
+    @variable(mip, construction_cost_var)
+    @constraint(mip, construction_cost_var == constructioncost, base_name = "construction_cost")
+    @objective(mip, Min, construction_cost_var + sum(values(leader_terms)))
+
+    enum_runtime = min(enumeration_time_limit, maximum((result.runtime for result in values(user_results)); init=0.0))
+    @info "Finished generation of the parallel hybrid HNDP reformulation."
+    return Instance(MIPMaster(mip), nothing), enum_runtime, path_counts, fallback_users
+end
+
 function _hndp_all_arcs(hndp::HNDPwC)
     return [(src(e), dst(e)) for e in edges(hndp.mygraph)]
 end
@@ -427,6 +683,50 @@ function _empty_path_instance(solver::SolverWrapper)
     mip = Model(() -> get_next_optimizer(solver))
     @objective(mip, Min, 0)
     return Instance(MIPMaster(mip), nothing)
+end
+
+function _validate_hybrid_fallback_mode(fallback_mode::Symbol)
+    fallback_mode == HNDP_HYBRID_FALLBACK_SD ||
+        throw(ArgumentError("Unsupported HNDP hybrid fallback mode $(fallback_mode). Currently implemented: $(HNDP_HYBRID_FALLBACK_SD)."))
+end
+
+"""
+    _add_hybrid_fallback_user!(...)
+
+Dispatch helper for hybrid fallback formulations. The public hybrid builder uses
+this helper so additional fallback formulations can be added later without
+rewriting the model-assembly logic.
+"""
+function _add_hybrid_fallback_user!(
+    mip::JuMP.Model,
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    xvars,
+    solver::SolverWrapper;
+    fallback_mode::Symbol,
+    big_m_function,
+    indicator_constraints::Bool,
+    bound_duals::Bool,
+)
+    fallback_mode == HNDP_HYBRID_FALLBACK_SD || _validate_hybrid_fallback_mode(fallback_mode)
+
+    !isnothing(user.weighlimit) &&
+        throw(ArgumentError("The HNDP hybrid fallback mode :sd is currently only supported for users without weight bounds. User $(user.uname) would require the fallback."))
+
+    leader_obj, follower_obj, _ = _add_user_flow_constraints!(
+        mip,
+        user,
+        hndp,
+        all_arcs;
+        xvars=xvars,
+        binary_flow=false,
+        add_strong_duality=true,
+        big_m_function=big_m_function,
+        indicator_constraints=indicator_constraints,
+        bound_duals=bound_duals,
+    )
+    return leader_obj, follower_obj
 end
 
 """

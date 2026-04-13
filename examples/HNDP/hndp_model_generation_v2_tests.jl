@@ -309,16 +309,150 @@ function _run_hndp_path_parallel_equivalence_test(hndp::HNDPwC, expected_opt::Fl
     @test par_stats.data["Opt"] ≈ expected_opt atol = 1e-6
 end
 
+function _run_hndp_hybrid_path_equivalence_test(hndp::HNDPwC, expected_opt::Float64)
+    solver = GurobiSolver()
+
+    path_instance, path_runtime, path_counts = build_hndp_path_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=60.0,
+        parallelize=true,
+    )
+    hybrid_instance, hybrid_runtime, hybrid_counts, fallback_users = build_hndp_hybrid_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=60.0,
+        fallback_mode=HNDP_HYBRID_FALLBACK_SD,
+    )
+
+    path_stats = solve_instance!(path_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+
+    @test path_runtime >= 0
+    @test hybrid_runtime >= 0
+    @test hybrid_counts == path_counts
+    @test isempty(fallback_users)
+    @test haskey(path_stats.data, "Opt")
+    @test haskey(hybrid_stats.data, "Opt")
+    @test hybrid_stats.data["Opt"] ≈ path_stats.data["Opt"] atol = 1e-6
+    @test hybrid_stats.data["Opt"] ≈ expected_opt atol = 1e-6
+end
+
+function _run_hndp_hybrid_all_fallback_test(hndp::HNDPwC, big_m_mode::Symbol, expected_opt::Float64)
+    solver = GurobiSolver()
+
+    hybrid_instance, hybrid_runtime, hybrid_counts, fallback_users = build_hndp_hybrid_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=0.0,
+        fallback_mode=HNDP_HYBRID_FALLBACK_SD,
+        big_m_mode=big_m_mode,
+    )
+    sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=big_m_mode)
+
+    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    sd_stats = solve_instance!(sd_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+
+    @test hybrid_runtime ≈ 0.0 atol = 1e-6
+    @test isempty(hybrid_counts)
+    @test length(fallback_users) == length(hndp.users)
+    @test Set(fallback_users) == Set(string(user.uname) for user in hndp.users)
+    @test haskey(hybrid_stats.data, "Opt")
+    @test haskey(sd_stats.data, "Opt")
+    @test hybrid_stats.data["Opt"] ≈ sd_stats.data["Opt"] atol = 1e-6
+    @test hybrid_stats.data["Opt"] ≈ expected_opt atol = 1e-6
+end
+
+function _run_hndp_hybrid_blc_path_equivalence_test(hndp::HNDPwC, expected_opt::Float64)
+    solver = GurobiSolver()
+
+    path_instance, path_runtime, path_counts = build_hndp_path_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=60.0,
+        parallelize=true,
+    )
+    hybrid_blc_instance, hybrid_runtime, hybrid_counts, fallback_users = build_hndp_hybrid_blc_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=60.0,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+    )
+
+    path_stats = solve_instance!(path_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    hybrid_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
+
+    @test path_runtime >= 0
+    @test hybrid_runtime >= 0
+    @test hybrid_counts == path_counts
+    @test isempty(fallback_users)
+    @test isempty(hybrid_blc_instance.subproblems)
+    @test haskey(path_stats.data, "Opt")
+    @test haskey(hybrid_stats.data, "Opt")
+    @test hybrid_stats.data["Opt"] ≈ path_stats.data["Opt"] atol = 1e-6
+    @test hybrid_stats.data["Opt"] ≈ expected_opt atol = 1e-6
+end
+
+function _run_hndp_hybrid_blc_all_fallback_test(hndp::HNDPwC, big_m_mode::Symbol, expected_opt::Float64)
+    solver = GurobiSolver()
+
+    hybrid_blc_instance, hybrid_runtime, hybrid_counts, fallback_users = build_hndp_hybrid_blc_instance(
+        hndp,
+        solver;
+        enumeration_time_limit=0.0,
+        big_m_mode=big_m_mode,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+    )
+    blc_instance = build_hndp_blc_instance(
+        hndp,
+        solver;
+        big_m_mode=big_m_mode,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+    )
+
+    hybrid_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
+    blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
+
+    @test hybrid_runtime ≈ 0.0 atol = 1e-6
+    @test isempty(hybrid_counts)
+    @test length(fallback_users) == length(hndp.users)
+    @test Set(fallback_users) == Set(string(user.uname) for user in hndp.users)
+    @test length(hybrid_blc_instance.subproblems) == length(hndp.users)
+    @test haskey(hybrid_stats.data, "Opt")
+    @test haskey(blc_stats.data, "Opt")
+    @test hybrid_stats.data["Opt"] ≈ blc_stats.data["Opt"] atol = 1e-6
+    @test hybrid_stats.data["Opt"] ≈ expected_opt atol = 1e-6
+end
+
 @testset "HNDP Model Generation V2 Tests" begin
-    _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
-    _run_hndp_model_pair_test(HNDP_BIGM_N_MINUS_ONE)
-    _run_hndp_path_model_test()
-    _run_hndp_path_model_all_decision_arcs_test()
-    _run_hndp_path_model_weighted_test()
-    _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users(), -7.0)
-    _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
-    _run_hndp_path_parallel_equivalence_test(build_toy_hndp_weighted_user(), 0.0)
-    _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
-    _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
-    _run_hndp_blc_astar_pair_test(build_toy_hndp_weighted_user(), HNDP_BIGM_FIXED_NETWORK_PATH)
+    @testset "Arc-Based Models" begin
+        _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
+        _run_hndp_model_pair_test(HNDP_BIGM_N_MINUS_ONE)
+        _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
+        _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+        _run_hndp_blc_astar_pair_test(build_toy_hndp_weighted_user(), HNDP_BIGM_FIXED_NETWORK_PATH)
+    end
+
+    @testset "Path Model" begin
+        _run_hndp_path_model_test()
+        _run_hndp_path_model_all_decision_arcs_test()
+        _run_hndp_path_model_weighted_test()
+        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users(), -7.0)
+        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
+        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_weighted_user(), 0.0)
+    end
+
+    @testset "Hybrid SD Fallback" begin
+        _run_hndp_hybrid_path_equivalence_test(build_toy_hndp_two_users(), -7.0)
+        _run_hndp_hybrid_path_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
+        _run_hndp_hybrid_all_fallback_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
+        _run_hndp_hybrid_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+    end
+
+    @testset "Hybrid BlC Fallback" begin
+        _run_hndp_hybrid_blc_path_equivalence_test(build_toy_hndp_two_users(), -7.0)
+        _run_hndp_hybrid_blc_path_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
+        _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
+        _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+    end
 end
