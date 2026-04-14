@@ -121,6 +121,7 @@ function extra_cuts_benderslike_JuMP(jump::JuMP.Model, sub::JuMP.Model, A, oL2, 
     @debug "Starting Benders-like cuts within Subsolver MIP by solving helper MIP for sub solution $x_vals."
     # set time limit for solving
     set_time_limit_sec(jump, time_limit)
+    set_seed!(jump, params.solver, get_seed(params))
     # fix values for linking variables
     @constraint(jump, fixc[a=A], x_jump[a] == round(x_vals[a]))
     # now, solve the helper MIP
@@ -248,7 +249,7 @@ function compute_lower_bound_master_contribution(sol::SubSolverJuMP, params::Sol
     end
 
     # solve adjusted sub 
-    solve_mip(sol, time_limit)
+    solve_mip(sol, params, time_limit)
 
     # check if optimal solution found and otherwise handle exceptions
     check_solution_status(sol)
@@ -283,7 +284,7 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
     catch err
         @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
     end
-    solve_mip(sol, time_limit)
+    solve_mip(sol, params, time_limit)
 
     # check if optimal solution found and otherwise handle exceptions
     check_solution_status(sol)
@@ -369,7 +370,7 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
 
     # set adjusted time limit
     @debug "Subproblem $(sol.name) MIP was adjusted. Start MIP solver to solve it. "
-    solve_mip(sol, time_limit)
+    solve_mip(sol, params, time_limit)
 
     try
         # here, we can have infeasible solutions due to wrong first-level decision. Catch this case
@@ -472,7 +473,7 @@ end
 
 Solve the underlying MIP. Mainly calls 'optimize!' and handles Branch&Check for additional cuts. It also sets the time limit and adjusts it if necessary.
 """
-function solve_mip(sol::SubSolverJuMP, time_limit)
+function solve_mip(sol::SubSolverJuMP, params::SolverParam, time_limit)
     inner_time_limit = time_limit
     need_solving = true
 
@@ -487,6 +488,7 @@ function solve_mip(sol::SubSolverJuMP, time_limit)
         # set adjusted time limit
         @debug "Setting time limit of subsolver $(sol.name) to $inner_time_limit"
         set_time_limit_sec(sol.mip_model, inner_time_limit)
+        set_seed!(sol.mip_model, params.solver, get_seed(params))
 
         # solve MIP 
         optimize!(sol.mip_model)

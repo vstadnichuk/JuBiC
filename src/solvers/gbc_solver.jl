@@ -76,6 +76,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     true_runtime = param.runtime - runtime_init
     set_time_limit_sec(master.model, true_runtime)
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
+    set_seed!(master.model, param.solver, get_seed(param))
     for sub in subs
         set_nthreads(sub, sub_threads)
     end

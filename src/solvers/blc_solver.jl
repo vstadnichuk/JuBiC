@@ -31,6 +31,7 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
     set_time_limit_sec(blcm.hpr, param.runtime)
     set_attribute(blcm.hpr, MOI.NumberOfThreads(), master_threads)
+    set_seed!(blcm.hpr, param.solver, get_seed(param))
     for sub in inst.subproblems
         set_nthreads(sub, sub_threads)
     end

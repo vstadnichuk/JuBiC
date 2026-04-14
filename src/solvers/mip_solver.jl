@@ -26,6 +26,7 @@ function solve_with_MIP!(inst::Instance, param::MIPparam)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     set_time_limit_sec(mipm.mymip, param.runtime)
     set_attribute(mipm.mymip, MOI.NumberOfThreads(), master_threads)
+    set_seed!(mipm.mymip, param.solver, get_seed(param))
 
     # add callback to master and solve 
     @debug "Finished model construction. Now proceeding to optimization process with MIP solver."

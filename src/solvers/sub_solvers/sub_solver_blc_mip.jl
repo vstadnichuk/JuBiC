@@ -47,6 +47,7 @@ function _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
         set_optimizer(oracle_model, () -> get_next_optimizer(params.solver))
         set_silent(oracle_model)
         set_time_limit_sec(oracle_model, time_limit)
+        set_seed!(oracle_model, params.solver, get_seed(params))
 
         if haskey(params.stats.data, "threads_sub_con_used")
             set_attribute(oracle_model, MOI.NumberOfThreads(), used_nthreads(params.stats, "threads_sub_con"))
@@ -326,6 +327,7 @@ function solve_mip(sol::SubSolverBlCJuMP, params::SolverParam, time_limit)
 
         @debug "Setting time limit of bilevel subsolver $(sol.name) to $inner_time_limit"
         set_time_limit_sec(sol.mip_model, inner_time_limit)
+        set_seed!(sol.mip_model, params.solver, get_seed(params))
         optimize!(sol.mip_model)
         inner_time_limit = inner_time_limit - solve_time(sol.mip_model)
 

@@ -47,3 +47,18 @@ function get_next_optimizer(s::GurobiSolver)
     # TODO Warning: Gurobi.Env are NOT thread-safe. If two models both use the same environment you must not solve them simultaneously on different threads.
     return Gurobi.Optimizer(s.env)
 end
+
+"""
+    set_seed!(model, solver, seed)
+
+Apply a solver-specific random seed to the passed JuMP model. If the wrapped
+solver does not support explicit seeding, this function is a no-op.
+"""
+function set_seed!(model::JuMP.Model, s::SolverWrapper, seed)
+    return nothing
+end
+
+function set_seed!(model::JuMP.Model, s::GurobiSolver, seed)
+    set_optimizer_attribute(model, "Seed", seed)
+    return nothing
+end
