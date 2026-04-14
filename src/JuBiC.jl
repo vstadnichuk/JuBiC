@@ -5,6 +5,7 @@ include("solvers/solver_wrapper.jl")
 include("solvers/solver_parameters.jl")
 
 include("Auxilliaries.jl")
+include("logging_utils.jl")
 
 include("model_structs/sub_solver.jl")
 include("model_structs/connector_lp_blc.jl")
@@ -41,5 +42,6 @@ export solve_instance!
 export solve_batch!
 export AStarCostState, MASTER_LEVEL, SUB_PROBLEM_LEVEL, CONNECTOR_BASED
 export ParetoCut, PARETO_NONE, PARETO_OPTIMALITY_ONLY, PARETO_OPTIMALITY_AND_FEASIBILITY
+export create_folder_if_not_exists, init_logging_folder, print_stats_to_csv, stats_to_dataframe, collect_all_keys
 
 end

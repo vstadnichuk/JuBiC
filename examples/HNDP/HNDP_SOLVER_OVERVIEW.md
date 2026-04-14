@@ -1,7 +1,7 @@
 # HNDP Solver Overview
 
 This note summarizes the HNDP model-generation functions in
-[hndp_model_generation_v2.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/hndp_model_generation_v2.jl)
+[hndp_model_generation.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/hndp_model_generation.jl)
 and the JuBiC solver parameter objects in
 [solver_parameters.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/src/solvers/solver_parameters.jl).
 
@@ -181,7 +181,7 @@ param = BLCparam(solver, false, outdir, "lp", 3600)
 ### `BlCLagparam`
 
 Use with BlCLag-compatible bilevel instances. This is not currently the main
-HNDP v2 route, but it remains part of JuBiC core.
+HNDP route, but it remains part of JuBiC core.
 
 Important fields:
 - `runtime`

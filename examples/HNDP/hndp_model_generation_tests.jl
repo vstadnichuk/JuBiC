@@ -4,7 +4,7 @@ using JuMP
 using Gurobi
 using Graphs
 
-include("hndp_model_generation_v2.jl")
+include("hndp_model_generation.jl")
 
 const HNDP_TEST_TIME_LIMIT = 60
 const TOY_TWO_USER_OPT = -7.0
@@ -627,7 +627,7 @@ function _run_hndp_mibs_runtime_toy_solve_test()
     @test gbc_stats.data["Opt"] ≈ mibs_stats.data["Opt"] atol = 1e-6
 end
 
-@testset "HNDP Model Generation V2 Tests" begin
+@testset "HNDP Model Generation Tests" begin
     @testset "Arc-Based Models" begin
         _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
         _run_hndp_model_pair_test(HNDP_BIGM_N_MINUS_ONE)

@@ -5,8 +5,8 @@ using Graphs
 using Gurobi
 using Base.Threads
 
-include("hndp_network_generation_v2.jl")
-include("hndp_astar_wrapper_v2.jl")
+include("hndp_network_generation.jl")
+include("hndp_astar_wrapper.jl")
 
 const HNDP_BIGM_FIXED_NETWORK_PATH = :fixed_network_path
 const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive

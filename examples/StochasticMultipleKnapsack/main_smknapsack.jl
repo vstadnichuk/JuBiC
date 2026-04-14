@@ -5,7 +5,6 @@ using JuBiC
 include("read_smps.jl")
 include("knapsack_models.jl")
 include("../HNDP/hndp_tests.jl")
-include("../logging.jl")
 include("knapsack_tests.jl")
 
 
@@ -28,7 +27,6 @@ end =#
 # solve both models with negative and without negative variables
 #test_neg_compact(50)
 #test_twosatge_JuBiC(50)
-
 
 
 

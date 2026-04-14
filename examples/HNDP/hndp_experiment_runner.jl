@@ -2,7 +2,7 @@ using JuBiC
 using JSON
 using Dates
 
-include("hndp_model_generation_v2.jl")
+include("hndp_model_generation.jl")
 
 """
     run_hndp_experiments!(

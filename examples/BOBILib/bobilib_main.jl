@@ -1,7 +1,5 @@
 using JuBiC, JuMP, Gurobi, BilevelJuMP
 
-include("../logging.jl")
-
 optimizer = Gurobi.Optimizer
 const instances_dir = "C:\\Users\\stadnichuk\\OneDrive - rwth-aachen.de\\Documents\\Arbeit\\Julia Bilevel\\L_Shape_tests\\JuBiC\\examples\\BOBILib\\instances"
 const instances_to_solve = ["K5010W07.KNP"]

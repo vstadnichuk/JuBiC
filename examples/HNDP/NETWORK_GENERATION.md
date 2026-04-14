@@ -1,9 +1,9 @@
 # HNDP Network Generation Config
 
 This document describes the JSON structure used by
-[network_generation_v2_example.json](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/run_settings/network_generation_v2_example.json)
+[network_generation_example.json](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/run_settings/network_generation_example.json)
 and
-[hndp_network_generation_v2.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/hndp_network_generation_v2.jl).
+[hndp_network_generation.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/hndp_network_generation.jl).
 
 The generator creates HNDP network instances only. Solver-specific JuBiC models
 are built later.
