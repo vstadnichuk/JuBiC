@@ -66,6 +66,47 @@ function generate_hndp_networks(config::Dict{String,Any})
     return generated
 end
 
+"""
+    visit_hndp_networks(json_path, visitor)
+    visit_hndp_networks(config, visitor)
+
+Stream generated HNDP networks to `visitor` one by one instead of returning all
+instances at once. This is useful for large experiment pipelines where keeping
+all generated instances in memory would be wasteful.
+"""
+function visit_hndp_networks(json_path::String, visitor::Function)
+    return visit_hndp_networks(load_hndp_network_generation_config(json_path), visitor)
+end
+
+function visit_hndp_networks(config::Dict{String,Any}, visitor::Function)
+    specs = get(config, "instances", nothing)
+    specs === nothing && throw(ArgumentError("The network generation config requires an 'instances' field."))
+
+    default_parameter_seeds = _int_vector(get(config, "parameter_seeds", [0]), "parameter_seeds")
+    output_cfg = haskey(config, "instance_output") ? Dict{String,Any}(config["instance_output"]) : nothing
+
+    for raw_spec in specs
+        spec = Dict{String,Any}(raw_spec)
+        _visit_hndp_generation_spec!(spec, default_parameter_seeds, output_cfg, visitor)
+    end
+    return nothing
+end
+
+function _visit_hndp_generation_spec!(
+    spec::Dict{String,Any},
+    default_parameter_seeds::Vector{Int},
+    output_cfg,
+    visitor::Function,
+)
+    for generated in _expand_hndp_generation_spec!(spec, default_parameter_seeds)
+        if !isnothing(output_cfg)
+            write_hndp_generated_networks([generated], output_cfg)
+        end
+        visitor(generated)
+    end
+    return nothing
+end
+
 function _expand_hndp_generation_spec!(
     spec::Dict{String,Any},
     default_parameter_seeds::Vector{Int},

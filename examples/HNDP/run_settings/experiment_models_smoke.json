@@ -1,0 +1,29 @@
+{
+  "models": [
+    {
+      "name": "blc_mip",
+      "model_type": "blc",
+      "big_m_mode": "n_minus_one_most_expensive",
+      "subproblem_method": "mip"
+    },
+    {
+      "name": "gbc_mip",
+      "model_type": "gbc",
+      "partial_decomposition": true,
+      "subproblem_method": "mip"
+    },
+    {
+      "name": "sd",
+      "model_type": "sd",
+      "big_m_mode": "n_minus_one_most_expensive",
+      "indicator_constraints": false,
+      "bound_duals": true
+    },
+    {
+      "name": "path_parallel",
+      "model_type": "path",
+      "parallelize": true,
+      "enumeration_time_limit": 15.0
+    }
+  ]
+}

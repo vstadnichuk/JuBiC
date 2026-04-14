@@ -271,6 +271,67 @@ function _write_batch_summary_csv(output_folder_path::AbstractString, rows::Vect
     return nothing
 end
 
+function _append_batch_summary_csv!(csv_path::AbstractString, row::Dict{String,Any})
+    mkpath(dirname(csv_path))
+
+    if !isfile(csv_path)
+        keys_sorted = sort(collect(keys(row)))
+        df = DataFrames.DataFrame()
+        for key in keys_sorted
+            value = get(row, key, "")
+            df[!, key] = [isnothing(value) ? missing : value]
+        end
+        CSV.write(
+            csv_path,
+            df;
+            append=false,
+            writeheader=true,
+            transform=(col, val) -> isnothing(val) ? missing : val,
+        )
+        return nothing
+    end
+
+    existing = CSV.read(csv_path, DataFrames.DataFrame)
+    existing_names = String.(names(existing))
+    row_keys = sort(collect(keys(row)))
+    all_keys = sort(union(existing_names, row_keys))
+
+    for key in all_keys
+        if !(key in existing_names)
+            existing[!, key] = fill(missing, nrow(existing))
+        end
+    end
+    select!(existing, all_keys)
+
+    new_row = DataFrames.DataFrame()
+    for key in all_keys
+        value = get(row, key, missing)
+        new_row[!, key] = [isnothing(value) ? missing : value]
+    end
+
+    combined = vcat(existing, new_row; cols=:union)
+    CSV.write(
+        csv_path,
+        combined;
+        append=false,
+        writeheader=true,
+        transform=(col, val) -> isnothing(val) ? missing : val,
+    )
+    return nothing
+end
+
+function _read_completed_batch_ids(csv_path::AbstractString; id_column::String="experiment_id")
+    if !isfile(csv_path)
+        return Set{String}()
+    end
+
+    df = CSV.read(csv_path, DataFrames.DataFrame)
+    if !(id_column in names(df))
+        return Set{String}()
+    end
+    return Set(String(id) for id in df[!, id_column] if !ismissing(id))
+end
+
 function _string_key_dict(dict::AbstractDict)
     return Dict(String(key) => value for (key, value) in dict)
 end
@@ -305,6 +366,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         wrapper = _build_mip_solver_wrapper(config)
         file_format_output = _get_string(config, "file_format_output", "lp")
         runtime = _get_number(config, "runtime", 3600)
+        seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
         pareto = _parse_pareto_cut(get(config, "pareto", "OPT"))
@@ -320,6 +382,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             file_format_output,
             RunStats(),
             runtime,
+            seed,
             threads_master,
             threads_sub_con,
             pareto,
@@ -333,6 +396,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         wrapper = _build_mip_solver_wrapper(config)
         file_format_output = _get_string(config, "file_format_output", "lp")
         runtime = _get_number(config, "runtime", 3600)
+        seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
         return BLCparam(
@@ -342,6 +406,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             file_format_output,
             RunStats(),
             runtime,
+            seed,
             threads_master,
             threads_sub_con,
         )
@@ -349,6 +414,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         wrapper = _build_mip_solver_wrapper(config)
         file_format_output = _get_string(config, "file_format_output", "lp")
         runtime = _get_number(config, "runtime", 3600)
+        seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
         pareto = _parse_pareto_cut(get(config, "pareto", "OPT"))
@@ -361,6 +427,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             file_format_output,
             RunStats(),
             runtime,
+            seed,
             threads_master,
             threads_sub_con,
             pareto,
@@ -371,6 +438,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         wrapper = _build_mip_solver_wrapper(config)
         file_format_output = _get_string(config, "file_format_output", "lp")
         runtime = _get_number(config, "runtime", 3600)
+        seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         return MIPparam(
             wrapper,
@@ -379,10 +447,12 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             file_format_output,
             RunStats(),
             runtime,
+            seed,
             threads_master,
         )
     elseif solver_name == "MibS"
-        return MibSparam(debbug_out, output_folder_path, RunStats())
+        runtime = _get_number(config, "runtime", 3600)
+        return MibSparam(debbug_out, output_folder_path, runtime, RunStats())
     end
 
     error("Unsupported inferred JuBiC solver '$(solver_name)'.")
