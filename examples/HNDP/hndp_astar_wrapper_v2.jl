@@ -94,7 +94,7 @@ function cost_w(current::HNDPAStarLabel, neighbour::HNDPAStarLabel, structure::H
     reduced_cost =
         structure.mcost[current.node, neighbour.node] * cs.gval +
         structure.mrisk[current.node, neighbour.node]
-    return reduced_cost + cs.kvals[(current.node, neighbour.node)]
+    return reduced_cost + get(cs.kvals, (current.node, neighbour.node), 0.0)
 end
 
 function isgoal_w(state::HNDPAStarLabel, goal::HNDPAStarLabel, params::SolverParam)

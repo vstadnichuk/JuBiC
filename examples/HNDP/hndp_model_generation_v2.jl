@@ -11,6 +11,7 @@ const HNDP_BIGM_FIXED_NETWORK_PATH = :fixed_network_path
 const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive
 const HNDP_SUBPROBLEM_MIP = :mip
 const HNDP_SUBPROBLEM_ASTAR = :astar
+const HNDP_SUBPROBLEM_BLC_JUMP = :blc_jump
 const HNDP_HYBRID_FALLBACK_SD = :sd
 
 """
@@ -90,6 +91,96 @@ function build_hndp_blc_instance(
     return Instance(master, subs)
 end
 
+"""
+    build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        include_objL2=false,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+        big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+    )
+
+Build a JuBiC `GBCSolver` instance for the passed HNDP network. The master uses
+the same construction-cost objective as the other HNDP builders. When
+`partial_decomposition=true`, the user flow constraints are added continuously
+to the master so GBC starts from a tighter relaxation.
+
+Supported follower subproblem options:
+- `HNDP_SUBPROBLEM_MIP`: classic `SubSolverJuMP`
+- `HNDP_SUBPROBLEM_BLC_JUMP`: `SubSolverBlCJuMP`, i.e. a bilevel-aware JuMP
+  subsolver that enforces follower optimality inside the subproblem
+- `HNDP_SUBPROBLEM_ASTAR`: `AStarSolver`
+"""
+function build_hndp_gbc_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    partial_decomposition::Bool=true,
+    include_objL2::Bool=false,
+    subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
+    big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+)
+    subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_BLC_JUMP, HNDP_SUBPROBLEM_ASTAR) ||
+        throw(ArgumentError("Unknown HNDP GBC subproblem method $(subproblem_method)."))
+
+    all_arcs = _hndp_all_arcs(hndp)
+    user_names = [string(user.uname) for user in hndp.users]
+
+    mm = Model(() -> get_next_optimizer(solver))
+    @variable(mm, x[all_arcs], Bin)
+    _fix_non_decision_arcs!(mm, x, hndp.edgeA)
+
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
+    @variable(mm, construction_cost_var)
+    @constraint(mm, construction_cost_var == constructioncost, base_name = "construction_cost")
+    @objective(mm, Min, construction_cost_var)
+
+    xdec_dict = Dict(a => x[a] for a in hndp.edgeA)
+    objL2_map = Dict{String,Any}()
+
+    if partial_decomposition
+        partial = function (mmodel::JuMP.Model, mobj)
+            for user in hndp.users
+                leader_obj, follower_obj, _ = _add_user_flow_constraints!(
+                    mmodel,
+                    user,
+                    hndp,
+                    all_arcs;
+                    xvars=x,
+                    binary_flow=false,
+                    add_strong_duality=false,
+                )
+                uname = string(user.uname)
+                @constraint(mmodel, leader_obj == mobj[uname], base_name = "objLink_$(uname)")
+                if include_objL2
+                    opt_l2 = @variable(mmodel, base_name = "optL2_gbc_$(uname)")
+                    @constraint(mmodel, opt_l2 == follower_obj, base_name = "objUser_$(uname)")
+                    objL2_map[uname] = opt_l2
+                end
+            end
+        end
+
+        master = include_objL2 ?
+            Master(mm, hndp.edgeA, xdec_dict, user_names, partial, objL2_map) :
+            Master(mm, hndp.edgeA, xdec_dict, user_names, partial)
+    else
+        include_objL2 &&
+            throw(ArgumentError("HNDP GBC can only expose objL2 information when partial_decomposition=true."))
+        master = Master(mm, hndp.edgeA, xdec_dict, user_names)
+    end
+
+    big_m_by_user = subproblem_method == HNDP_SUBPROBLEM_BLC_JUMP ?
+        _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode) :
+        Dict{String,Float64}()
+
+    subs = Any[]
+    for user in hndp.users
+        push!(subs, _build_hndp_gbc_subsolver(user, hndp, all_arcs, solver, subproblem_method, big_m_by_user))
+    end
+
+    return Instance(master, subs)
+end
+
 function _build_hndp_blc_subsolver(
     user::User,
     hndp::HNDPwC,
@@ -124,6 +215,47 @@ function _build_hndp_blc_subsolver(
     end
 
     throw(ArgumentError("Unknown HNDP BlC subproblem method $(subproblem_method)."))
+end
+
+function _build_hndp_gbc_subsolver(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+    subproblem_method::Symbol,
+    big_m_by_user::Dict{String,Float64},
+)
+    if subproblem_method == HNDP_SUBPROBLEM_MIP
+        return _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, HNDP_SUBPROBLEM_MIP)
+    elseif subproblem_method == HNDP_SUBPROBLEM_ASTAR
+        return _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, HNDP_SUBPROBLEM_ASTAR)
+    elseif subproblem_method == HNDP_SUBPROBLEM_BLC_JUMP
+        sub_model = Model(() -> get_next_optimizer(solver))
+        leader_obj, follower_obj, flow = _add_user_flow_constraints!(
+            sub_model,
+            user,
+            hndp,
+            all_arcs;
+            xvars=nothing,
+            binary_flow=true,
+            add_strong_duality=false,
+        )
+        @objective(sub_model, Min, follower_obj)
+        set_silent(sub_model)
+        y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+        user_big_m = big_m_by_user[string(user.uname)]
+        return SubSolverBlCJuMP(
+            string(user.uname),
+            sub_model,
+            hndp.edgeA,
+            y_vars,
+            leader_obj,
+            follower_obj,
+            a -> user_big_m,
+        )
+    end
+
+    throw(ArgumentError("Unknown HNDP GBC subproblem method $(subproblem_method)."))
 end
 
 """
@@ -571,10 +703,6 @@ Build the parallel hybrid HNDP reformulation. Every user gets the same global
 wall-clock deadline for the path precomputation stage. Users whose feasible
 paths are fully enumerated before the deadline are modeled with the compact
 path formulation; users that time out fall back to an alternative formulation.
-
-The implementation is intentionally designed around a small fallback dispatch so
-that additional fallback formulations can be added later. For now, the only
-implemented fallback is the compact strong-duality formulation `:sd`.
 
 Returns:
 - `instance`: the generated JuBiC MIP instance

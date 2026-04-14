@@ -424,6 +424,68 @@ function _run_hndp_hybrid_blc_all_fallback_test(hndp::HNDPwC, big_m_mode::Symbol
     @test hybrid_stats.data["Opt"] ≈ expected_opt atol = 1e-6
 end
 
+function _run_hndp_gbc_subsolver_triplet_test(hndp::HNDPwC, big_m_mode::Symbol, expected_opt::Float64)
+    solver = GurobiSolver()
+
+    gbc_mip = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+        big_m_mode=big_m_mode,
+    )
+    gbc_blc = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_BLC_JUMP,
+        big_m_mode=big_m_mode,
+    )
+    gbc_astar = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_ASTAR,
+        big_m_mode=big_m_mode,
+    )
+
+    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+    stats_blc = solve_instance!(gbc_blc, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+
+    @test haskey(stats_mip.data, "Opt")
+    @test haskey(stats_blc.data, "Opt")
+    @test haskey(stats_astar.data, "Opt")
+    @test stats_mip.data["Opt"] ≈ stats_blc.data["Opt"] atol = 1e-6
+    @test stats_mip.data["Opt"] ≈ stats_astar.data["Opt"] atol = 1e-6
+    @test stats_astar.data["Opt"] ≈ expected_opt atol = 1e-6
+end
+
+function _run_hndp_gbc_weighted_subsolver_pair_test(hndp::HNDPwC, expected_opt::Float64)
+    solver = GurobiSolver()
+
+    gbc_mip = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+    )
+    gbc_astar = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_ASTAR,
+    )
+
+    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+
+    @test haskey(stats_mip.data, "Opt")
+    @test haskey(stats_astar.data, "Opt")
+    @test stats_mip.data["Opt"] ≈ stats_astar.data["Opt"] atol = 1e-6
+    @test stats_astar.data["Opt"] ≈ expected_opt atol = 1e-6
+end
+
 @testset "HNDP Model Generation V2 Tests" begin
     @testset "Arc-Based Models" begin
         _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
@@ -431,6 +493,12 @@ end
         _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
         _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
         _run_hndp_blc_astar_pair_test(build_toy_hndp_weighted_user(), HNDP_BIGM_FIXED_NETWORK_PATH)
+    end
+
+    @testset "GBC Models" begin
+        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
+        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+        _run_hndp_gbc_weighted_subsolver_pair_test(build_toy_hndp_weighted_user(), 0.0)
     end
 
     @testset "Path Model" begin

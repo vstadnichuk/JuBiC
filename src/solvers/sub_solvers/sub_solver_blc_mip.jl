@@ -281,7 +281,9 @@ function solve_sub_for_x(sol::SubSolverBlCJuMP, xvals, params::SolverParam, time
 
         check_solution_status(sol)
 
-        y_vals = value.(sol.y_vars)
+        y_vals = sol.y_vars isa AbstractDict ?
+            Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) :
+            value.(sol.y_vars)
         osol = value(sol.c_objterm)
         osol_L1 = value(sol.r_objterm)
         @debug "We found a bilevel-feasible solution for subproblem $(sol.name) with value $(osol)."
