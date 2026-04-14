@@ -1,12 +1,17 @@
 # A wrapper for the MibS solver
 using BilevelJuMP, MibS_jll
 
+function _set_stat!(stats::RunStats, name::String, value::Any)
+    stats.data[name] = value
+end
+
 function solve_with_MibS!(inst::Instance, param::MibSparam)
     model = inst.master.model
 
     # register solver
     @debug "starting setup of the MibS solver."
     new_stat!(param.stats, "Solver", "MibSSolver")
+    _set_stat!(param.stats, "MibSStatus", "Started")
 
     try
         @info model
@@ -21,22 +26,27 @@ function solve_with_MibS!(inst::Instance, param::MibSparam)
         objective = solution.objective
 
         if status
+            _set_stat!(param.stats, "MibSStatus", "Optimal")
             new_stat!(param.stats, "Opt", objective)
         else
+            _set_stat!(param.stats, "MibSStatus", "NoOptimalSolution")
             @warn "The MibS solver did not find an optimal solution."
         end
 
         # process MibS output
         process_mibs_log!(param.stats)
     catch e
-        @error "An error occurred while solving with MibS: $e"
+        error_message = sprint(showerror, e)
+        _set_stat!(param.stats, "MibSStatus", "Error")
+        _set_stat!(param.stats, "Error", error_message)
+        @error "An error occurred while solving with MibS: $error_message"
     end
 end
 
 function process_mibs_log!(stats)
     mibs_output_file = joinpath(pwd(), "mibs_output.txt")
     if !isfile(mibs_output_file)
-        @warn "MibS output file not found: $mibs_output_file"
+        @debug "MibS output file not found: $mibs_output_file"
         return
     end
 

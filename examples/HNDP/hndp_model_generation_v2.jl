@@ -1,5 +1,6 @@
 using JuBiC
 using JuMP
+using BilevelJuMP
 using Graphs
 using Gurobi
 using Base.Threads
@@ -119,6 +120,7 @@ function build_hndp_gbc_instance(
     include_objL2::Bool=false,
     subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+    enforce_integer_construction_cost::Bool=false,
 )
     subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_BLC_JUMP, HNDP_SUBPROBLEM_ASTAR) ||
         throw(ArgumentError("Unknown HNDP GBC subproblem method $(subproblem_method)."))
@@ -132,6 +134,10 @@ function build_hndp_gbc_instance(
 
     constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @variable(mm, construction_cost_var)
+    if enforce_integer_construction_cost
+        @warn "HNDP MiBS generation assumes that the construction-cost expression is integral. Therefore, `construction_cost_var` is forced to be integer to keep the transformed bilevel model MIP-MIP."
+        set_integer(construction_cost_var)
+    end
     @constraint(mm, construction_cost_var == constructioncost, base_name = "construction_cost")
     @objective(mm, Min, construction_cost_var)
 
@@ -179,6 +185,31 @@ function build_hndp_gbc_instance(
     end
 
     return Instance(master, subs)
+end
+
+"""
+    build_hndp_mibs_instance(hndp, solver; partial_decomposition=false)
+
+Build a single-follower MiBS model for the passed HNDP instance. Internally, we
+first generate the corresponding HNDP GBC instance with classical JuMP
+subsolvers and then apply JuBiC's generic `transform_GBC_to_MibS` helper.
+
+This keeps the HNDP-specific model generation compact while still ensuring that
+MiBS receives the single lower-level MIP it expects.
+"""
+function build_hndp_mibs_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    partial_decomposition::Bool=false,
+)
+    gbc_instance = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=partial_decomposition,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+        enforce_integer_construction_cost=true,
+    )
+    return transform_GBC_to_MibS(gbc_instance, solver)
 end
 
 function _build_hndp_blc_subsolver(

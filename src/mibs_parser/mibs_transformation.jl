@@ -40,11 +40,16 @@ function transform_GBC_to_MibS(instance::Instance, solver::SolverWrapper)
 
     # define upper level objective
     upper_obj = objective_function(instance.master.model)
-    l1term = if upper_obj isa GenericVariableRef upper_obj else sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) + constant(upper_obj) end # small hack if L1 Obj is only 1 variable
+    l1term =
+        if upper_obj isa GenericVariableRef
+            upper_vars_ref[upper_obj]
+        else
+            sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) + constant(upper_obj)
+        end
     @objective(
         Upper(bilevel_model),
         Min,
-        sum(l1term) +
+        l1term +
         sum(
             constant(sub_problem.r_objterm) +
             sum(coef * lower_vars_ref[var] for (var, coef) in sub_problem.r_objterm.terms)
@@ -58,7 +63,11 @@ function transform_GBC_to_MibS(instance::Instance, solver::SolverWrapper)
     @objective(
         Lower(bilevel_model),
         Min,
-        sum(coef * lower_vars_ref[var] for (var, coef) in lower_obj.terms)
+        if lower_obj isa GenericVariableRef
+            lower_vars_ref[lower_obj]
+        else
+            sum(coef * lower_vars_ref[var] for (var, coef) in lower_obj.terms) + constant(lower_obj)
+        end
     )
 
     # add upper level constraints
@@ -191,33 +200,5 @@ function _key_for_value(vars, val, key_list)
             return k    # found it, return the key
         end
     end
-
-    # define upper level objective
-    upper_obj = objective_function(instance.master.model)
-    @objective(
-        Upper(bilevel_model),
-        Min,
-        upper_obj.constant +  # TODO: The constant part of the objective is not supported by the current BilevelJuMP version. Thus, the solution values may differ by this constant.
-        sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) +
-        sum(
-            sum(coef * lower_vars_ref[var] for (var, coef) in sub_problem.r_objterm.terms)
-            for sub_problem in instance.subproblems
-        )  # TODO: Currently only supports the SubSolverJuMP subproblem type
-    )
-
-    # define lower level objective
-    lower_obj = objective_function(instance.subproblems[1].mip_model)
-    @objective(
-        Lower(bilevel_model),
-        Min,
-        sum(coef * lower_vars_ref[var] for (var, coef) in lower_obj.terms)
-    )
-
-    # add upper level constraints
-    _add_constraints!(Upper(bilevel_model), instance.master.model, upper_vars_ref)
-
-    # add lower level constraints
-    _add_constraints!(Lower(bilevel_model), instance.subproblems[1].mip_model, lower_vars_ref)
-
-    return Instance(MibSMaster(bilevel_model), nothing)
+    return nothing
 end

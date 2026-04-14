@@ -486,6 +486,100 @@ function _run_hndp_gbc_weighted_subsolver_pair_test(hndp::HNDPwC, expected_opt::
     @test stats_astar.data["Opt"] ≈ expected_opt atol = 1e-6
 end
 
+function _build_small_sioux_falls_test_networks()
+    config = Dict{String,Any}(
+        "parameter_seeds" => [1],
+        "instances" => [
+            Dict{String,Any}(
+                "name" => "sioux_csp_test",
+                "instance_type" => "constrained_shortest_path",
+                "topologies" => ["sioux_falls"],
+                "nusers" => [1],
+                "length_constrained" => [false],
+                "two_stage" => [false],
+                "user_parameter_mode" => ["shared"],
+                "construction_cost" => 10,
+                "max_cost" => 20,
+                "max_risk" => 20,
+                "max_weight" => 20,
+            ),
+            Dict{String,Any}(
+                "name" => "sioux_competition_test",
+                "instance_type" => "competition",
+                "topologies" => ["layered_sioux_falls"],
+                "nusers" => [1],
+                "length_constrained" => [false],
+                "competitor_cost_factor" => [0.8],
+                "user_parameter_mode" => ["shared"],
+                "construction_cost" => 10,
+                "max_cost" => 20,
+                "max_risk" => 20,
+                "max_weight" => 20,
+            ),
+        ],
+    )
+
+    generated = generate_hndp_networks(config)
+    return Dict(gen.name => gen.instance for gen in generated)
+end
+
+function _instance_by_prefix(instances::Dict{String,HNDPwC}, prefix::String)
+    matches = sort([name for name in keys(instances) if startswith(name, prefix)])
+    length(matches) == 1 ||
+        throw(ArgumentError("Expected exactly one generated HNDP instance with prefix '$prefix', but found $(matches)."))
+    return instances[matches[1]]
+end
+
+function _run_hndp_mibs_sioux_test(hndp::HNDPwC)
+    solver = GurobiSolver()
+    mibs_instance = build_hndp_mibs_instance(hndp, solver)
+    @test mibs_instance.master isa MibSMaster
+    @test isnothing(mibs_instance.subproblems)
+end
+
+function _run_hndp_mibs_toy_solve_test()
+    solver = GurobiSolver()
+    hndp = build_toy_HNDPwC()
+
+    gbc_instance = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+        big_m_mode=HNDP_BIGM_N_MINUS_ONE,
+    )
+    mibs_instance = build_hndp_mibs_instance(hndp, solver)
+
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir()))
+
+    @test haskey(gbc_stats.data, "Opt")
+    @test haskey(mibs_stats.data, "Opt")
+    @test gbc_stats.data["Opt"] ≈ mibs_stats.data["Opt"] atol = 1e-6
+end
+
+function _run_hndp_mibs_multi_follower_toy_solve_test()
+    solver = GurobiSolver()
+    hndp = build_toy_hndp_two_users()
+
+    gbc_instance = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+        big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+    )
+    mibs_instance = build_hndp_mibs_instance(hndp, solver)
+
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir()))
+
+    @test haskey(gbc_stats.data, "Opt")
+    @test haskey(mibs_stats.data, "Opt")
+    @test gbc_stats.data["Opt"] ≈ mibs_stats.data["Opt"] atol = 1e-6
+    @test gbc_stats.data["Opt"] ≈ -7 atol = 1e-6
+end
+
 @testset "HNDP Model Generation V2 Tests" begin
     @testset "Arc-Based Models" begin
         _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
@@ -522,5 +616,13 @@ end
         _run_hndp_hybrid_blc_path_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
         _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
         _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+    end
+
+    @testset "MibS Sioux Falls" begin
+        sioux_instances = _build_small_sioux_falls_test_networks()
+        _run_hndp_mibs_sioux_test(_instance_by_prefix(sioux_instances, "sioux_csp_test_sioux_falls_U1_S1_nolen"))
+        _run_hndp_mibs_sioux_test(_instance_by_prefix(sioux_instances, "sioux_competition_test_layered_sioux_falls_U1_S1_nolen"))
+        _run_hndp_mibs_toy_solve_test()
+        _run_hndp_mibs_multi_follower_toy_solve_test()
     end
 end
