@@ -5,7 +5,7 @@ include("solvers/solver_wrapper.jl")
 include("solvers/solver_parameters.jl")
 
 include("Auxilliaries.jl")
-include("logging_utils.jl")
+include("utils/logging_utils.jl")
 
 include("model_structs/sub_solver.jl")
 include("model_structs/connector_lp_blc.jl")
@@ -29,6 +29,7 @@ include("solvers/mip_solver.jl")
 include("solvers/mibs_solver.jl")
 include("solvers/solvers.jl")
 include("solvers/batch_solve.jl")
+include("utils/gbc_instance_io.jl")
 include("solvers/sub_solvers/labeling.jl")
 include("solvers/sub_solvers/a_star_search.jl")
 
@@ -40,6 +41,7 @@ export GBCparam, BLCparam, BlCLagparam, MIPparam, MibSparam, SolverParam, CostSt
 export GurobiSolver, SolverWrapper
 export solve_instance!
 export solve_batch!
+export output_GBC_solver_instance, read_GBC_solver_instance
 export AStarCostState, MASTER_LEVEL, SUB_PROBLEM_LEVEL, CONNECTOR_BASED
 export ParetoCut, PARETO_NONE, PARETO_OPTIMALITY_ONLY, PARETO_OPTIMALITY_AND_FEASIBILITY
 export create_folder_if_not_exists, init_logging_folder, print_stats_to_csv, stats_to_dataframe, collect_all_keys

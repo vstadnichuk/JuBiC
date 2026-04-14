@@ -196,6 +196,34 @@ function test_gbc_simple_bilevel()
     @test haskey(stats.data, "Opt") && stats.data["Opt"] ≈ 1
 end
 
+function test_gbc_solver_instance_io_roundtrip()
+    instance = generate_gbc_simple_bilevel_instance()
+    export_dir = mktempdir()
+    output_GBC_solver_instance(instance, export_dir)
+
+    @test isfile(joinpath(export_dir, "master.lp"))
+    @test isfile(joinpath(export_dir, "sub_Sub0.lp"))
+    @test isfile(joinpath(export_dir, "metadata.json"))
+
+    imported = read_GBC_solver_instance(export_dir, GurobiSolver())
+    @test imported.master isa Master
+    @test length(imported.subproblems) == 1
+    @test imported.subproblems[1] isa SubSolverJuMP
+
+    solve_dir = mktempdir()
+    parameter = GBCparam(
+        GurobiSolver(),
+        true,
+        solve_dir,
+        "lp",
+        PARETO_OPTIMALITY_ONLY,
+    )
+
+    stats = solve_instance!(imported, parameter)
+    @test haskey(stats.data, "Opt")
+    @test stats.data["Opt"] ≈ 1
+end
+
 
 """
     feasibility_cuts_test()
@@ -441,6 +469,7 @@ end
 
 
 test_gbc_simple_bilevel()
+test_gbc_solver_instance_io_roundtrip()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
 test_blclag_requires_bilevel_subsolver()

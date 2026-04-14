@@ -69,6 +69,14 @@ function run_hndp_experiments!(
 
                 aggregate_row = Dict{String,Any}()
                 try
+                    if Bool(get(model_spec, "write_solver_instance_files", false))
+                        _maybe_export_hndp_solver_instance!(
+                            generated_network,
+                            model_spec,
+                            param_spec,
+                            run_output_path,
+                        )
+                    end
                     stats, aggregate_row = _run_hndp_experiment(
                         generated_network,
                         model_spec,
@@ -99,6 +107,34 @@ function run_hndp_experiments!(
     end)
 
     return results
+end
+
+function _maybe_export_hndp_solver_instance!(
+    generated_network::HNDPGeneratedNetwork,
+    model_spec::Dict{String,Any},
+    param_spec::Dict{String,Any},
+    run_output_path::AbstractString,
+)
+    solver_wrapper = _build_hndp_mip_wrapper(param_spec)
+    model_instance, _ = _build_hndp_model_from_spec(
+        generated_network.instance,
+        solver_wrapper,
+        model_spec,
+        param_spec,
+    )
+
+    solver_name = JuBiC._infer_solver_name(model_instance)
+    if solver_name != "GBC"
+        @warn "Skipping solver-instance export for HNDP experiment $(get(model_spec, "name", get(model_spec, "model_type", "model"))). The current export hook only supports GBC instances."
+        return nothing
+    end
+
+    try
+        output_GBC_solver_instance(model_instance, run_output_path)
+    catch err
+        @warn "Could not export the GBC solver instance for HNDP run folder $(run_output_path): $(sprint(showerror, err))"
+    end
+    return nothing
 end
 
 function _run_hndp_experiment(

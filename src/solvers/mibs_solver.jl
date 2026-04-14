@@ -75,19 +75,13 @@ function _solve_with_MibS_param_file_runner(model::BilevelJuMP.BilevelModel, par
             error_filename,
         )
 
-        if should_debbug_print(param) || length(err) > 0
-            _copy_mibs_debug_files!(
-                path,
-                output_file_path(param);
-                prefix = "custom_",
-            )
-        end
+        _copy_mibs_run_files!(path, output_file_path(param))
 
         if length(err) > 0
             error(
                 "MibS returned:\n\n" *
                 "$err\n\n" *
-                "JuBiC kept the debug files in $(output_file_path(param)) when debug mode is enabled or when errors occur.",
+                "JuBiC kept the exported MiBS files in $(output_file_path(param)).",
             )
         end
         if length(output) == 0
@@ -172,12 +166,21 @@ function _call_mibs_with_param_file(
     return output, err
 end
 
-function _copy_mibs_debug_files!(source_dir::String, target_dir; prefix::String = "")
+function _copy_mibs_run_files!(source_dir::String, target_dir::AbstractString)
     mkpath(target_dir)
-    for file_name in ("model.mps", "model.aux", "mibs.par", "mibs_output.txt", "mibs_errors.txt")
-        source = joinpath(source_dir, file_name)
+
+    file_mapping = Dict(
+        "model.mps" => "MibSinstance.mps",
+        "model.aux" => "MibSinstance.aux",
+        "mibs.par" => "mibs.par",
+        "mibs_output.txt" => "mibs_output.txt",
+        "mibs_errors.txt" => "mibs_errors.txt",
+    )
+
+    for (source_name, target_name) in file_mapping
+        source = joinpath(source_dir, source_name)
         if isfile(source)
-            cp(source, joinpath(target_dir, prefix * file_name); force = true)
+            cp(source, joinpath(target_dir, target_name); force = true)
         end
     end
     return nothing
