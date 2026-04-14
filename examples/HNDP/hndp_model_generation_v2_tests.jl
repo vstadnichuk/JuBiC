@@ -6,6 +6,11 @@ using Graphs
 
 include("hndp_model_generation_v2.jl")
 
+const HNDP_TEST_TIME_LIMIT = 60
+const TOY_TWO_USER_OPT = -7.0
+const TOY_ALL_DECISION_OPT = 15.0
+const TOY_WEIGHTED_OPT = 0.0
+
 """
     build_toy_hndp_two_users()
 
@@ -537,6 +542,12 @@ function _run_hndp_mibs_sioux_test(hndp::HNDPwC)
     @test isnothing(mibs_instance.subproblems)
 end
 
+"""
+    _run_hndp_mibs_toy_solve_test()
+
+Validate the single-follower MiBS transformation on the original toy HNDP
+instance against the corresponding GBC model.
+"""
 function _run_hndp_mibs_toy_solve_test()
     solver = GurobiSolver()
     hndp = build_toy_HNDPwC()
@@ -550,14 +561,21 @@ function _run_hndp_mibs_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
-    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir()))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
     @test haskey(mibs_stats.data, "Opt")
     @test gbc_stats.data["Opt"] ≈ mibs_stats.data["Opt"] atol = 1e-6
 end
 
+"""
+    _run_hndp_mibs_multi_follower_toy_solve_test()
+
+Validate the multi-follower MiBS path on the two-user toy HNDP instance. This
+covers the `merge_subproblems` transformation before the model is exported to
+MiBS and checks that the resulting single-follower reformulation matches GBC.
+"""
 function _run_hndp_mibs_multi_follower_toy_solve_test()
     solver = GurobiSolver()
     hndp = build_toy_hndp_two_users()
@@ -571,51 +589,80 @@ function _run_hndp_mibs_multi_follower_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
-    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir()))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
     @test haskey(mibs_stats.data, "Opt")
     @test gbc_stats.data["Opt"] ≈ mibs_stats.data["Opt"] atol = 1e-6
-    @test gbc_stats.data["Opt"] ≈ -7 atol = 1e-6
+    @test gbc_stats.data["Opt"] ≈ TOY_TWO_USER_OPT atol = 1e-6
+end
+
+"""
+    _run_hndp_mibs_runtime_toy_solve_test()
+
+Check that the JuBiC-side MiBS runner stores the requested time limit in the
+generated parameter file path and still returns the same objective as GBC.
+"""
+function _run_hndp_mibs_runtime_toy_solve_test()
+    solver = GurobiSolver()
+    hndp = build_toy_hndp_two_users()
+
+    gbc_instance = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+        big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+    )
+    mibs_instance = build_hndp_mibs_instance(hndp, solver)
+
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
+
+    @test haskey(gbc_stats.data, "Opt")
+    @test haskey(mibs_stats.data, "Opt")
+    @test get(mibs_stats.data, "MibSExecution", nothing) == "JuBiCParamFileRunner"
+    @test get(mibs_stats.data, "time_limit", nothing) == HNDP_TEST_TIME_LIMIT
+    @test gbc_stats.data["Opt"] ≈ mibs_stats.data["Opt"] atol = 1e-6
 end
 
 @testset "HNDP Model Generation V2 Tests" begin
     @testset "Arc-Based Models" begin
         _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
         _run_hndp_model_pair_test(HNDP_BIGM_N_MINUS_ONE)
-        _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
-        _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+        _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, TOY_TWO_USER_OPT)
+        _run_hndp_blc_astar_pair_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, TOY_ALL_DECISION_OPT)
         _run_hndp_blc_astar_pair_test(build_toy_hndp_weighted_user(), HNDP_BIGM_FIXED_NETWORK_PATH)
     end
 
     @testset "GBC Models" begin
-        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
-        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
-        _run_hndp_gbc_weighted_subsolver_pair_test(build_toy_hndp_weighted_user(), 0.0)
+        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, TOY_TWO_USER_OPT)
+        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, TOY_ALL_DECISION_OPT)
+        _run_hndp_gbc_weighted_subsolver_pair_test(build_toy_hndp_weighted_user(), TOY_WEIGHTED_OPT)
     end
 
     @testset "Path Model" begin
         _run_hndp_path_model_test()
         _run_hndp_path_model_all_decision_arcs_test()
         _run_hndp_path_model_weighted_test()
-        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users(), -7.0)
-        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
-        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_weighted_user(), 0.0)
+        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users(), TOY_TWO_USER_OPT)
+        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), TOY_ALL_DECISION_OPT)
+        _run_hndp_path_parallel_equivalence_test(build_toy_hndp_weighted_user(), TOY_WEIGHTED_OPT)
     end
 
     @testset "Hybrid SD Fallback" begin
-        _run_hndp_hybrid_path_equivalence_test(build_toy_hndp_two_users(), -7.0)
-        _run_hndp_hybrid_path_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
-        _run_hndp_hybrid_all_fallback_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
-        _run_hndp_hybrid_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+        _run_hndp_hybrid_path_equivalence_test(build_toy_hndp_two_users(), TOY_TWO_USER_OPT)
+        _run_hndp_hybrid_path_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), TOY_ALL_DECISION_OPT)
+        _run_hndp_hybrid_all_fallback_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, TOY_TWO_USER_OPT)
+        _run_hndp_hybrid_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, TOY_ALL_DECISION_OPT)
     end
 
     @testset "Hybrid BlC Fallback" begin
-        _run_hndp_hybrid_blc_path_equivalence_test(build_toy_hndp_two_users(), -7.0)
-        _run_hndp_hybrid_blc_path_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), 15.0)
-        _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, -7.0)
-        _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, 15.0)
+        _run_hndp_hybrid_blc_path_equivalence_test(build_toy_hndp_two_users(), TOY_TWO_USER_OPT)
+        _run_hndp_hybrid_blc_path_equivalence_test(build_toy_hndp_two_users_all_decision_arcs(), TOY_ALL_DECISION_OPT)
+        _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, TOY_TWO_USER_OPT)
+        _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, TOY_ALL_DECISION_OPT)
     end
 
     @testset "MibS Sioux Falls" begin
@@ -624,5 +671,6 @@ end
         _run_hndp_mibs_sioux_test(_instance_by_prefix(sioux_instances, "sioux_competition_test_layered_sioux_falls_U1_S1_nolen"))
         _run_hndp_mibs_toy_solve_test()
         _run_hndp_mibs_multi_follower_toy_solve_test()
+        _run_hndp_mibs_runtime_toy_solve_test()
     end
 end

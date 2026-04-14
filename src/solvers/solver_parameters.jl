@@ -193,9 +193,13 @@ struct MibSparam <: SolverParam
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
     output_folder_path::Any  # path to where to store output files 
     stats::RunStats  # Store statistics of the run here
+    runtime::Any  # requested runtime limit for MiBS in seconds
 end
 
-MibSparam(debbug_out, output_folder_path) = MibSparam(debbug_out, output_folder_path, RunStats())
+MibSparam(debbug_out, output_folder_path) = MibSparam(debbug_out, output_folder_path, RunStats(), 3600.0)
+MibSparam(debbug_out, output_folder_path, stats::RunStats) = MibSparam(debbug_out, output_folder_path, stats, 3600.0)
+MibSparam(debbug_out, output_folder_path, runtime::Real) = MibSparam(debbug_out, output_folder_path, RunStats(), Float64(runtime))
+MibSparam(debbug_out, output_folder_path, runtime::Real, stats::RunStats) = MibSparam(debbug_out, output_folder_path, stats, Float64(runtime))
 
 
 function get_stats(param::MibSparam)
@@ -209,4 +213,3 @@ end
 function should_debbug_print(param::MibSparam)
     return param.debbug_out
 end
-
