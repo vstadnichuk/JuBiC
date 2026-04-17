@@ -223,6 +223,8 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
         set_optimizer_attribute(myLP, "NumericFocus", 3)
         set_optimizer_attribute(myLP, "CrossoverBasis", 1)
         set_optimizer_attribute(myLP, "Method", 2)
+        set_optimizer_attribute(myLP, "DualReductions", 0)
+        set_optimizer_attribute(myLP, "BarHomogeneous", 1)
     end
 
     # disable output of LP

@@ -50,6 +50,51 @@ function _reset_numeric_state!(subLP::ConnectorLP)
     return nothing
 end
 
+function _connector_solution_snapshot(subLP::ConnectorLP)
+    return Dict{Symbol,Any}(
+        :s => Float64(value(subLP.lp[:s])),
+        :g => Float64(value(subLP.lp[:g])),
+        :k => Dict(a => Float64(value(subLP.lp[:k][a])) for a in subLP.A),
+    )
+end
+
+function _snapshot_s(subLP::ConnectorLP)
+    snapshot = get(subLP.numeric_state, :cut_solution_snapshot, nothing)
+    return isnothing(snapshot) ? value(subLP.lp[:s]) : snapshot[:s]
+end
+
+function _snapshot_g(subLP::ConnectorLP)
+    if haskey(subLP.numeric_state, :g_override)
+        return subLP.numeric_state[:g_override]
+    end
+    snapshot = get(subLP.numeric_state, :cut_solution_snapshot, nothing)
+    return isnothing(snapshot) ? value(subLP.lp[:g]) : snapshot[:g]
+end
+
+function _snapshot_k(subLP::ConnectorLP)
+    snapshot = get(subLP.numeric_state, :cut_solution_snapshot, nothing)
+    return isnothing(snapshot) ? value.(subLP.lp[:k]) : snapshot[:k]
+end
+
+function _pareto_row_scale(subLP::ConnectorLP, current_obj::Real, g_obj_coef::Real)
+    cssol = Float64(value(subLP.lp[:s]))
+    cgsol = Float64(value(subLP.lp[:g]))
+    kval_sum = sum(abs(Float64(value(subLP.lp[:k][a]))) for a in subLP.A)
+    return max(
+        1.0,
+        abs(cssol),
+        abs(g_obj_coef * cgsol),
+        kval_sum,
+        abs(current_obj),
+        abs(subLP.lower_bound_obj_contribution),
+    )
+end
+
+function _pareto_band_tolerance(subLP::ConnectorLP, current_obj::Real, g_obj_coef::Real)
+    row_scale = _pareto_row_scale(subLP, current_obj, g_obj_coef)
+    return max(1e-6, 1e-6 * row_scale)
+end
+
 function _mip_gap_tolerances(model::JuMP.Model)
     rel_gap = try
         Float64(get_optimizer_attribute(model, "MIPGap"))
@@ -201,9 +246,19 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         elseif params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
             # pareto optimality step for optimality cuts
             time_limit_pareto = time_limit - time_iterate
-            @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-            pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
-            time_limit_build_cut = time_limit_pareto
+            pareto_snapshot = _connector_solution_snapshot(subLP)
+            try
+                @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
+                pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+                time_limit_build_cut = time_limit_pareto
+            catch err
+                @warn "Pareto-optimal cut generation failed for connector $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
+                params.stats.data["Opt_status_override"] = "Opt_Numerics"
+                params.stats.data["GBCStatus"] = "Opt_Numerics"
+                subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
+            finally
+                pareto_optimal_decomposition_cleanup(subLP)
+            end
         end
 
         # build the usual optimality cut. In the numerical fallback path this uses
@@ -252,10 +307,10 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     bigMcut = nothing
 
     # g term of the cut
-    gval = get(subLP.numeric_state, :g_override, value(subLP.lp[:g]))
+    gval = _snapshot_g(subLP)
 
     # s term of the cut
-    sval = value(subLP.lp[:s])
+    sval = _snapshot_s(subLP)
     cut = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP)  # TODO: rounding to avoid numerics
 
     ## build bound (called bigM-term)
@@ -270,7 +325,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     end
 
     # k term of the cut
-    kvals = value.(subLP.lp[:k])
+    kvals = _snapshot_k(subLP)
     if params.trim_coeff
         cut -= sum(_adjust_cut_coef(min(kvals[a], bigMterm)) * master_vars[a] for a in subLP.A) # TODO: rounding to avoid numeric trouble
     else
@@ -340,8 +395,8 @@ end
 
 function build_feas_cut(subLP::ConnectorLP)
     master_vars = subLP.link_vars
-    sval = value(subLP.lp[:s])
-    kvals = value.(subLP.lp[:k])
+    sval = _snapshot_s(subLP)
+    kvals = _snapshot_k(subLP)
     fcut = sum(kvals[a] / sval * master_vars[a] for a in subLP.A)
     return fcut
 end
@@ -589,8 +644,11 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
     # build adjusted model
     current_obj = objective_value(subLP.lp)
     pBd_obj = sum(subLP.lp[:k]) + bigMterm * subLP.lp[:g]
+    pBd_tol = _pareto_band_tolerance(subLP, current_obj, g_obj_coef)
     @objective(subLP.lp, Min, pBd_obj)
-    @constraint(subLP.lp, pBd_const, lp_obj == current_obj)
+    @constraint(subLP.lp, pBd_const_lb, lp_obj >= current_obj - pBd_tol)
+    @constraint(subLP.lp, pBd_const_ub, lp_obj <= current_obj + pBd_tol)
+    @debug "Pareto band for connector $(name(subLP.sub_solver)) fixes the original objective within +/-$(pBd_tol) around $(current_obj)."
 
     # print pareto adjusted model to file in debbug mode 
     if params.debbug_out
@@ -607,6 +665,14 @@ end
 
 function pareto_optimal_decomposition_cleanup(subLP::ConnectorLP)
     # do the cleanup required for pareto-optimal Benders cuts
+    if haskey(object_dictionary(subLP.lp), :pBd_const_lb)
+        delete(subLP.lp, subLP.lp[:pBd_const_lb])
+        unregister(subLP.lp, :pBd_const_lb)
+    end
+    if haskey(object_dictionary(subLP.lp), :pBd_const_ub)
+        delete(subLP.lp, subLP.lp[:pBd_const_ub])
+        unregister(subLP.lp, :pBd_const_ub)
+    end
     if haskey(object_dictionary(subLP.lp), :pBd_const)
         delete(subLP.lp, subLP.lp[:pBd_const])
         unregister(subLP.lp, :pBd_const)

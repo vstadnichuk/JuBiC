@@ -1,5 +1,55 @@
 using JuBiC, JuMP, Gurobi, BilevelJuMP
 
+mutable struct MockNumericDuplicateSubSolver <: SubSolver
+    name::String
+    mip_model::Model
+    A::Vector{Int}
+end
+
+function JuBiC.name(sub_solver::MockNumericDuplicateSubSolver)
+    return sub_solver.name
+end
+
+function JuBiC.check(sub_solver::MockNumericDuplicateSubSolver, params::SolverParam)
+    return nothing
+end
+
+function JuBiC.capacity_linking(sub_solver::MockNumericDuplicateSubSolver, a, params::SolverParam)
+    return 1
+end
+
+function JuBiC.compute_lower_bound_master_contribution(
+    sub_solver::MockNumericDuplicateSubSolver,
+    params::SolverParam,
+    time_limit,
+)
+    return 0.0
+end
+
+function JuBiC.solve_sub_for_x(
+    sub_solver::MockNumericDuplicateSubSolver,
+    xvals,
+    params::SolverParam,
+    time_limit,
+)
+    return true, 0.0, 1.0e9, Dict(a => 0.0 for a in sub_solver.A)
+end
+
+function JuBiC.separation!(
+    sub_solver::MockNumericDuplicateSubSolver,
+    sval,
+    gvals,
+    kvals::Dict,
+    params::SolverParam,
+    time_limit,
+)
+    return SubSolution(true, 0.0, 1000.0, sval - 1.0, [1])
+end
+
+function JuBiC.set_nthreads(sub_solver::MockNumericDuplicateSubSolver, n)
+    return nothing
+end
+
 """
     generate_gbc_simple_bilevel_instance()
 
@@ -467,9 +517,66 @@ function test_blclag_requires_bilevel_subsolver()
     @test occursin("requires a bilevel-capable subsolver", sprint(showerror, err))
 end
 
+function test_gbc_duplicate_cut_numerical_guard()
+    A = [1]
+
+    master = Model(optimizer)
+    @variable(master, x[A], Bin)
+    link_vars = Dict(a => x[a] for a in A)
+
+    sub_model = Model(optimizer)
+    set_silent(sub_model)
+    sub_solver = MockNumericDuplicateSubSolver("SubNumericDuplicate", sub_model, A)
+
+    connector_lp = Model(optimizer)
+    set_silent(connector_lp)
+    @variable(connector_lp, s <= 1.0e9)
+    @variable(connector_lp, k[A] >= 0)
+    @variable(connector_lp, 0 <= g <= 1.0e9)
+    @constraint(connector_lp, s == 1.0e9)
+    @constraint(connector_lp, g == 1.0e6)
+    @constraint(connector_lp, k[1] == 0.0)
+
+    duplicate_cut = ConSubsolCut([1], 1000.0, 0.0)
+    connector = ConnectorLP(
+        connector_lp,
+        A,
+        link_vars,
+        sub_solver,
+        0.0,
+        nothing,
+        ConSubsolCut[duplicate_cut],
+        0,
+        Dict{Symbol,Any}(),
+    )
+
+    parameter = GBCparam(
+        GurobiSolver(),
+        false,
+        mktempdir(),
+        "lp",
+        PARETO_NONE,
+        60.0,
+    )
+
+    feas, cut, bigMcut, pobj = genBenders_cut!(connector, Dict(1 => 0.0), parameter, 60.0)
+
+    @test !feas
+    @test bigMcut === nothing
+    @test pobj ≈ 1.0e9
+    @test cut.constant > 0.0
+    @test haskey(parameter.stats.data, "Opt_status_override")
+    @test parameter.stats.data["Opt_status_override"] == "Opt_Numerics"
+    @test haskey(parameter.stats.data, "GBCStatus")
+    @test parameter.stats.data["GBCStatus"] == "Opt_Numerics"
+    @test length(connector.my_subsolutions) == 1
+    @test isempty(connector.numeric_state)
+end
+
 
 test_gbc_simple_bilevel()
 test_gbc_solver_instance_io_roundtrip()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
 test_blclag_requires_bilevel_subsolver()
+test_gbc_duplicate_cut_numerical_guard()
