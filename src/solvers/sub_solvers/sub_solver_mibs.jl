@@ -131,7 +131,7 @@ function separation!(sol::SubSolverMiBS, sval, gvals, kvals::Dict, params::Solve
     r = eval_affexpr_by_name(sol.r_objterm, sol.bi_model, solution.all_upper, solution.all_lower)
     c = eval_affexpr_by_name(sol.c_objterm, sol.bi_model, solution.all_upper, solution.all_lower)
     as = indices_where_coeff_pos(solution.all_upper, sol.link_varsC)
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 function separation_BlC!(sub_solver::SubSolverMiBS, sval, kvals::Dict, params::SolverParam, time_limit)
@@ -171,7 +171,7 @@ function separation_BlC!(sub_solver::SubSolverMiBS, sval, kvals::Dict, params::S
     r = eval_affexpr_by_name(sub_solver.r_objterm, sub_solver.bi_model, solution.all_upper, solution.all_lower)
     c = eval_affexpr_by_name(sub_solver.c_objterm, sub_solver.bi_model, solution.all_upper, solution.all_lower)
     as = indices_where_coeff_pos(solution.all_upper, sub_solver.link_varsC; non_used=true)
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 function set_nthreads(sol::SubSolverMiBS, n)

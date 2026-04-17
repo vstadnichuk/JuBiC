@@ -325,7 +325,7 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
     catch err
         @error "Could not print Submodel MIP $(sub_solver.name) to file. error message $err"
     end
-    solve_mip(sub_solver, time_limit)
+    solve_mip(sub_solver, params, time_limit)
 
     # check if optimal solution found and otherwise handle exceptions
     check_solution_status(sub_solver)

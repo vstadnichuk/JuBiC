@@ -90,9 +90,13 @@ function _pareto_row_scale(subLP::ConnectorLP, current_obj::Real, g_obj_coef::Re
     )
 end
 
-function _pareto_band_tolerance(subLP::ConnectorLP, current_obj::Real, g_obj_coef::Real)
-    row_scale = _pareto_row_scale(subLP, current_obj, g_obj_coef)
-    return max(1e-6, 1e-6 * row_scale)
+function _pareto_band_tolerance(
+    subLP::ConnectorLP,
+    current_obj::Real,
+    g_obj_coef::Real,
+    params::GBCparam,
+)
+    return max(0.0, Float64(params.pareto_band_tolerance))
 end
 
 function _mip_gap_tolerances(model::JuMP.Model)
@@ -240,6 +244,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for optimality cut generation."
         time_iterate = iterate_subsolver(subLP, params, time_limit)
         time_limit_build_cut = time_limit - time_iterate
+        pobj = value(new_obj)
 
         if get(subLP.numeric_state, :accepted_numerically, false)
             @debug "ConnectorLP $(name(subLP.sub_solver)) was accepted numerically after detecting a repeated cut. We skip adding the duplicate cut to the ConnectorLP itself and now build the usual optimality cut using the numerically stabilized g-value."
@@ -251,19 +256,17 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
                 @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
                 pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
                 time_limit_build_cut = time_limit_pareto
+                pobj = value(new_obj)
             catch err
                 @warn "Pareto-optimal cut generation failed for connector $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
                 params.stats.data["Opt_status_override"] = "Opt_Numerics"
                 params.stats.data["GBCStatus"] = "Opt_Numerics"
                 subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
-            finally
-                pareto_optimal_decomposition_cleanup(subLP)
             end
         end
 
         # build the usual optimality cut. In the numerical fallback path this uses
         # the stabilized g-value stored in subLP.numeric_state[:g_override].
-        pobj = value(new_obj)
         cut, bigMcut = build_opt_cut(subLP, optL2, optL2_risk, y_vals, link_vals, params, time_limit_build_cut)
     end
 
@@ -644,7 +647,7 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
     # build adjusted model
     current_obj = objective_value(subLP.lp)
     pBd_obj = sum(subLP.lp[:k]) + bigMterm * subLP.lp[:g]
-    pBd_tol = _pareto_band_tolerance(subLP, current_obj, g_obj_coef)
+    pBd_tol = _pareto_band_tolerance(subLP, current_obj, g_obj_coef, params)
     @objective(subLP.lp, Min, pBd_obj)
     @constraint(subLP.lp, pBd_const_lb, lp_obj >= current_obj - pBd_tol)
     @constraint(subLP.lp, pBd_const_ub, lp_obj <= current_obj + pBd_tol)

@@ -1,7 +1,9 @@
 using JuBiC, Test, Logging, Dates
 using Gurobi
 
-optimizer = Gurobi.Optimizer
+# Build each test model with a silent Gurobi environment so the suite reports
+# test results instead of solver console output.
+optimizer = () -> JuBiC.get_next_optimizer(JuBiC.GurobiSolver())
 
 
 # create logging folder

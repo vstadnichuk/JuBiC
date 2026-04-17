@@ -210,7 +210,7 @@ function separation!(sol::SubSolverBlCJuMP, sval, gvals, kvals::Dict, params::So
     r = round(value(sol.r_objterm); digits=obj_tolerance)
     c = round(value(sol.c_objterm); digits=obj_tolerance)
     as = [a for a in sol.A if value(sol.link_varsC[a]) > 1 - var_non_zero_tolerance]
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 function separation_BlC!(sol::SubSolverBlCJuMP, sval, kvals::Dict, params::SolverParam, time_limit)
@@ -230,7 +230,7 @@ function separation_BlC!(sol::SubSolverBlCJuMP, sval, kvals::Dict, params::Solve
             )
         end
     catch err
-        @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
+        @error "Could not print Submodel MIP $(sol.name) to file. Error message $err"
     end
 
     solve_mip(sol, params, time_limit)
@@ -244,7 +244,7 @@ function separation_BlC!(sol::SubSolverBlCJuMP, sval, kvals::Dict, params::Solve
     r = round(value(sol.r_objterm); digits=obj_tolerance)
     c = round(value(sol.c_objterm); digits=obj_tolerance)
     as = [a for a in sol.A if value(sol.link_varsC[a]) < 1 - var_non_zero_tolerance]
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 function set_nthreads(sol::SubSolverBlCJuMP, n)

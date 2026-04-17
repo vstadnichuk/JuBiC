@@ -1,4 +1,5 @@
 using JuBiC, JuMP, Gurobi, BilevelJuMP
+import JuBiC: ConSubsolCut, ConnectorLP, SubSolution, SubSolver, genBenders_cut!
 
 mutable struct MockNumericDuplicateSubSolver <: SubSolver
     name::String

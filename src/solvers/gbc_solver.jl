@@ -63,6 +63,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             master.model,
             param.output_folder_path * "/master.$(param.file_format_output)",
         )
+        set_silent(master.model)
         set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/gbc_mip_log.txt")
     catch err 
         @error "Could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
