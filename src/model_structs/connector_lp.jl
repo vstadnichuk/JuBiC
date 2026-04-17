@@ -38,10 +38,93 @@ struct ConnectorLP{T}
     my_subsolutions::AbstractVector{ConSubsolCut}  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
 
     g_round_digits::Int  # we round obtained g-value to this digits (see 'ceil' docu of digits). It ensures numerical stability while weakening cuts.
+    numeric_state::Dict{Symbol,Any}  # stores temporary numerical diagnostics/overrides for the current connector solve
 end
 
 function name(clp::ConnectorLP)
     return name(clp.sub_solver)
+end
+
+function _reset_numeric_state!(subLP::ConnectorLP)
+    empty!(subLP.numeric_state)
+    return nothing
+end
+
+function _mip_gap_tolerances(model::JuMP.Model)
+    rel_gap = try
+        Float64(get_optimizer_attribute(model, "MIPGap"))
+    catch
+        1e-4
+    end
+    abs_gap = try
+        Float64(get_optimizer_attribute(model, "MIPGapAbs"))
+    catch
+        1e-10
+    end
+    return rel_gap, abs_gap
+end
+
+function _estimate_g_rounding_tolerance(
+    subLP::ConnectorLP,
+    sub_solver::SubSolution,
+)
+    alpha = Float64(sub_solver.obj_second_level)
+    iszero(alpha) && return 0.0, 0.0, 0.0
+
+    sval = Float64(value(subLP.lp[:s]))
+    gval = Float64(value(subLP.lp[:g]))
+    kvals = Dict(a => Float64(value(subLP.lp[:k][a])) for a in subLP.A)
+    rhs = Float64(sub_solver.obj_first_level)
+    opt_obj = Float64(sub_solver.obj_compare)
+
+    row_scale = max(
+        1.0,
+        abs(sval),
+        sum(abs(kvals[a]) for a in subLP.A),
+        abs(alpha * gval),
+        abs(rhs),
+    )
+    delta_g_connector = 1e-6 * row_scale / abs(alpha)
+
+    rel_gap, abs_gap = _mip_gap_tolerances(subLP.sub_solver.mip_model)
+    sub_obj_scale = max(1.0, abs(opt_obj))
+    delta_g_sub = max(abs_gap, rel_gap * sub_obj_scale) / abs(alpha)
+
+    delta_g_total = max(delta_g_connector, delta_g_sub)
+    return delta_g_connector, delta_g_sub, delta_g_total
+end
+
+function _required_g_value(
+    subLP::ConnectorLP,
+    sub_solver::SubSolution,
+)
+    alpha = Float64(sub_solver.obj_second_level)
+    iszero(alpha) && return Inf
+    sval = Float64(value(subLP.lp[:s]))
+    rhs = Float64(sub_solver.obj_first_level)
+    ksum = sum(Float64(value(subLP.lp[:k][a])) for a in sub_solver.A_sub)
+    return (sval - ksum - rhs) / alpha
+end
+
+function _duplicate_cut_warning_message(
+    subLP::ConnectorLP,
+    csc::ConSubsolCut,
+    sval::Real,
+    opt_obj::Real,
+    g_current::Real,
+    g_required::Real,
+    g_rounded::Real,
+    delta_g_connector::Real,
+    delta_g_sub::Real,
+    delta_g_total::Real,
+)
+    resource_text = isempty(csc.res) ? "no resources" : join(string.(csc.res), ", ")
+    return "JuBiC detected a potentially numerically unstable repeated cut while solving ConnectorLP $(name(subLP.sub_solver)). " *
+           "The same cut for resource pattern [$(resource_text)] was generated again. " *
+           "Current connector value: s=$(sval). Current follower value: $(opt_obj). " *
+           "Current g=$(g_current), required g to satisfy the cut=$(g_required), numerically rounded g=$(g_rounded). " *
+           "Estimated g tolerances: connector=$(delta_g_connector), subproblem=$(delta_g_sub), combined=$(delta_g_total). " *
+           "Under these tolerances, JuBiC will not add the same cut again and treats the current connector solution as numerically optimal."
 end
 
 
@@ -65,6 +148,7 @@ Generate an general Benders (feasibility or optimality) cut.
 - 'pobj': The contribution of the cut to the objective for the current solution (0 if feasibility cut).
 """
 function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
+    _reset_numeric_state!(subLP)
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP $(name(subLP.sub_solver))."
 
@@ -110,17 +194,22 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         # solve sub_problem 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for optimality cut generation."
         time_iterate = iterate_subsolver(subLP, params, time_limit)
+        time_limit_build_cut = time_limit - time_iterate
 
-        # pareto optimality step for optimality cuts
-        if params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
+        if get(subLP.numeric_state, :accepted_numerically, false)
+            @debug "ConnectorLP $(name(subLP.sub_solver)) was accepted numerically after detecting a repeated cut. We skip adding the duplicate cut to the ConnectorLP itself and now build the usual optimality cut using the numerically stabilized g-value."
+        elseif params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
+            # pareto optimality step for optimality cuts
             time_limit_pareto = time_limit - time_iterate
             @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
             pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+            time_limit_build_cut = time_limit_pareto
         end
 
-        #build opt cut
+        # build the usual optimality cut. In the numerical fallback path this uses
+        # the stabilized g-value stored in subLP.numeric_state[:g_override].
         pobj = value(new_obj)
-        cut, bigMcut = build_opt_cut(subLP, optL2, optL2_risk, y_vals, link_vals, params, time_limit_pareto)
+        cut, bigMcut = build_opt_cut(subLP, optL2, optL2_risk, y_vals, link_vals, params, time_limit_build_cut)
     end
 
     # clean up and return
@@ -163,7 +252,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     bigMcut = nothing
 
     # g term of the cut
-    gval = value(subLP.lp[:g]) 
+    gval = get(subLP.numeric_state, :g_override, value(subLP.lp[:g]))
 
     # s term of the cut
     sval = value(subLP.lp[:s])
@@ -245,6 +334,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
             )
         end
     end
+    _reset_numeric_state!(subLP)
     return cut, bigMcut
 end
 
@@ -287,6 +377,25 @@ function check_solution_status_LP(me::ConnectorLP)
     if !(status == MOI.OPTIMAL)
         error("ConnectorLP $(name(me)) could not be solver to optimality but terminated with status $(status). Connot continue as this is undefined behavior.")
     end
+end
+
+function _duplicate_connector_cut_error(
+    subLP::ConnectorLP,
+    csc::ConSubsolCut,
+    sval::Real,
+    opt_obj::Real,
+    tolerance::Real,
+)
+    target = opt_obj + tolerance
+    resource_text = isempty(csc.res) ? "no resources" : join(string.(csc.res), ", ")
+    return NumericalIssueException(
+        "JuBiC detected a possible numerical issue while solving ConnectorLP $(name(subLP.sub_solver)). " *
+        "The same cut for resource pattern [$(resource_text)] was generated again even though it was already added earlier. " *
+        "The current connector-LP value is s=$(sval), while the follower still certifies a value of $(opt_obj). " *
+        "To avoid cycling on numerically unstable cuts, JuBiC stops here. " *
+        "For this cut to be considered non-violated, the connector-LP would need to bring s below approximately $(target) (using tolerance $(tolerance)).",
+        "NumericalIssue_DuplicateCut",
+    )
 end
 
 
@@ -337,6 +446,42 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
         if sub_solver.vio
             # add constraints
             @debug "For connector $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and uses resources $(sub_solver.A_sub)."
+            csc = ConSubsolCut(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level)
+            if csc in subLP.my_subsolutions
+                sval = value(subLP.lp[:s])
+                opt_obj = sub_solver.obj_compare
+                g_current = value(subLP.lp[:g])
+                delta_g_connector, delta_g_sub, delta_g_total = _estimate_g_rounding_tolerance(subLP, sub_solver)
+                g_required = _required_g_value(subLP, sub_solver)
+                g_rounded = g_current + delta_g_total
+
+                if g_rounded >= g_required
+                    warning_msg = _duplicate_cut_warning_message(
+                        subLP,
+                        csc,
+                        sval,
+                        opt_obj,
+                        g_current,
+                        g_required,
+                        g_rounded,
+                        delta_g_connector,
+                        delta_g_sub,
+                        delta_g_total,
+                    )
+                    @warn warning_msg
+                    subLP.numeric_state[:accepted_numerically] = true
+                    subLP.numeric_state[:g_override] = g_rounded
+                    params.stats.data["Opt_status_override"] = "Opt_Numerics"
+                    params.stats.data["GBCStatus"] = "Opt_Numerics"
+                    violated_cut = false
+                    continue
+                else
+                    tolerance = 10e-4
+                    err = _duplicate_connector_cut_error(subLP, csc, sval, opt_obj, tolerance)
+                    @error err.message
+                    throw(err)
+                end
+            end
             new_const_left =
                 subLP.lp[:s] - sum(subLP.lp[:k][a] for a in sub_solver.A_sub; init=0) -
                 sub_solver.obj_second_level * subLP.lp[:g] 
@@ -344,7 +489,6 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
             @debug "We added an violated constraint $(c) for connector $(name(subLP.sub_solver)). Continue separation."
 
             # save found solution to our internal storage
-            csc = ConSubsolCut(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level)
             push!(subLP.my_subsolutions, csc)
 
             # check for time limit
@@ -557,8 +701,3 @@ end
 
 
 Base.show(io::IO, conLP::ConnectorLP) = print(io, "ConnectorLP_$(name(conLP.sub_solver))")
-
-
-
-
-

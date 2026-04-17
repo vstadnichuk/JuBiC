@@ -6,6 +6,7 @@ struct SubSolution
     vio::Bool  # vio=true iff we found a new violated constraint
     obj_first_level::Number  # The first level obj. value (of the solution)
     obj_second_level::Number  # The second level obj. value appearing in first level (of the solution)
+    obj_compare::Number  # The full subproblem objective value used for the violation test
     A_sub::Any  # The set of resources that are contained in found solution. 
 end
 
@@ -14,6 +15,12 @@ struct TimeoutException <: Exception
     message::String
 end
 Base.showerror(io::IO, err::TimeoutException) = print(io, err.message)
+
+struct NumericalIssueException <: Exception
+    message::String
+    status::String
+end
+Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)
 
 ############ Functions you have to implement yourself for your subsolver ############
 """

@@ -299,7 +299,7 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
     r = round(value(sol.r_objterm); digits=obj_tolerance)
     c = round(value(sol.c_objterm); digits=obj_tolerance)
     as = [a for a in sol.A if value(sol.y_vars[a]) > var_non_zero_tolerance]  # TODO: Not that it should make a difference here, but why do we use y and not copies of x variables here?
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 
@@ -341,7 +341,7 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
     c = round(value(sub_solver.c_objterm); digits=obj_tolerance)
     as = [a for a in sub_solver.A if value(sub_solver.link_varsC[a]) < 1 - var_non_zero_tolerance] # Note that we need the ressources that were NOT used
     #@debug "The x-solution of sub $(sub_solver.name) is $([(a, value(sub_solver.y_vars[a])) for a in sub_solver.A])." 
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 function set_nthreads(sol::SubSolverJuMP, n)

@@ -97,12 +97,15 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     catch e
         if (e isa TimeoutException)
             @warn "We run into a timeout when solving a Submodel with GBCSolver. Note that this implies that the Subproblem run for the time passed by timelimit and did not terminate. "
-            new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
+            param.stats.data["GBCStatus"] = "Timeout_Submodel"
+        elseif (e isa NumericalIssueException)
+            @error "GBCSolver stopped due to a detected numerical issue: $(e.message)"
+            param.stats.data["GBCStatus"] = e.status
         else
             @error "GBCsolver suffered an error: $e"
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
-            new_stat!(param.stats, "GBCStatus", "Terminate")
+            param.stats.data["GBCStatus"] = "Terminate"
             #rethrow(e)  
         end
     else
@@ -111,15 +114,24 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         print_collected_cuts(param, msol_cuts_mapping_blc; filename="mastercuts_blc.txt")
         if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT
             if primal_status(master.model) == MOI.FEASIBLE_POINT
-                mobj = objective_value(master.model)
-                xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
-                @debug "The master objective is $(mobj) and solution is $(xsol)."
-                print_solution_to_file(mobj, xsol, param)
-                new_stat!(param.stats, "Opt", mobj)
+                try
+                    mobj = objective_value(master.model)
+                    xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
+                    @debug "The master objective is $(mobj) and solution is $(xsol)."
+                    print_solution_to_file(mobj, xsol, param)
+                    new_stat!(param.stats, "Opt", mobj)
 
-                # print full MIP solution to file
-                solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
-                write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                    # print full MIP solution to file
+                    solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
+                    write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                catch err
+                    @warn "Could not read back the final GBC master incumbent after optimization: $(sprint(showerror, err))"
+                    if haskey(param.stats.data, "GBCStatus")
+                        param.stats.data["GBCStatus"] = "OptimizeNotCalled"
+                    else
+                        new_stat!(param.stats, "GBCStatus", "OptimizeNotCalled")
+                    end
+                end
             end
 
             # set status 
@@ -230,7 +242,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     end
 
     # build ConnectorLP obj
-    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}(), parameter.g_round_digit)
+    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}(), parameter.g_round_digit, Dict{Symbol,Any}())
 end
 
 

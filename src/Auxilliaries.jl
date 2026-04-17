@@ -131,6 +131,10 @@ end
 
 
 function set_optimization_status_stats(status, param)
+    if haskey(param.stats.data, "Opt_status_override")
+        new_stat!(param.stats, "Opt_status", param.stats.data["Opt_status_override"])
+        return nothing
+    end
     if status == MOI.OPTIMAL
         new_stat!(param.stats, "Opt_status", "Optimal")
     elseif status == MOI.LOCALLY_SOLVED
