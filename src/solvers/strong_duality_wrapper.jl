@@ -24,6 +24,9 @@ function build_strong_duality_mip_instance(
     x_link,
     subproblems,
     big_m::Function,
+    ;
+    product_mode::Symbol=:big_m,
+    block_callback::Union{Nothing,Function}=nothing,
 )
     @info "The generic strong-duality reformulation is currently an experimental feature."
     @info "Model generation may take some time because JuBiC rebuilds fresh primal and dual blocks for all follower models."
@@ -38,9 +41,19 @@ function build_strong_duality_mip_instance(
     mip, ref_map = copy_model(master_model)
     x_master = Dict(key => ref_map[var] for (key, var) in pairs(x_link))
 
+    product_mode in (:big_m, :indicator) ||
+        throw(ArgumentError("Unsupported strong-duality product_mode '$(product_mode)'. Supported values are :big_m and :indicator."))
+
     leader_terms = Any[]
+    block_data = Any[]
     for sub in subproblems
-        push!(leader_terms, _add_sd_block!(mip, x_master, sub, big_m))
+        leader_term, block_info = _add_sd_block!(mip, x_master, sub, big_m; product_mode=product_mode)
+        push!(leader_terms, leader_term)
+        push!(block_data, block_info)
+    end
+
+    if !isnothing(block_callback)
+        block_callback(mip, x_master, block_data)
     end
 
     current_obj = objective_function(mip)
@@ -53,6 +66,8 @@ function _add_sd_block!(
     x_master::AbstractDict,
     sub::SubSolverJuMP,
     big_m::Function,
+    ;
+    product_mode::Symbol=:big_m,
 )
     follower = sub.mip_model
     objective_sense(follower) == MOI.MIN_SENSE ||
@@ -143,14 +158,29 @@ function _add_sd_block!(
         π = dual_vars[row_idx]
         add_to_expression!(dual_obj, row.rhs_constant, π)
         for (akey, coeff) in row.rhs_x_terms
-            link_bound = float(big_m(akey, sub.name))
-            product_var = _linearize_binary_product!(mip, x_master[akey], π, row.sense, link_bound, sub.name, row_idx, akey)
+            product_var = _linearize_binary_product!(
+                mip,
+                x_master[akey],
+                π,
+                row.sense,
+                big_m,
+                sub.name,
+                row_idx,
+                akey;
+                product_mode=product_mode,
+            )
             add_to_expression!(dual_obj, coeff, product_var)
         end
     end
 
     @constraint(mip, copied_c_obj == dual_obj, base_name = "sd_strong_duality_$(sub.name)")
-    return copied_r_obj
+    block_info = (
+        name = sub.name,
+        subproblem = sub,
+        primal_var_map = primal_var_map,
+        copied_y_vars = Dict(a => primal_var_map[sub.y_vars[a]] for a in sub.A),
+    )
+    return copied_r_obj, block_info
 end
 
 function _copy_variable_constraint!(mip, primal_var_map, sub, cref, obj)
@@ -252,7 +282,27 @@ function _new_dual_variable(mip, sub_name, row_idx, sense::Symbol, rhs_x_terms)
     error("Unknown row sense $(sense) in experimental strong-duality wrapper.")
 end
 
-function _linearize_binary_product!(mip, x::VariableRef, π::VariableRef, sense::Symbol, big_m::Float64, sub_name, row_idx, akey)
+function _linearize_binary_product!(
+    mip,
+    x::VariableRef,
+    π::VariableRef,
+    sense::Symbol,
+    big_m::Function,
+    sub_name,
+    row_idx,
+    akey;
+    product_mode::Symbol=:big_m,
+)
+    if product_mode == :big_m
+        bound = float(big_m(akey, sub_name))
+        return _linearize_binary_product_big_m!(mip, x, π, sense, bound, sub_name, row_idx, akey)
+    elseif product_mode == :indicator
+        return _linearize_binary_product_indicator!(mip, x, π, sub_name, row_idx, akey)
+    end
+    throw(ArgumentError("Unsupported strong-duality product_mode '$(product_mode)'."))
+end
+
+function _linearize_binary_product_big_m!(mip, x::VariableRef, π::VariableRef, sense::Symbol, big_m::Float64, sub_name, row_idx, akey)
     big_m > 0 || throw(ArgumentError("The experimental strong-duality wrapper requires strictly positive big-M values."))
     lower, upper = if sense == :le
         (-big_m, 0.0)
@@ -269,5 +319,14 @@ function _linearize_binary_product!(mip, x::VariableRef, π::VariableRef, sense:
     @constraint(mip, z <= upper * x)
     @constraint(mip, z >= π - upper * (1 - x))
     @constraint(mip, z <= π - lower * (1 - x))
+    return z
+end
+
+function _linearize_binary_product_indicator!(mip, x::VariableRef, π::VariableRef, sub_name, row_idx, akey)
+    z = @variable(mip, base_name = "sd_prod_$(sub_name)_$(row_idx)_$(hash(akey))")
+    @constraint(mip, x --> {z - π <= 0})
+    @constraint(mip, x --> {π - z <= 0})
+    @constraint(mip, !x --> {z <= 0})
+    @constraint(mip, !x --> {-z <= 0})
     return z
 end
