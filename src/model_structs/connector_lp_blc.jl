@@ -34,6 +34,7 @@ struct ConnectorLP_BlC{T}
     link_vars::Dict{T,VariableRef}  # The linking variables (from master) as dict. Keys=A
     sub_solver::SubSolver  # The sub_solver that is used to solve the sub_problem
     my_subsolutions_blc::AbstractVector{ConSubsolCut_BlC}  # the storage of found solutions of subproblem used to generate cuts. Should be init with empty list
+    numeric_state::Dict{Symbol,Any}  # stores temporary numerical diagnostics/overrides for the current connector solve
 end
 
 function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_vars::Dict{<:Any, VariableRef}, sub_solver::SubSolver)
@@ -48,7 +49,7 @@ function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_v
 
     # build my struct
     ConnectorLP_BlC{T}(
-      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut_BlC}()
+      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut_BlC}(), Dict{Symbol,Any}()
     )
 end
 
@@ -74,13 +75,51 @@ function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict
 
     # build my struct
     ConnectorLP_BlC{T}(
-      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut_BlC}()
+      myLP, A, link_vars, sub_solver, Vector{ConSubsolCut_BlC}(), Dict{Symbol,Any}()
     )
 end
 
 
 function name(clp::ConnectorLP_BlC)
     return name(clp.sub_solver)
+end
+
+function _reset_numeric_state!(subLP::ConnectorLP_BlC)
+    empty!(subLP.numeric_state)
+    return nothing
+end
+
+function _connector_solution_snapshot(subLP::ConnectorLP_BlC)
+    return Dict{Symbol,Any}(
+        :s => Float64(value(subLP.lp[:s])),
+        :k => Dict(a => Float64(value(subLP.lp[:k][a])) for a in subLP.A),
+    )
+end
+
+function _snapshot_s(subLP::ConnectorLP_BlC)
+    snapshot = get(subLP.numeric_state, :cut_solution_snapshot, nothing)
+    return isnothing(snapshot) ? value(subLP.lp[:s]) : snapshot[:s]
+end
+
+function _snapshot_k(subLP::ConnectorLP_BlC)
+    snapshot = get(subLP.numeric_state, :cut_solution_snapshot, nothing)
+    return isnothing(snapshot) ? value.(subLP.lp[:k]) : snapshot[:k]
+end
+
+function _pareto_band_tolerance(subLP::ConnectorLP_BlC, current_obj::Real, params::Union{GBCparam,BlCLagparam})
+    return max(0.0, Float64(params.blc_pareto_band_tolerance))
+end
+
+function _set_pareto_numerics_status!(params::GBCparam)
+    params.stats.data["Opt_status_override"] = "Opt_Numerics"
+    params.stats.data["GBCStatus"] = "Opt_Numerics"
+    return nothing
+end
+
+function _set_pareto_numerics_status!(params::BlCLagparam)
+    params.stats.data["Opt_status_override"] = "Opt_Numerics"
+    params.stats.data["BlCLagStatus"] = "Opt_Numerics"
+    return nothing
 end
 
 
@@ -105,6 +144,7 @@ We solve the Lagrangian dual corresponding to the Benders-like cut and return th
 - 'cutcoeff': A dict mapping ressource a to the coeff. of its variable (in case you want to build the cut yourself).
 """
 function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float64}, params::Union{GBCparam, BlCLagparam}, time_limit) where T
+    _reset_numeric_state!(subLP)
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP_BlC $(name(subLP.sub_solver))."
 
@@ -127,17 +167,25 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     # solve sub LP for new master
     @debug "Start iterative solution procedure for ConnectorLP_BlC $(name(subLP.sub_solver))."
     time_iterate = iterate_subsolver_BlC(subLP, params, time_limit)
+    pobj = value(new_obj)
 
     # pareto optimality step for optimality cuts
     if params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
         time_limit_pareto = time_limit - time_iterate
-        @debug "Start pareto-optimal Benders cut generation procedure for ConnectorLP_BlC $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-        pareto_optimal_decomposition_BlC(subLP, new_obj, params, time_limit_pareto)
+        pareto_snapshot = _connector_solution_snapshot(subLP)
+        try
+            @debug "Start pareto-optimal Benders cut generation procedure for ConnectorLP_BlC $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
+            pareto_optimal_decomposition_BlC(subLP, new_obj, params, time_limit_pareto)
+            pobj = value(new_obj)
+        catch err
+            @warn "Pareto-optimal cut generation failed for ConnectorLP_BlC $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
+            _set_pareto_numerics_status!(params)
+            subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
+        end
     end
 
     #build opt cut
     cut, cutcoeff = build_opt_cut_BlC(subLP, params)
-    pobj = value(new_obj)
 
     # clean up and return
     pareto_optimal_decomposition_cleanup(subLP)
@@ -152,6 +200,7 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
         end
     end
     @debug "Finished solving ConnectorLP_BlC $(name(subLP.sub_solver))."
+    _reset_numeric_state!(subLP)
     return cut, pobj, cutcoeff
 end
 
@@ -171,12 +220,13 @@ function build_opt_cut_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLa
     master_vars = subLP.link_vars
 
     # s term of the cut
-    sval = value(subLP.lp[:s])
+    sval = _snapshot_s(subLP)
     cut = sval
 
     # k term of the cut
     # TODO: round coefficients?
-    kvals = Dict(a => _adjust_kval(subLP, value(subLP.lp[:k][a])) for a in subLP.A) # TODO: Rounding should be safe to avoid numerical trouble. We want to round up "kvals[a] + eps" where eps > 0 is sufficiently large, resulting in the used formula. But again, hard coded numeric
+    kval_snapshot = _snapshot_k(subLP)
+    kvals = Dict(a => _adjust_kval(subLP, kval_snapshot[a]) for a in subLP.A) # TODO: Rounding should be safe to avoid numerical trouble. We want to round up "kvals[a] + eps" where eps > 0 is sufficiently large, resulting in the used formula. But again, hard coded numeric
     cut += sum( kvals[a] * (1-master_vars[a]) for a in subLP.A)  
     return cut, kvals
 end
@@ -262,14 +312,14 @@ When called after LP was solved to optimality, transforms the LP to generate a p
 - 'time_limit': The runtime limit for this subroutine. In case of time out, throw an 'TimeoutException'
 """
 function pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, params::Union{GBCparam, BlCLagparam}, time_limit)
-    # resolve the subLP with steps necessary for pareto-optimal cuts
-    cssol = value(subLP.lp[:s])
-
     # build adjusted model
     current_obj = objective_value(subLP.lp)
     pBd_obj = sum(subLP.lp[:k])
+    pBd_tol = _pareto_band_tolerance(subLP, current_obj, params)
     @objective(subLP.lp, Min, pBd_obj)
-    @constraint(subLP.lp, pBd_const, lp_obj == current_obj) 
+    @constraint(subLP.lp, pBd_const_lb, lp_obj >= current_obj - pBd_tol)
+    @constraint(subLP.lp, pBd_const_ub, lp_obj <= current_obj + pBd_tol)
+    @debug "Pareto band for ConnectorLP_BlC $(name(subLP.sub_solver)) fixes the original objective within +/-$(pBd_tol) around $(current_obj)."
 
     # print pareto adjusted model to file in debbug mode 
     if params.debbug_out
@@ -286,6 +336,14 @@ end
 
 function pareto_optimal_decomposition_cleanup(subLP::ConnectorLP_BlC)
     # do the cleanup required for pareto-optimal Benders cuts
+    if haskey(object_dictionary(subLP.lp), :pBd_const_lb)
+        delete(subLP.lp, subLP.lp[:pBd_const_lb])
+        unregister(subLP.lp, :pBd_const_lb)
+    end
+    if haskey(object_dictionary(subLP.lp), :pBd_const_ub)
+        delete(subLP.lp, subLP.lp[:pBd_const_ub])
+        unregister(subLP.lp, :pBd_const_ub)
+    end
     if haskey(object_dictionary(subLP.lp), :pBd_const)
         delete(subLP.lp, subLP.lp[:pBd_const])
         unregister(subLP.lp, :pBd_const)

@@ -152,61 +152,6 @@ function generate_blc_simple_bilevel_instance()
 end
 
 """
-    generate_blclag_simple_bilevel_instance()
-
-Generate the corresponding high-point-relaxation instance for the BlCLag solver
-on the same simple bilevel problem as
-`generate_gbc_simple_bilevel_instance`.
-
-As for the classical BlC formulation, the master is the HPR with copied
-second-level variables and constraints. In contrast to `BlCMaster`, no big-M
-callback is required because the BlCLag solver generates the Benders-like cuts
-automatically from the Lagrangian dual.
-"""
-function generate_blclag_simple_bilevel_instance()
-    A = [1, 2]
-    nsub = "Sub0"
-
-    hpr = Model(optimizer)
-    @variable(hpr, x[A], Bin)
-    @variable(hpr, yh[A], Bin)
-    @constraint(hpr, hpr_link_1, yh[1] <= x[1])
-    @constraint(hpr, hpr_link_2, yh[2] <= x[2])
-    @constraint(hpr, hpr_fix, yh[1] == 1)
-    @objective(hpr, Min, x[1] - x[2] + 10 * yh[2])
-    xdict = Dict(a => x[a] for a in A)
-    sub_obj_hpr = @expression(hpr, -sum(yh[A]))
-    master = BlCLagMaster(
-        hpr,
-        A,
-        xdict,
-        [nsub],
-        Dict(nsub => sub_obj_hpr),
-    )
-
-    sub = BilevelModel()
-    @variable(Upper(sub), x[A], Bin)
-    @variable(Lower(sub), y[A], Bin)
-    @constraint(Lower(sub), c_link[a in A], y[a] <= x[a])
-    @constraint(Lower(sub), cB, y[1] == 1)
-    sub_obj = @expression(sub, -sum(y[A]))
-    master_sub_obj = @expression(sub, 10 * y[2])
-    @objective(Upper(sub), Min, sub_obj)
-    @objective(Lower(sub), Min, sub_obj)
-    subS = SubSolverMiBS(
-        nsub,
-        sub,
-        A,
-        x,
-        y,
-        master_sub_obj,
-        sub_obj,
-    )
-    return Instance(master, [subS])
-end
-
-
-"""
     simple_bilevel_example()
 
 Generates a very simple MIP bilevel problem and solves it using the GBC solver.
@@ -456,68 +401,6 @@ function test_gbc_two_follower()
     @test haskey(stats.data, "Opt") && stats.data["Opt"] ≈ 0
 end
 
-"""
-    test_blclag_requires_bilevel_subsolver()
-
-Check that BlCLag rejects subsolvers that cannot solve bilevel follower
-problems. This protects the requirement that BlCLag only runs with subsolvers
-that explicitly support bilevel follower solves.
-"""
-function test_blclag_requires_bilevel_subsolver()
-    A = [1, 2]
-    nsub = "SubInvalidBlCLag"
-
-    hpr = Model(optimizer)
-    @variable(hpr, x[A], Bin)
-    @variable(hpr, yh[A], Bin)
-    @constraint(hpr, hpr_link_1, yh[1] <= x[1])
-    @constraint(hpr, hpr_link_2, yh[2] <= x[2])
-    @constraint(hpr, hpr_fix, yh[1] == 1)
-    @objective(hpr, Min, x[1] - x[2] + 10 * yh[2])
-    xdict = Dict(a => x[a] for a in A)
-    sub_obj_hpr = @expression(hpr, -sum(yh[A]))
-    master = BlCLagMaster(hpr, A, xdict, [nsub], Dict(nsub => sub_obj_hpr))
-
-    sub = Model(optimizer)
-    @variable(sub, y[A], Bin)
-    @constraint(sub, cB, y[1] == 1)
-    sub_obj = @expression(sub, -sum(y[A]))
-    @objective(sub, Min, sub_obj)
-    master_sub_obj = 10 * y[2]
-    subS = SubSolverJuMP(
-        nsub,
-        sub,
-        A,
-        y,
-        master_sub_obj,
-        sub_obj,
-        timelimit -> (false, 0),
-    )
-    set_silent(sub)
-
-    model = Instance(master, [subS])
-    outdir = logging_folder * "/blclag_invalid_subsolver"
-    mkpath(outdir)
-    parameter = BlCLagparam(
-        GurobiSolver(),
-        true,
-        outdir,
-        "lp",
-        PARETO_OPTIMALITY_ONLY,
-        true,
-        3600,
-    )
-
-    err = try
-        solve_instance!(model, parameter)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ErrorException
-    @test occursin("requires a bilevel-capable subsolver", sprint(showerror, err))
-end
-
 function test_gbc_duplicate_cut_numerical_guard()
     A = [1]
 
@@ -574,10 +457,8 @@ function test_gbc_duplicate_cut_numerical_guard()
     @test isempty(connector.numeric_state)
 end
 
-
 test_gbc_simple_bilevel()
 test_gbc_solver_instance_io_roundtrip()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
-test_blclag_requires_bilevel_subsolver()
 test_gbc_duplicate_cut_numerical_guard()
