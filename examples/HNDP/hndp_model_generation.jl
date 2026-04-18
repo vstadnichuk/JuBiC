@@ -993,9 +993,13 @@ function _derive_user_big_m_values(hndp::HNDPwC, all_arcs, solver::SolverWrapper
         uname = string(user.uname)
         if big_m_mode == HNDP_BIGM_FIXED_NETWORK_PATH
             path_cost = _fixed_network_path_cost(user, hndp, all_arcs, solver)
-            isnothing(path_cost) &&
-                throw(ArgumentError("No feasible path exists in the fixed network for user $(uname), so the fixed-network big-M mode is not available."))
-            values[uname] = path_cost + 1.0
+            if isnothing(path_cost)
+                fallback_bound = _n_minus_one_user_bound(user, hndp, all_arcs)
+                @warn "No feasible path exists in the fixed network for user $(uname). Falling back to the n-1 heuristic bound $(fallback_bound) for the HNDP big-M value."
+                values[uname] = fallback_bound
+            else
+                values[uname] = path_cost + 1.0
+            end
         else
             costs = sort([user.mcost[a...] for a in all_arcs], rev=true)
             n_take = min(length(costs), max(nv(hndp.mygraph) - 1, 1))
@@ -1015,6 +1019,9 @@ do not invalidate the bound.
 """
 function _fixed_network_path_cost(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper)
     model = Model(() -> get_next_optimizer(solver))
+    if solver isa GurobiSolver
+        set_optimizer_attribute(model, "DualReductions", 0)
+    end
     @variable(model, flow[a in all_arcs], Bin)
 
     for a in hndp.edgeA
@@ -1043,7 +1050,7 @@ function _fixed_network_path_cost(user::User, hndp::HNDPwC, all_arcs, solver::So
     status = termination_status(model)
     if status == MOI.OPTIMAL || status == MOI.LOCALLY_SOLVED
         return objective_value(model)
-    elseif status == MOI.INFEASIBLE
+    elseif status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
         return nothing
     end
     throw(ArgumentError("Unexpected status $(status) while computing fixed-network big-M for user $(user.uname)."))

@@ -39,7 +39,11 @@ function solve_with_MibS!(inst::Instance, param::MibSparam)
         process_mibs_log_text!(param.stats, solution.log_output)
     catch e
         error_message = sprint(showerror, e)
-        _set_stat!(param.stats, "MibSStatus", "Error")
+        if occursin("MiBS exceeded the JuBiC wall-clock limit", error_message)
+            _set_stat!(param.stats, "MibSStatus", "Timeout")
+        else
+            _set_stat!(param.stats, "MibSStatus", "Error")
+        end
         _set_stat!(param.stats, "Error", error_message)
         @error "An error occurred while solving with MibS: $error_message"
     end
@@ -73,6 +77,7 @@ function _solve_with_MibS_param_file_runner(model::BilevelJuMP.BilevelModel, par
             par_filename,
             output_filename,
             error_filename,
+            param.runtime,
         )
 
         _copy_mibs_run_files!(path, output_file_path(param))
@@ -142,17 +147,42 @@ function _call_mibs_with_param_file(
     par_filename::String,
     output_filename::String,
     error_filename::String,
+    runtime_limit::Real,
 )
     run_error = ""
+    proc = nothing
     try
         MibS_jll.mibs() do exe
-            run(
-                pipeline(
-                    `$(exe) -param $(par_filename)`;
-                    stdout = output_filename,
-                    stderr = error_filename,
-                ),
-            )
+            open(output_filename, "w") do stdout_io
+                open(error_filename, "w") do stderr_io
+                    proc = run(
+                        pipeline(
+                            `$(exe) -param $(par_filename)`;
+                            stdout = stdout_io,
+                            stderr = stderr_io,
+                        );
+                        wait = false,
+                    )
+
+                    deadline = time() + max(0.0, Float64(runtime_limit)) + 5.0
+                    while !process_exited(proc)
+                        if time() >= deadline
+                            kill(proc)
+                            try
+                                wait(proc)
+                            catch
+                            end
+                            run_error = "MiBS exceeded the JuBiC wall-clock limit of $(runtime_limit) seconds and was terminated by the wrapper."
+                            break
+                        end
+                        sleep(0.2)
+                    end
+
+                    if isempty(run_error)
+                        wait(proc)
+                    end
+                end
+            end
         end
     catch e
         run_error = sprint(showerror, e)
@@ -162,6 +192,9 @@ function _call_mibs_with_param_file(
     err = isfile(error_filename) ? read(error_filename, String) : ""
     if length(err) == 0 && length(run_error) > 0
         err = run_error
+    end
+    if isempty(err) && !isnothing(proc) && process_exited(proc) && !success(proc)
+        err = "MiBS exited with a non-zero status."
     end
     return output, err
 end

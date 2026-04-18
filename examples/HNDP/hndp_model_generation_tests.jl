@@ -627,6 +627,32 @@ function _run_hndp_mibs_runtime_toy_solve_test()
     @test gbc_stats.data["Opt"] ≈ mibs_stats.data["Opt"] atol = 1e-6
 end
 
+function _run_hndp_mibs_runtime_toy_solve_test()
+    solver = GurobiSolver()
+    hndp = build_toy_hndp_two_users()
+    mibs_outdir = mktempdir()
+
+    gbc_instance = build_hndp_gbc_instance(
+        hndp,
+        solver;
+        partial_decomposition=true,
+        subproblem_method=HNDP_SUBPROBLEM_MIP,
+        big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+    )
+    mibs_instance = build_hndp_mibs_instance(hndp, solver)
+
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mibs_outdir, HNDP_TEST_TIME_LIMIT))
+
+    @test haskey(gbc_stats.data, "Opt")
+    @test haskey(mibs_stats.data, "Opt")
+    @test get(mibs_stats.data, "MibSExecution", nothing) == "JuBiCParamFileRunner"
+    @test get(mibs_stats.data, "time_limit", nothing) == HNDP_TEST_TIME_LIMIT
+    @test isfile(joinpath(mibs_outdir, "mibs.par"))
+    @test occursin("Alps_timeLimit $(Float64(HNDP_TEST_TIME_LIMIT))", read(joinpath(mibs_outdir, "mibs.par"), String))
+    @test isapprox(gbc_stats.data["Opt"], mibs_stats.data["Opt"]; atol=1e-6)
+end
+
 @testset "HNDP Model Generation Tests" begin
     @testset "Arc-Based Models" begin
         _run_hndp_model_pair_test(HNDP_BIGM_FIXED_NETWORK_PATH)
