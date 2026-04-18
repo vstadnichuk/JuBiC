@@ -297,6 +297,51 @@ function solve_sub_for_x(sol::SubSolverBlCJuMP, xvals, params::SolverParam, time
     end
 end
 
+function verify_sub_for_x_optimistic(sol::SubSolverBlCJuMP, xvals, params::SolverParam, time_limit)
+    start_time = time()
+
+    @objective(sol.mip_model, Min, sol.c_objterm)
+    @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))
+
+    tie_constraint = nothing
+    try
+        solve_mip(sol, params, time_limit)
+
+        status = termination_status(sol.mip_model)
+        if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
+            @debug "The Subproblem $(sol.name) was infeasible during optimistic verification."
+            return false, 0, 0, Dict()
+        end
+
+        check_solution_status(sol)
+        opt_cost = value(sol.c_objterm)
+
+        remaining_time = time_limit - (time() - start_time)
+        if remaining_time <= 0
+            throw(TimeoutException("We hit the time limit while solving optimistic verification problem of bilevel subsolver $(sol.name)"))
+        end
+
+        tie_constraint = @constraint(sol.mip_model, sol.c_objterm <= opt_cost + 1e-6)
+        @objective(sol.mip_model, Min, sol.r_objterm)
+        solve_mip(sol, params, remaining_time)
+        check_solution_status(sol)
+
+        y_vals = sol.y_vars isa AbstractDict ?
+            Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) :
+            value.(sol.y_vars)
+        osol_L1 = value(sol.r_objterm)
+        return true, opt_cost, osol_L1, y_vals
+    finally
+        if !isnothing(tie_constraint)
+            delete(sol.mip_model, tie_constraint)
+        end
+        for a in sol.A
+            delete(sol.mip_model, fixc[a])
+        end
+        unregister(sol.mip_model, :fixc)
+    end
+end
+
 function check_solution_status(sol::SubSolverBlCJuMP)
     status = termination_status(sol.mip_model)
     if status == MOI.TIME_LIMIT

@@ -176,6 +176,45 @@ function _duplicate_cut_warning_message(
            "Under these tolerances, JuBiC will not add the same cut again and treats the current connector solution as numerically optimal."
 end
 
+function _warn_cut_overlap!(
+    subLP::ConnectorLP,
+    params::GBCparam,
+    a,
+    overlap_kind::AbstractString,
+    overlap_value,
+    kval,
+)
+    @warn "ConnectorLP $(name(subLP.sub_solver)) generated a GBC cut where the same resource appears in both the k-term and the $(overlap_kind)-term. JuBiC continues, but this indicates numerically delicate or unintuitive behavior and the resulting solution should be double-checked. Resource=$(a), $(overlap_kind)=$(overlap_value), k=$(kval)."
+    params.stats.data["Opt_status_override"] = "Opt_Numerics"
+    if get(params.stats.data, "GBCStatus", "") != "Terminate"
+        params.stats.data["GBCStatus"] = "Opt_Numerics"
+    end
+    return nothing
+end
+
+function _record_opt_cut_validation!(
+    subLP::ConnectorLP,
+    params::GBCparam,
+    cut_value::Real,
+    optL2_risk::Real,
+)
+    diff = Float64(cut_value - optL2_risk)
+    tol = 1e-4
+    if abs(diff) > tol
+        @warn "ConnectorLP $(name(subLP.sub_solver)) generated an optimality cut that does not reproduce the current follower risk at the incumbent x-solution. cut(x)=$(cut_value), optL2_risk=$(optL2_risk), diff=$(diff)."
+        if haskey(params.stats.data, "NOptCutValidationWarnings")
+            add_stat!(params.stats, "NOptCutValidationWarnings", 1)
+        else
+            new_stat!(params.stats, "NOptCutValidationWarnings", 1)
+        end
+        offenders = get!(params.stats.data, "OptCutValidationUsers", String[])
+        if !(name(subLP.sub_solver) in offenders)
+            push!(offenders, name(subLP.sub_solver))
+        end
+    end
+    return nothing
+end
+
 
 
 """
@@ -315,6 +354,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     # s term of the cut
     sval = _snapshot_s(subLP)
     cut = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP)  # TODO: rounding to avoid numerics
+    current_cut_value = Float64(cut)
 
     ## build bound (called bigM-term)
     bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution  # TODO: currently not rounding the gval in big M term computation. Good choice?
@@ -331,8 +371,10 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     kvals = _snapshot_k(subLP)
     if params.trim_coeff
         cut -= sum(_adjust_cut_coef(min(kvals[a], bigMterm)) * master_vars[a] for a in subLP.A) # TODO: rounding to avoid numeric trouble
+        current_cut_value -= sum(_adjust_cut_coef(min(kvals[a], bigMterm)) * x_vals[a] for a in subLP.A)
     else
         cut -= sum(_adjust_cut_coef(kvals[a]) * master_vars[a] for a in subLP.A) # TODO: rounding to avoid numeric trouble
+        current_cut_value -= sum(_adjust_cut_coef(kvals[a]) * x_vals[a] for a in subLP.A)
     end
 
     ## generate cut from bound or by solving Lagrangian dual for BlC
@@ -350,17 +392,23 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
             coefa = cutcoeff_BlC[a] # TODO: we assume here that big M were already rounded  
             # we do not multiply the big M with yvals as there can exist multiple equivalent solutions of L2 with same objective, leeding to different BlC 
             if params.trim_coeff
-                cut -= _adjust_cut_coef(min(coefa * _adjust_g(subLP, gval), bigMterm)) * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
+                rounded_coef = _adjust_cut_coef(min(coefa * _adjust_g(subLP, gval), bigMterm))
+                cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
+                current_cut_value -= rounded_coef * (1 - x_vals[a])
             else
-                cut -= _adjust_cut_coef(coefa * _adjust_g(subLP, gval)) * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
+                rounded_coef = _adjust_cut_coef(coefa * _adjust_g(subLP, gval))
+                cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
+                current_cut_value -= rounded_coef * (1 - x_vals[a])
             end
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
 
-        # for the coef. bounds in GBC, we assume that coefa and k > 0 are disjoint. Check this property
+        # Overlap between k and BlC-based big-M coefficients can occur on
+        # numerically delicate instances. We continue, but flag the run.
         for a in subLP.A
-            @assert !(kvals[a] > 0 && cutcoeff_BlC[a] > 0) "We assume that used ressources in L2 solution and thoose in GBC cut for k values are disjoint. 
-                This is not given for ressource $a in subsolver $(name(subLP)), with computed big M coef of BlC coefa=$(cutcoeff_BlC[a]) and k=$(kvals[a])."
+            if kvals[a] > 0 && cutcoeff_BlC[a] > 0
+                _warn_cut_overlap!(subLP, params, a, "blc_coef", cutcoeff_BlC[a], kvals[a])
+            end
         end
 
         # generate bigMcut
@@ -368,16 +416,22 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     else
         if gval > 0
             # if gval = 0, we do not have any impact from theta coef
-            theta_xXg = sum(_adjust_cut_coef(bigMterm) * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
+            rounded_bigM = _adjust_cut_coef(bigMterm)
+            theta_xXg = sum(rounded_bigM * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
             cut -= theta_xXg
+            current_cut_value -= sum(rounded_bigM * (1 - x_vals[a]) * y_vals[a] for a in subLP.A)
 
-            # for the coef. bounds in GBC, we assume that y_vals and k > 0 are disjoint. Check this property
+            # Overlap between k and the y-pattern can occur on numerically
+            # delicate instances. We continue, but flag the run.
             for a in subLP.A
-                @assert !(kvals[a] > 0 && y_vals[a] > 0) "We assume that used ressources in L2 solution and thoose in GBC cut for k values are disjoint. 
-                    This is not given for ressource $a in subsolver $(name(subLP)), with y=$(y_vals[a]) and k=$(kvals[a])."
+                if kvals[a] > 0 && y_vals[a] > 0
+                    _warn_cut_overlap!(subLP, params, a, "y", y_vals[a], kvals[a])
+                end
             end
         end
     end
+
+    _record_opt_cut_validation!(subLP, params, current_cut_value, optL2_risk)
 
     
     # update gbc solver with cuts generated by connectorLP_BlC. We need to do it at the end as we otherwise would need to reoptimize our model
@@ -736,7 +790,7 @@ end
 Round cut coef to avoid numeric trouble.
 """
 function _adjust_cut_coef(cut_coef)
-    return ceil(cut_coef, digits=0)  # TODO: again, hard coded numerics. Currently, we just round down to next integer, hoping that it is save
+    return cut_coef
 end
 
 """

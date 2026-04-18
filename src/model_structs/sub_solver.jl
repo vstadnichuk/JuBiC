@@ -163,6 +163,23 @@ function solve_sub_for_x(sub_solver::SubSolver, xvals, params::SolverParam, time
 end
 
 """
+    verify_sub_for_x_optimistic(sub_solver::SubSolver, xvals, params::SolverParam, time_limit)
+
+Solve the follower problem for validation of a final leader solution under the
+optimistic bilevel interpretation:
+1. minimize the follower objective value,
+2. among all follower-optimal solutions, minimize the leader-side risk term.
+
+This helper is intended for post-hoc verification only. Core algorithms should
+continue to use `solve_sub_for_x(...)`.
+"""
+function verify_sub_for_x_optimistic(sub_solver::SubSolver, xvals, params::SolverParam, time_limit)
+    error(
+        "You need to implement the optimistic verification helper for your own SubSolver!",
+    )
+end
+
+"""
     supports_bilevel_subproblem_solver(sub_solver::SubSolver)
 
 Return whether the subsolver can solve the bilevel subproblems required by the
