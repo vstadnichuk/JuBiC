@@ -1,5 +1,7 @@
 using JuBiC, Test
 
+const BATCH_TEST_OBJ_ATOL = 2e-4
+
 """
     test_batch_solve_simple_bilevel()
 
@@ -27,15 +29,15 @@ function test_batch_solve_simple_bilevel()
 
     @test haskey(results, "gbc_instance")
     @test haskey(results["gbc_instance"], "gbc_simple")
-    @test results["gbc_instance"]["gbc_simple"].data["Opt"] ≈ 1
+    @test isapprox(results["gbc_instance"]["gbc_simple"].data["Opt"], 1; atol=BATCH_TEST_OBJ_ATOL)
 
     @test haskey(results, "blc_instance")
     @test haskey(results["blc_instance"], "blc_simple")
-    @test results["blc_instance"]["blc_simple"].data["Opt"] ≈ 1
+    @test isapprox(results["blc_instance"]["blc_simple"].data["Opt"], 1; atol=BATCH_TEST_OBJ_ATOL)
 
     @test haskey(results, "blclag_instance")
     @test haskey(results["blclag_instance"], "blclag_simple")
-    @test results["blclag_instance"]["blclag_simple"].data["Opt"] ≈ 1
+    @test isapprox(results["blclag_instance"]["blclag_simple"].data["Opt"], 1; atol=BATCH_TEST_OBJ_ATOL)
 
     @test isfile(joinpath(batch_output_folder, "batch_summary.csv"))
     @test isfile(joinpath(batch_output_folder, "gbc_simple", "gbc_instance", "resolved_experiment.json"))

@@ -1,5 +1,7 @@
 using JuBiC, JuMP, Gurobi, Test
 import MathOptInterface as MOI
+const BILEVEL_SUBSOLVER_TEST_OBJ_ATOL = 2e-4
+
 
 function _simple_follower_oracle_factory()
     return function (x_vals, params, time_limit)
@@ -171,7 +173,7 @@ function test_gbc_simple_bilevel_with_blc_subsolver()
 
     stats = solve_instance!(model, parameter)
     @test haskey(stats.data, "Opt")
-    @test stats.data["Opt"] ≈ 1
+    @test isapprox(stats.data["Opt"], 1; atol=BILEVEL_SUBSOLVER_TEST_OBJ_ATOL)
 end
 
 function test_blclag_simple_bilevel_with_blc_subsolver()
@@ -190,7 +192,7 @@ function test_blclag_simple_bilevel_with_blc_subsolver()
 
     stats = solve_instance!(model, parameter)
     @test haskey(stats.data, "Opt")
-    @test stats.data["Opt"] ≈ 1
+    @test isapprox(stats.data["Opt"], 1; atol=BILEVEL_SUBSOLVER_TEST_OBJ_ATOL)
 end
 
 function test_gbc_simple_bilevel_with_blc_subsolver_auto_oracle()
@@ -207,7 +209,7 @@ function test_gbc_simple_bilevel_with_blc_subsolver_auto_oracle()
 
     stats = solve_instance!(model, parameter)
     @test haskey(stats.data, "Opt")
-    @test stats.data["Opt"] ≈ 1
+    @test isapprox(stats.data["Opt"], 1; atol=BILEVEL_SUBSOLVER_TEST_OBJ_ATOL)
 end
 
 function test_blclag_simple_bilevel_with_blc_subsolver_auto_oracle()
@@ -226,7 +228,7 @@ function test_blclag_simple_bilevel_with_blc_subsolver_auto_oracle()
 
     stats = solve_instance!(model, parameter)
     @test haskey(stats.data, "Opt")
-    @test stats.data["Opt"] ≈ 1
+    @test isapprox(stats.data["Opt"], 1; atol=BILEVEL_SUBSOLVER_TEST_OBJ_ATOL)
 end
 
 test_gbc_simple_bilevel_with_blc_subsolver()

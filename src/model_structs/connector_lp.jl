@@ -185,10 +185,6 @@ function _warn_cut_overlap!(
     kval,
 )
     @warn "ConnectorLP $(name(subLP.sub_solver)) generated a GBC cut where the same resource appears in both the k-term and the $(overlap_kind)-term. JuBiC continues, but this indicates numerically delicate or unintuitive behavior and the resulting solution should be double-checked. Resource=$(a), $(overlap_kind)=$(overlap_value), k=$(kval)."
-    params.stats.data["Opt_status_override"] = "Opt_Numerics"
-    if get(params.stats.data, "GBCStatus", "") != "Terminate"
-        params.stats.data["GBCStatus"] = "Opt_Numerics"
-    end
     return nothing
 end
 

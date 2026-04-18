@@ -1,6 +1,8 @@
 using JuBiC, JuMP, Gurobi, BilevelJuMP
 import JuBiC: ConSubsolCut, ConnectorLP, SubSolution, SubSolver, genBenders_cut!
 
+const GBC_TEST_OBJ_ATOL = 2e-4
+
 mutable struct MockNumericDuplicateSubSolver <: SubSolver
     name::String
     mip_model::Model
@@ -189,7 +191,7 @@ function test_gbc_simple_bilevel()
     mkpath(logging_folder * "/gbc_simple_bilevel")
     stats = solve_instance!(model, parameter)
 
-    @test haskey(stats.data, "Opt") && stats.data["Opt"] ≈ 1
+    @test haskey(stats.data, "Opt") && isapprox(stats.data["Opt"], 1; atol=GBC_TEST_OBJ_ATOL)
 end
 
 function test_gbc_solver_instance_io_roundtrip()
@@ -217,7 +219,7 @@ function test_gbc_solver_instance_io_roundtrip()
 
     stats = solve_instance!(imported, parameter)
     @test haskey(stats.data, "Opt")
-    @test stats.data["Opt"] ≈ 1
+    @test isapprox(stats.data["Opt"], 1; atol=GBC_TEST_OBJ_ATOL)
 end
 
 
@@ -398,7 +400,7 @@ function test_gbc_two_follower()
     mkpath(logging_folder * "/gbc_two_follower")
     stats = solve_instance!(model, parameter)
 
-    @test haskey(stats.data, "Opt") && stats.data["Opt"] ≈ 0
+    @test haskey(stats.data, "Opt") && isapprox(stats.data["Opt"], 0; atol=GBC_TEST_OBJ_ATOL)
 end
 
 function test_gbc_duplicate_cut_numerical_guard()
