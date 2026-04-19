@@ -23,8 +23,9 @@ Fix all non-decision arcs to one. In the HNDP setting, only arcs in
 fixed network and is therefore always available.
 """
 function _fix_non_decision_arcs!(model::JuMP.Model, xvars, decision_arcs)
-    for arc in eachindex(xvars)
-        if !(arc in decision_arcs)
+    decision_arc_set = Set(decision_arcs)
+    for arc in axes(xvars, 1)
+        if !(arc in decision_arc_set)
             @constraint(model, xvars[arc] == 1, base_name = "fix_$(arc)")
         end
     end
