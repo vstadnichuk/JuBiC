@@ -113,6 +113,19 @@ function _mip_gap_tolerances(model::JuMP.Model)
     return rel_gap, abs_gap
 end
 
+function _subsolver_gap_tolerances(sub_solver)
+    model = try
+        getproperty(sub_solver, :mip_model)
+    catch
+        nothing
+    end
+
+    if isnothing(model) || !(model isa JuMP.Model)
+        return 1e-4, 1e-10
+    end
+    return _mip_gap_tolerances(model)
+end
+
 function _estimate_g_rounding_tolerance(
     subLP::ConnectorLP,
     sub_solver::SubSolution,
@@ -135,7 +148,7 @@ function _estimate_g_rounding_tolerance(
     )
     delta_g_connector = 1e-6 * row_scale / abs(alpha)
 
-    rel_gap, abs_gap = _mip_gap_tolerances(subLP.sub_solver.mip_model)
+    rel_gap, abs_gap = _subsolver_gap_tolerances(subLP.sub_solver)
     sub_obj_scale = max(1.0, abs(opt_obj))
     delta_g_sub = max(abs_gap, rel_gap * sub_obj_scale) / abs(alpha)
 
@@ -317,6 +330,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
             @debug "Now deleting constraint $cref from ConnectorLP $(name(subLP.sub_solver))."
             delete(subLP.lp, cref)
         end
+        empty!(subLP.my_subsolutions)
     end
     @debug "Finished solving connectLP $(name(subLP.sub_solver))."
     return feas, cut, bigMcut, pobj
