@@ -260,7 +260,7 @@ function _run_hndp_path_model_all_decision_arcs_test()
     @test sd_stats.data["Opt"] ≈ path_stats.data["Opt"] atol = 1e-6
     # With no fixed-arc network available, all three formulations fall back to
     # the same all-decision-arc design problem.
-    @test path_stats.data["Opt"] ≈ 15 atol = 1e-6
+    @test path_stats.data["Opt"] ≈ TOY_ALL_DECISION_OPT atol = 1e-6
 end
 
 function _run_hndp_path_model_weighted_test()
@@ -283,7 +283,7 @@ function _run_hndp_path_model_weighted_test()
     @test haskey(blc_stats.data, "Opt")
     @test haskey(path_stats.data, "Opt")
     @test blc_stats.data["Opt"] ≈ path_stats.data["Opt"] atol = 1e-6
-    @test path_stats.data["Opt"] ≈ 0 atol = 1e-6
+    @test path_stats.data["Opt"] ≈ TOY_WEIGHTED_OPT atol = 1e-6
 end
 
 function _run_hndp_path_parallel_equivalence_test(hndp::HNDPwC, expected_opt::Float64)
