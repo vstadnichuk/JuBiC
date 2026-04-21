@@ -204,13 +204,28 @@ end
 function _record_opt_cut_validation!(
     subLP::ConnectorLP,
     params::GBCparam,
-    cut_value::Real,
-    optL2_risk::Real,
+    incumbent_cut_value::Real,
+    incumbent_reference_value::Real,
+    cut_rhs::Real,
 )
-    diff = Float64(cut_value - optL2_risk)
+    if params.integer_obj
+        cut_integer = round(Float64(incumbent_cut_value))
+        expected_integer = round(Float64(incumbent_reference_value))
+        cut_is_integer = abs(Float64(incumbent_cut_value) - cut_integer) <= 1e-8
+        expected_is_integer = abs(Float64(incumbent_reference_value) - expected_integer) <= 1e-8
+        if !(cut_is_integer && expected_is_integer && cut_integer == expected_integer)
+            throw(NumericalIssueException(
+                "ConnectorLP $(name(subLP.sub_solver)) generated an integer-object optimality cut that does not evaluate exactly at the incumbent x-solution. cut(x)=$(incumbent_cut_value), incumbent_reference=$(incumbent_reference_value), cut_rhs=$(cut_rhs), rounded_cut=$(cut_integer), rounded_reference=$(expected_integer).",
+                "Terminate_Numerics",
+            ))
+        end
+        return nothing
+    end
+
+    diff = Float64(incumbent_cut_value - incumbent_reference_value)
     tol = 1e-4
     if abs(diff) > tol
-        @warn "ConnectorLP $(name(subLP.sub_solver)) generated an optimality cut that does not reproduce the current follower risk at the incumbent x-solution. cut(x)=$(cut_value), optL2_risk=$(optL2_risk), diff=$(diff)."
+        @warn "ConnectorLP $(name(subLP.sub_solver)) generated an optimality cut that does not reproduce the incumbent reference value implied by the cut structure. cut(x)=$(incumbent_cut_value), incumbent_reference=$(incumbent_reference_value), cut_rhs=$(cut_rhs), diff=$(diff)."
         if haskey(params.stats.data, "NOptCutValidationWarnings")
             add_stat!(params.stats, "NOptCutValidationWarnings", 1)
         else
@@ -222,6 +237,46 @@ function _record_opt_cut_validation!(
         end
     end
     return nothing
+end
+
+function _round_cut_component(value::Real, params::GBCparam)
+    if params.integer_obj
+        return Float64(ceil(value))
+    end
+    return Float64(value)
+end
+
+function _rounded_binary_y_values(subLP::ConnectorLP, y_vals)
+    rounded = Dict{Any,Float64}()
+    warned = false
+    for a in subLP.A
+        raw = Float64(y_vals[a])
+        if abs(raw) <= 1e-8
+            rounded[a] = 0.0
+        elseif abs(raw - 1.0) <= 1e-8
+            rounded[a] = 1.0
+        else
+            rounded[a] = min(max(Float64(ceil(raw)), 0.0), 1.0)
+            if !warned
+                @warn "ConnectorLP $(name(subLP.sub_solver)) received non-binary follower y-values when generating an optimality cut. JuBiC rounded them up to binary values for numerical stabilization."
+                warned = true
+            end
+        end
+    end
+    return rounded
+end
+
+function _rounded_binary_x_values(subLP::ConnectorLP, x_vals, params::GBCparam)
+    if !params.integer_obj
+        return x_vals
+    end
+
+    rounded = Dict{Any,Float64}()
+    for a in subLP.A
+        raw = Float64(x_vals[a])
+        rounded[a] = min(max(Float64(round(raw)), 0.0), 1.0)
+    end
+    return rounded
 end
 
 
@@ -357,14 +412,17 @@ end
 function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, params::GBCparam, timelimit)
     master_vars = subLP.link_vars
     bigMcut = nothing
+    rounded_x_vals = _rounded_binary_x_values(subLP, x_vals, params)
 
     # g term of the cut
     gval = _snapshot_g(subLP)
 
     # s term of the cut
     sval = _snapshot_s(subLP)
-    cut = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP)  # TODO: rounding to avoid numerics
-    current_cut_value = Float64(cut)
+    cut_rhs = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP, params)
+    cut = cut_rhs
+    incumbent_cut_value = Float64(cut)
+    incumbent_reference_value = Float64(cut_rhs)
 
     ## build bound (called bigM-term)
     bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution  # TODO: currently not rounding the gval in big M term computation. Good choice?
@@ -373,18 +431,20 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         if bigMterm > -10e-4  # TODO: Again, hard coded numerics
             bigMterm = 0
         else
-                throw(ArgumentError("The big M $(bigMterm) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
+            throw(ArgumentError("The big M $(bigMterm) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
         end
     end
 
     # k term of the cut
     kvals = _snapshot_k(subLP)
     if params.trim_coeff
-        cut -= sum(_adjust_cut_coef(min(kvals[a], bigMterm)) * master_vars[a] for a in subLP.A) # TODO: rounding to avoid numeric trouble
-        current_cut_value -= sum(_adjust_cut_coef(min(kvals[a], bigMterm)) * x_vals[a] for a in subLP.A)
+        cut -= sum(_round_cut_component(min(kvals[a], bigMterm), params) * master_vars[a] for a in subLP.A)
+        incumbent_cut_value -= sum(_round_cut_component(min(kvals[a], bigMterm), params) * rounded_x_vals[a] for a in subLP.A)
+        incumbent_reference_value -= sum(_round_cut_component(min(kvals[a], bigMterm), params) * rounded_x_vals[a] for a in subLP.A)
     else
-        cut -= sum(_adjust_cut_coef(kvals[a]) * master_vars[a] for a in subLP.A) # TODO: rounding to avoid numeric trouble
-        current_cut_value -= sum(_adjust_cut_coef(kvals[a]) * x_vals[a] for a in subLP.A)
+        cut -= sum(_round_cut_component(kvals[a], params) * master_vars[a] for a in subLP.A)
+        incumbent_cut_value -= sum(_round_cut_component(kvals[a], params) * rounded_x_vals[a] for a in subLP.A)
+        incumbent_reference_value -= sum(_round_cut_component(kvals[a], params) * rounded_x_vals[a] for a in subLP.A)
     end
 
     ## generate cut from bound or by solving Lagrangian dual for BlC
@@ -402,13 +462,13 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
             coefa = cutcoeff_BlC[a] # TODO: we assume here that big M were already rounded  
             # we do not multiply the big M with yvals as there can exist multiple equivalent solutions of L2 with same objective, leeding to different BlC 
             if params.trim_coeff
-                rounded_coef = _adjust_cut_coef(min(coefa * _adjust_g(subLP, gval), bigMterm))
+                rounded_coef = _round_cut_component(min(coefa * _adjust_g(subLP, gval), bigMterm), params)
                 cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
-                current_cut_value -= rounded_coef * (1 - x_vals[a])
+                incumbent_cut_value -= rounded_coef * (1 - rounded_x_vals[a])
             else
-                rounded_coef = _adjust_cut_coef(coefa * _adjust_g(subLP, gval))
+                rounded_coef = _round_cut_component(coefa * _adjust_g(subLP, gval), params)
                 cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
-                current_cut_value -= rounded_coef * (1 - x_vals[a])
+                incumbent_cut_value -= rounded_coef * (1 - rounded_x_vals[a])
             end
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
@@ -426,22 +486,23 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     else
         if gval > 0
             # if gval = 0, we do not have any impact from theta coef
-            rounded_bigM = _adjust_cut_coef(bigMterm)
-            theta_xXg = sum(rounded_bigM * (1 - master_vars[a]) * y_vals[a] for a in subLP.A)  # The big M already contains the gval coefficient # TODO: rounding to avoid numeric trouble
+            rounded_bigM = _round_cut_component(bigMterm, params)
+            rounded_y_vals = _rounded_binary_y_values(subLP, y_vals)
+            theta_xXg = sum(rounded_bigM * (1 - master_vars[a]) * rounded_y_vals[a] for a in subLP.A)
             cut -= theta_xXg
-            current_cut_value -= sum(rounded_bigM * (1 - x_vals[a]) * y_vals[a] for a in subLP.A)
+            incumbent_cut_value -= sum(rounded_bigM * (1 - rounded_x_vals[a]) * rounded_y_vals[a] for a in subLP.A)
 
             # Overlap between k and the y-pattern can occur on numerically
             # delicate instances. We continue, but flag the run.
             for a in subLP.A
-                if kvals[a] > 0 && y_vals[a] > 0
-                    _warn_cut_overlap!(subLP, params, a, "y", y_vals[a], kvals[a])
+                if kvals[a] > 0 && rounded_y_vals[a] > 0
+                    _warn_cut_overlap!(subLP, params, a, "y", rounded_y_vals[a], kvals[a])
                 end
             end
         end
     end
 
-    _record_opt_cut_validation!(subLP, params, current_cut_value, optL2_risk)
+    _record_opt_cut_validation!(subLP, params, incumbent_cut_value, incumbent_reference_value, cut_rhs)
 
     
     # update gbc solver with cuts generated by connectorLP_BlC. We need to do it at the end as we otherwise would need to reoptimize our model
@@ -464,7 +525,10 @@ function build_feas_cut(subLP::ConnectorLP)
     master_vars = subLP.link_vars
     sval = _snapshot_s(subLP)
     kvals = _snapshot_k(subLP)
-    fcut = sum(kvals[a] / sval * master_vars[a] for a in subLP.A)
+    fcut = sum(
+        (kvals[a] / sval > 0.9 ? 1.0 : kvals[a] / sval) * master_vars[a]
+        for a in subLP.A
+    )
     return fcut
 end
 
@@ -795,15 +859,6 @@ end
 
 
 """
-    _adjust_cut_coef(cut_coef)
-
-Round cut coef to avoid numeric trouble.
-"""
-function _adjust_cut_coef(cut_coef)
-    return cut_coef
-end
-
-"""
     _adjust_g(subLP::ConnectorLP, g_value)
 
 Round value of g to avoid numeric trouble. Only intended use case is to round 'g_value' before multiplying it with other coef of x-variables from master. 
@@ -815,21 +870,35 @@ end
 
 
 """
-    _adjust_optcut_constant(constvalue, optL2_risk, subLP::ConnectorLP)
+    _adjust_optcut_constant(constvalue, optL2_risk, subLP::ConnectorLP, params::GBCparam)
 
 Numerically savely adjust the constant term of the GBC optimality cut.  
 """
-function _adjust_optcut_constant(constvalue, optL2_risk, subLP::ConnectorLP)
+function _adjust_optcut_constant(constvalue, optL2_risk, subLP::ConnectorLP, params::GBCparam)
     num_tol = 10e-2  # TODO_: Again, hard coded numerics
-    if ! (constvalue >= optL2_risk - num_tol && constvalue <= optL2_risk + num_tol)
+    if params.integer_obj
+        rounded_constvalue = round(Float64(constvalue))
+        rounded_optL2_risk = round(Float64(optL2_risk))
+        if rounded_constvalue == rounded_optL2_risk
+            @debug "Set constant term of GBC to rounded integer value $(rounded_constvalue)"
+            return rounded_constvalue
+        end
+        @debug "In GBCSolver $(name(subLP)), the next cut to be generated has constant term $(constvalue) but the current solution should have value $(optL2_risk).
+            After rounding, the constant term is $(rounded_constvalue) while the supplied current solution value rounds to $(rounded_optL2_risk).
+            This can occur if there are multiple solutions with the same L2 objective, but the subsolver chooses one with a non-minimal objective value according to the L1 objective.
+            Since we cannot guess the correct value for the cut constant, we keep the rounded constant term."
+        return rounded_constvalue
+    end
+
+    target_rhs = optL2_risk
+    if !(constvalue >= target_rhs - num_tol && constvalue <= target_rhs + num_tol)
         @debug "In GBCSolver $(name(subLP)), the next cut to be generated has constant term $(constvalue) but the current solution should have value $(optL2_risk).
             This can occur if there are multiple solutions with the same L2 objective, but the subsolver chooses one with a non-minimal objective value according to the L1 objective.
             Since we cannot guess the correct value for the cut constant, we omit rounding here."
         return constvalue
-    else
-        @debug "Set constant term of GBC to $(optL2_risk)"
-        return optL2_risk
     end
+    @debug "Set constant term of GBC to $(target_rhs)"
+    return target_rhs
 end
 
 

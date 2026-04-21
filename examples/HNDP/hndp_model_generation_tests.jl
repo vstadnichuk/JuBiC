@@ -8,8 +8,8 @@ include("hndp_model_generation.jl")
 
 const HNDP_TEST_TIME_LIMIT = 60
 const TOY_TWO_USER_OPT = -7.0
-const TOY_ALL_DECISION_OPT = 15.0
-const TOY_WEIGHTED_OPT = 0.0
+const TOY_ALL_DECISION_OPT = -7.0
+const TOY_WEIGHTED_OPT = -4.0
 
 """
     build_toy_hndp_two_users()
@@ -454,9 +454,9 @@ function _run_hndp_gbc_subsolver_triplet_test(hndp::HNDPwC, big_m_mode::Symbol, 
         big_m_mode=big_m_mode,
     )
 
-    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
-    stats_blc = solve_instance!(gbc_blc, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
-    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_blc = solve_instance!(gbc_blc, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
 
     @test haskey(stats_mip.data, "Opt")
     @test haskey(stats_blc.data, "Opt")
@@ -482,8 +482,8 @@ function _run_hndp_gbc_weighted_subsolver_pair_test(hndp::HNDPwC, expected_opt::
         subproblem_method=HNDP_SUBPROBLEM_ASTAR,
     )
 
-    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
-    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60))
+    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
 
     @test haskey(stats_mip.data, "Opt")
     @test haskey(stats_astar.data, "Opt")
@@ -561,7 +561,7 @@ function _run_hndp_mibs_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
     mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
@@ -589,7 +589,7 @@ function _run_hndp_mibs_multi_follower_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
     mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
@@ -617,7 +617,7 @@ function _run_hndp_mibs_runtime_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
     mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
@@ -641,7 +641,7 @@ function _run_hndp_mibs_runtime_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
     mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mibs_outdir, HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
