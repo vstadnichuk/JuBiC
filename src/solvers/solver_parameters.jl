@@ -35,6 +35,17 @@ function should_debbug_print(param::SolverParam)
     )
 end
 
+"""
+    get_seed(param::SolverParam)
+
+Return the random seed that should be forwarded to the underlying solver. If a
+solver family does not support seeded execution, implementations may ignore the
+value.
+"""
+function get_seed(param::SolverParam)
+    return nothing
+end
+
 ###### Parameters for GBCsolver, i.e., the generation of Bilevel Lagrangian Cuts ######
 
 @enum ParetoCut begin
@@ -63,6 +74,7 @@ struct GBCparam <: SolverParam
     stats::RunStats  # Store statistics of the run here
 
     runtime::Number  # the maximal runtime of the master MIP (in seconds)
+    seed::Integer  # random seed passed to the underlying MIP solver
     threads_master::Integer # number of threads used in the master MIP problem
     threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
 
@@ -73,12 +85,57 @@ struct GBCparam <: SolverParam
 
     infinity_num::Any  # Number used in subroblems to add sufisticated lower and upper bounds. Set it to some positiv value that can be considered infinity in your problem
     g_round_digit::Int  # A numeric parameter for 'ConnectorLP'. See its documentation for details.
+    integer_obj::Bool  # if true, the solver expects integer follower-risk objectives and integerized GBC cuts
+    pareto_band_tolerance::Any  # absolute tolerance used to keep the original connector objective fixed during Pareto refinement
+    blc_pareto_band_tolerance::Any  # absolute tolerance used to keep the original ConnectorLP_BlC objective fixed during Pareto refinement
 end
 
-GBCparam(solver, debbug_out, output_folder_path, file_format_output) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 8, 8, PARETO_OPTIMALITY_ONLY, true, false, false, 1e9, 0)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 8, 8, pareto, true, false, false, 1e9, 0)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, true, false, false, 1e9, 0)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, 0)
+function GBCparam(
+    solver,
+    debbug_out,
+    output_folder_path,
+    file_format_output,
+    stats::RunStats,
+    runtime,
+    seed,
+    threads_master,
+    threads_sub_con,
+    pareto,
+    warmstart,
+    bigMwithLC,
+    trim_coeff,
+    infinity_num,
+    g_round_digit,
+    integer_obj::Bool=false,
+)
+    return GBCparam(
+        solver,
+        debbug_out,
+        output_folder_path,
+        file_format_output,
+        stats,
+        runtime,
+        seed,
+        threads_master,
+        threads_sub_con,
+        pareto,
+        warmstart,
+        bigMwithLC,
+        trim_coeff,
+        infinity_num,
+        g_round_digit,
+        integer_obj,
+        1e-4,
+        1e-4,
+    )
+end
+
+GBCparam(solver, debbug_out, output_folder_path, file_format_output) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, PARETO_OPTIMALITY_ONLY, true, false, true, 1e9, 0, false, 1e-4, 1e-4)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, pareto, true, false, true, 1e9, 0, integer_obj, 1e-4, 1e-4)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, 0, false, 1e-4, 1e-4)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, 0, integer_obj, 1e-4, 1e-4)
 
 function get_stats(param::GBCparam)
     return param.stats
@@ -92,6 +149,10 @@ function should_debbug_print(param::GBCparam)
     return param.debbug_out
 end
 
+function get_seed(param::GBCparam)
+    return param.seed
+end
+
 ###### Parameter for Benders-like Cuts Solver (BlCSolver) ######
 struct BLCparam <: SolverParam
     solver::SolverWrapper
@@ -101,12 +162,13 @@ struct BLCparam <: SolverParam
     stats::RunStats  # Store statistics of the run here
 
     runtime::Any  # the maximal runtime of the master MIP (in seconds)
+    seed::Integer  # random seed passed to the underlying MIP solver
     threads_master::Any  # number of threads used in the master MIP problem
     threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
 end
 
-BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8)
-BLCparam(solver, debbug_out, output_folder_path, file_format_output) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 8, 8)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8)
 
 
 function get_stats(param::BLCparam)
@@ -121,6 +183,10 @@ function should_debbug_print(param::BLCparam)
     return param.debbug_out
 end
 
+function get_seed(param::BLCparam)
+    return param.seed
+end
+
 
 
 ###### Parameter for Benders-like Cuts Solver where we solve the Lagrangian dual (BlCSLagsolver) ######
@@ -132,6 +198,7 @@ struct BlCLagparam <: SolverParam
     stats::RunStats  # Store statistics of the run here
 
     runtime::Number  # the maximal runtime of the master MIP (in seconds)
+    seed::Integer  # random seed passed to the underlying MIP solver
     threads_master::Integer # number of threads used in the master MIP problem
     threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
 
@@ -139,11 +206,43 @@ struct BlCLagparam <: SolverParam
     warmstart::Bool  # if false, reset ConnectorLP after each iteration
 
     infinity_num::Any  # Number used in subroblems to add sufisticated lower and upper bounds. Set it to some positiv value that can be considered infinity in your problem
+    blc_pareto_band_tolerance::Any  # absolute tolerance used to keep the original ConnectorLP_BlC objective fixed during Pareto refinement
 end
 
-BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, PARETO_OPTIMALITY_ONLY, true, 1e9)
-BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, true, 1e9)
-BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8, 8, pareto, warmstart, 1e9)
+function BlCLagparam(
+    solver,
+    debbug_out,
+    output_folder_path,
+    file_format_output,
+    stats::RunStats,
+    runtime,
+    seed,
+    threads_master,
+    threads_sub_con,
+    pareto,
+    warmstart,
+    infinity_num,
+)
+    return BlCLagparam(
+        solver,
+        debbug_out,
+        output_folder_path,
+        file_format_output,
+        stats,
+        runtime,
+        seed,
+        threads_master,
+        threads_sub_con,
+        pareto,
+        warmstart,
+        infinity_num,
+        1e-4,
+    )
+end
+
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, PARETO_OPTIMALITY_ONLY, true, 1e9, 1e-4)
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, pareto, true, 1e9, 1e-4)
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, pareto, warmstart, 1e9, 1e-4)
 
 
 function get_stats(param::BlCLagparam)
@@ -158,6 +257,10 @@ function should_debbug_print(param::BlCLagparam)
     return param.debbug_out
 end
 
+function get_seed(param::BlCLagparam)
+    return param.seed
+end
+
 
 ###### Parameter for the compact Solver (MIPSolver) that is a wrapper for underlying MIP solver ######
 struct MIPparam <: SolverParam
@@ -168,11 +271,12 @@ struct MIPparam <: SolverParam
     stats::RunStats  # Store statistics of the run here
 
     runtime::Any  # the maximal runtime of the master MIP (in seconds)
+    seed::Integer  # random seed passed to the underlying MIP solver
     threads_master::Any  # number of threads used in the master MIP problem
 end
 
-MIPparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = MIPparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 8)
-MIPparam(solver, debbug_out, output_folder_path, file_format_output) = MIPparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 8)
+MIPparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = MIPparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8)
+MIPparam(solver, debbug_out, output_folder_path, file_format_output) = MIPparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8)
 
 
 function get_stats(param::MIPparam)
@@ -187,15 +291,23 @@ function should_debbug_print(param::MIPparam)
     return param.debbug_out
 end
 
+function get_seed(param::MIPparam)
+    return param.seed
+end
+
 
 ###### Parameter for MibSSolver that is a wrapper for the MibS solver ######
 struct MibSparam <: SolverParam
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
     output_folder_path::Any  # path to where to store output files 
     stats::RunStats  # Store statistics of the run here
+    runtime::Any  # requested runtime limit for MiBS in seconds
 end
 
-MibSparam(debbug_out, output_folder_path) = MibSparam(debbug_out, output_folder_path, RunStats())
+MibSparam(debbug_out, output_folder_path) = MibSparam(debbug_out, output_folder_path, RunStats(), 3600.0)
+MibSparam(debbug_out, output_folder_path, stats::RunStats) = MibSparam(debbug_out, output_folder_path, stats, 3600.0)
+MibSparam(debbug_out, output_folder_path, runtime::Real) = MibSparam(debbug_out, output_folder_path, RunStats(), Float64(runtime))
+MibSparam(debbug_out, output_folder_path, runtime::Real, stats::RunStats) = MibSparam(debbug_out, output_folder_path, stats, Float64(runtime))
 
 
 function get_stats(param::MibSparam)
@@ -209,4 +321,3 @@ end
 function should_debbug_print(param::MibSparam)
     return param.debbug_out
 end
-

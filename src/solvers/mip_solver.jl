@@ -9,6 +9,11 @@ function solve_with_MIP!(inst::Instance, param::MIPparam)
     new_stat!(param.stats, "Solver", "MIPSolver")
     new_stat!(param.stats, "time_limit", param.runtime)
 
+    # Ensure that the wrapped model has the optimizer requested by the current
+    # parameters. This is especially useful for generated wrapper models that
+    # were built without an attached optimizer.
+    set_optimizer(mipm.mymip, () -> get_next_optimizer(param.solver))
+
     # write model to lp file and set path to log file
     try
         write_to_file(mipm.mymip, param.output_folder_path * "/MIPinstance.$(param.file_format_output)")
@@ -18,8 +23,10 @@ function solve_with_MIP!(inst::Instance, param::MIPparam)
     end
 
     # set runtime and number of threads
+    master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     set_time_limit_sec(mipm.mymip, param.runtime)
-    set_attribute(mipm.mymip, MOI.NumberOfThreads(), param.threads_master)
+    set_attribute(mipm.mymip, MOI.NumberOfThreads(), master_threads)
+    set_seed!(mipm.mymip, param.solver, get_seed(param))
 
     # add callback to master and solve 
     @debug "Finished model construction. Now proceeding to optimization process with MIP solver."

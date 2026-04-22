@@ -311,8 +311,8 @@ function separation!(sol::AStarSolver, sval, gvals, kvals::Dict, param::SolverPa
             "No path found for sub_problem $(sol.name) in separation using the new objective function based on g=$(gvals) and k=$(kvals).",
         )
     elseif result.status == LS_TIMEOUT
-        @debug "No path found in 'separation' due to 'timeout' for sub_problem $(sol.name) using L2 objective function with x=$(xsol)."
-        throw(TimeoutException("No path found in 'separation' due to 'timeout' for sub_problem $(sol.name) using L2 objective function with x=$(xsol)."))
+        @debug "No path found in 'separation' due to 'timeout' for sub_problem $(sol.name) using the connector-based objective."
+        throw(TimeoutException("No path found in 'separation' due to 'timeout' for sub_problem $(sol.name) using the connector-based objective."))
     elseif result.status != LS_OPTIMAL
         error(
             "We have a status within returned 'LabelingSolution' that is neither of 'LS_OPTIMAL', 'LS_TIMEOUT', nor 'LS_NO_SOLUTION'.",
@@ -323,7 +323,7 @@ function separation!(sol::AStarSolver, sval, gvals, kvals::Dict, param::SolverPa
     rpath = reconstract_path(result.goal)
     if length(rpath) == 0
         error(
-            "Labeling algorithm returned that no path found but path computed by 'reconstract_path' function was empty for sub_problem $(sol.name) using L2 objective function with x=$(xvals).",
+            "Labeling algorithm returned that no path found but path computed by 'reconstract_path' function was empty for sub_problem $(sol.name) using the connector-based objective.",
         )
     else
         rpvalue = path_cost_current(rpath, sol, cs, param)
@@ -333,7 +333,7 @@ function separation!(sol::AStarSolver, sval, gvals, kvals::Dict, param::SolverPa
         risk = path_risk(rpath, sol)
         cost = path_cost_subs(rpath, sol)
         @debug "We found a violated=$(is_violated) constraint in sub_problem $(sol.name) A*-search because sval = $sval and rpvalue=$(rpvalue)"
-        return SubSolution(is_violated, risk, cost, rip)
+        return SubSolution(is_violated, risk, cost, rpvalue, rip)
     end
 end
 

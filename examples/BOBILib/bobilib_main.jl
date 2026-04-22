@@ -1,7 +1,5 @@
 using JuBiC, JuMP, Gurobi, BilevelJuMP
 
-include("../logging.jl")
-
 optimizer = Gurobi.Optimizer
 const instances_dir = "C:\\Users\\stadnichuk\\OneDrive - rwth-aachen.de\\Documents\\Arbeit\\Julia Bilevel\\L_Shape_tests\\JuBiC\\examples\\BOBILib\\instances"
 const instances_to_solve = ["K5010W07.KNP"]
@@ -12,7 +10,7 @@ const test_mibs = true
 
 
 function _solve_GBC(mps_data, aux_data, logging_gbc, partial_decomposition, preprocessing)
-    gbc_parameters = GBCparam(GurobiSolver(Gurobi.Env()), false, logging_gbc, "lp", PARETO_OPTIMALITY_ONLY)
+    gbc_parameters = GBCparam(GurobiSolver(), false, logging_gbc, "lp", PARETO_OPTIMALITY_ONLY)
     gbc_instance = get_GBC_instance(mps_data, aux_data, optimizer; partial_decomposition=partial_decomposition, preprocessing=preprocessing, stats=gbc_parameters.stats)
     gbc_statistics = solve_instance!(gbc_instance, gbc_parameters)
     return gbc_statistics

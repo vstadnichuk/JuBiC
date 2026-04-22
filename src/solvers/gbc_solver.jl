@@ -36,6 +36,8 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "NBigMlagCuts", 0)  # number of Lagrangian cuts computed to obtain better big M coef. 
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "SepaTimeCut", 0)  # time spend in separator for generating cuts only
+    master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
+    sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
 
     # do some initail checks for master and sub solvers
     @debug "Doing some checks if master and sub were created correctly."
@@ -61,6 +63,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             master.model,
             param.output_folder_path * "/master.$(param.file_format_output)",
         )
+        set_silent(master.model)
         set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/gbc_mip_log.txt")
     catch err 
         @error "Could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
@@ -73,9 +76,10 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     # set time limit and number of threads
     true_runtime = param.runtime - runtime_init
     set_time_limit_sec(master.model, true_runtime)
-    set_attribute(master.model, MOI.NumberOfThreads(), param.threads_master)
+    set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
+    set_seed!(master.model, param.solver, get_seed(param))
     for sub in subs
-        set_nthreads(sub, param.threads_sub_con)
+        set_nthreads(sub, sub_threads)
     end
 
     # add callback to master and solve 
@@ -94,12 +98,15 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     catch e
         if (e isa TimeoutException)
             @warn "We run into a timeout when solving a Submodel with GBCSolver. Note that this implies that the Subproblem run for the time passed by timelimit and did not terminate. "
-            new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
+            param.stats.data["GBCStatus"] = "Timeout_Submodel"
+        elseif (e isa NumericalIssueException)
+            @error "GBCSolver stopped due to a detected numerical issue: $(e.message)"
+            param.stats.data["GBCStatus"] = e.status
         else
             @error "GBCsolver suffered an error: $e"
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
-            new_stat!(param.stats, "GBCStatus", "Terminate")
+            param.stats.data["GBCStatus"] = "Terminate"
             #rethrow(e)  
         end
     else
@@ -108,15 +115,24 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         print_collected_cuts(param, msol_cuts_mapping_blc; filename="mastercuts_blc.txt")
         if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT
             if primal_status(master.model) == MOI.FEASIBLE_POINT
-                mobj = objective_value(master.model)
-                xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
-                @debug "The master objective is $(mobj) and solution is $(xsol)."
-                print_solution_to_file(mobj, xsol, param)
-                new_stat!(param.stats, "Opt", mobj)
+                try
+                    mobj = objective_value(master.model)
+                    xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
+                    @debug "The master objective is $(mobj) and solution is $(xsol)."
+                    print_solution_to_file(mobj, xsol, param)
+                    new_stat!(param.stats, "Opt", mobj)
 
-                # print full MIP solution to file
-                solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
-                write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                    # print full MIP solution to file
+                    solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
+                    write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                catch err
+                    @warn "Could not read back the final GBC master incumbent after optimization: $(sprint(showerror, err))"
+                    if haskey(param.stats.data, "GBCStatus")
+                        param.stats.data["GBCStatus"] = "OptimizeNotCalled"
+                    else
+                        new_stat!(param.stats, "GBCStatus", "OptimizeNotCalled")
+                    end
+                end
             end
 
             # set status 
@@ -201,13 +217,15 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     @variable(myLP, 0 <= g <= parameter.infinity_num)
 
     # set number of threads
-    set_attribute(myLP, MOI.NumberOfThreads(), parameter.threads_sub_con)
+    set_attribute(myLP, MOI.NumberOfThreads(), used_nthreads(parameter.stats, "threads_sub_con"))
 
     # TODO: This parameter combination seems to fix some numeric issues. Seems to have only necglectable impact on runtime
     if parameter.solver isa GurobiSolver
         set_optimizer_attribute(myLP, "NumericFocus", 3)
         set_optimizer_attribute(myLP, "CrossoverBasis", 1)
         set_optimizer_attribute(myLP, "Method", 2)
+        set_optimizer_attribute(myLP, "DualReductions", 0)
+        set_optimizer_attribute(myLP, "BarHomogeneous", 1)
     end
 
     # disable output of LP
@@ -227,7 +245,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     end
 
     # build ConnectorLP obj
-    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}(), parameter.g_round_digit)
+    return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}(), parameter.g_round_digit, Dict{Symbol,Any}())
 end
 
 
@@ -325,5 +343,3 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
         return
     end
 end
-
-

@@ -12,7 +12,6 @@ struct SubSolverJuMP{T} <: SubSolver
     A::Vector{T}  # Iterable of resources
     link_varsC::Any  # A Dict of linking variables (copy within sub_problem). Keys=A
     y_vars::Any  # Dict of sub_problem variables appearing in the interdiction constraints. Keys=A. NOTE: We essentially assume that y-vars are binary. You are free to ignore it, but it can lead to undefined behavior
-    link_constraints_capacities::Dict{T,<:Number}  # the capacity parameters in the interdiction linking constraints. I would recommend to set it to 1 und use y_vars as indicator variables sub_problem formulation!
     r_objterm::GenericAffExpr  # The objective function term within the master problem, i.e., the contribution to the cost in master (should be generated with sub_problem variables)
     c_objterm::GenericAffExpr  # the objective function of the original sub_problem (should be generated with sub_problem variables)
 
@@ -21,19 +20,65 @@ struct SubSolverJuMP{T} <: SubSolver
     # TODO: implement MIPGap for GBC solver (i.e., solve subproblem heuristically as long as it is not the coefficient of Benders-like cut)?
 end
 
-# TODO: It would maybe be much nicer to have a constructor who takes some struct representing the linking constraints that having them splitt between 3 different inputs
+_default_extra_cuts() = (timelimit -> (false, 0))
 
-function (::Type{SubSolverJuMP{T}})(
-    name, mip_model, A,
-    link_varsC, y_vars, link_constraints_capacities,
-    r_objterm, c_objterm
+function _create_link_varsC(mip_model::JuMP.Model, sub_name, A, y_vars)
+    link_varsC = @variable(mip_model, [a in A], Bin, base_name = "x_copy_$(sub_name)")
+    @constraint(mip_model, [a in A], y_vars[a] <= link_varsC[a])
+    return link_varsC
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    y_vars,
+    r_objterm,
+    c_objterm,
 ) where T
-    SubSolverJuMP{T}(
-      name, mip_model, A,
-      link_varsC, y_vars, link_constraints_capacities,
-      r_objterm, c_objterm,
-      timelimit -> false, 0
-    )
+    return SubSolverJuMP(name, mip_model, A, y_vars, r_objterm, c_objterm, _default_extra_cuts())
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    y_vars,
+    r_objterm,
+    c_objterm,
+    extra_cuts::Function,
+) where T
+    link_varsC = _create_link_varsC(mip_model, name, A, y_vars)
+    return SubSolverJuMP{T}(name, mip_model, A, link_varsC, y_vars, r_objterm, c_objterm, extra_cuts)
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    link_varsC,
+    y_vars,
+    link_constraints_capacities,
+    r_objterm,
+    c_objterm,
+) where T
+    @warn "The deprecated SubSolverJuMP constructor with explicit link_varsC and link_constraints_capacities was used for subsolver $(name). The passed linking copies and capacities are ignored; JuBiC now generates internal linking copies and assumes unit capacities."
+    return SubSolverJuMP(name, mip_model, A, y_vars, r_objterm, c_objterm, _default_extra_cuts())
+end
+
+function SubSolverJuMP(
+    name,
+    mip_model,
+    A::Vector{T},
+    link_varsC,
+    y_vars,
+    link_constraints_capacities,
+    r_objterm,
+    c_objterm,
+    extra_cuts::Function,
+) where T
+    @warn "The deprecated SubSolverJuMP constructor with explicit link_varsC and link_constraints_capacities was used for subsolver $(name). The passed linking copies and capacities are ignored; JuBiC now generates internal linking copies and assumes unit capacities."
+    return SubSolverJuMP(name, mip_model, A, y_vars, r_objterm, c_objterm, extra_cuts)
 end
 
 ####### Generic public functions that support with implementing SubSolverJuMP #######
@@ -76,6 +121,7 @@ function extra_cuts_benderslike_JuMP(jump::JuMP.Model, sub::JuMP.Model, A, oL2, 
     @debug "Starting Benders-like cuts within Subsolver MIP by solving helper MIP for sub solution $x_vals."
     # set time limit for solving
     set_time_limit_sec(jump, time_limit)
+    set_seed!(jump, params.solver, get_seed(params))
     # fix values for linking variables
     @constraint(jump, fixc[a=A], x_jump[a] == round(x_vals[a]))
     # now, solve the helper MIP
@@ -131,7 +177,7 @@ end
 
 ####### Implementation of Solver required functions #######
 function capacity_linking(sol::SubSolverJuMP, a, params::SolverParam)
-    return sol.link_constraints_capacities[a]
+    return 1
 end
 
 function check(sol::SubSolverJuMP, params::SolverParam)
@@ -158,12 +204,7 @@ function check(sol::SubSolverJuMP, params::SolverParam)
     end
 
     # check if containers for linking vars/constraints have same size
-    if !(length(sol.link_constraints_capacities) == length(sol.link_varsC))
-        error(
-            "In subsolver $(name(sol)), the capacities in linking constraints do not match the (copied) master linking variables:
-       |capa| = $(length(sol.link_constraints_capacities)) and |link_vars| = $(length(sol.link_varsC)).",
-        )
-    elseif !(length(sol.link_varsC) == length(sol.y_vars))
+    if !(length(sol.link_varsC) == length(sol.y_vars))
         error(
             "In subsolver $(name(sol)), the number of linking variables does not match the number of second level variables in linking constraints! 
       |link_vars| = $(length(sol.link_varsC)) and |y_vars| = $(length(sol.y_vars)).",
@@ -208,7 +249,7 @@ function compute_lower_bound_master_contribution(sol::SubSolverJuMP, params::Sol
     end
 
     # solve adjusted sub 
-    solve_mip(sol, time_limit)
+    solve_mip(sol, params, time_limit)
 
     # check if optimal solution found and otherwise handle exceptions
     check_solution_status(sol)
@@ -243,7 +284,7 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
     catch err
         @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
     end
-    solve_mip(sol, time_limit)
+    solve_mip(sol, params, time_limit)
 
     # check if optimal solution found and otherwise handle exceptions
     check_solution_status(sol)
@@ -258,7 +299,7 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
     r = round(value(sol.r_objterm); digits=obj_tolerance)
     c = round(value(sol.c_objterm); digits=obj_tolerance)
     as = [a for a in sol.A if value(sol.y_vars[a]) > var_non_zero_tolerance]  # TODO: Not that it should make a difference here, but why do we use y and not copies of x variables here?
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 
@@ -284,13 +325,13 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
     catch err
         @error "Could not print Submodel MIP $(sub_solver.name) to file. error message $err"
     end
-    solve_mip(sub_solver, time_limit)
+    solve_mip(sub_solver, params, time_limit)
 
     # check if optimal solution found and otherwise handle exceptions
     check_solution_status(sub_solver)
 
     # construct return value 
-    opt_obj = objective_value(sub_solver.mip_model) + sum([var_non_zero_tolerance*(1-value(sub_solver.link_varsC[a])) for a in sub_solver.A])
+    opt_obj = value(sub_solver.c_objterm - k_term)
     @debug "Optimal solution of sub " * sub_solver.name * " is " * string(opt_obj)
 
     is_violate = Bool(!(sval > opt_obj - var_non_zero_tolerance))
@@ -300,11 +341,11 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
     c = round(value(sub_solver.c_objterm); digits=obj_tolerance)
     as = [a for a in sub_solver.A if value(sub_solver.link_varsC[a]) < 1 - var_non_zero_tolerance] # Note that we need the ressources that were NOT used
     #@debug "The x-solution of sub $(sub_solver.name) is $([(a, value(sub_solver.y_vars[a])) for a in sub_solver.A])." 
-    return SubSolution(is_violate, r, c, as)
+    return SubSolution(is_violate, r, c, opt_obj, as)
 end
 
 function set_nthreads(sol::SubSolverJuMP, n)
-    set_attribute(sol.mip_model, MOI.NumberOfThreads(), n)
+    set_attribute(sol.mip_model, MOI.NumberOfThreads(), capped_nthreads(n))
 end
 
 function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_limit)
@@ -329,7 +370,7 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
 
     # set adjusted time limit
     @debug "Subproblem $(sol.name) MIP was adjusted. Start MIP solver to solve it. "
-    solve_mip(sol, time_limit)
+    solve_mip(sol, params, time_limit)
 
     try
         # here, we can have infeasible solutions due to wrong first-level decision. Catch this case
@@ -356,7 +397,7 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
         check_solution_status(sol)
 
         # evaluate solution
-        y_vals = value.(sol.y_vars)
+        y_vals = sol.y_vars isa AbstractDict ? Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) : value.(sol.y_vars)
         osol = objective_value(sol.mip_model)
         @debug "We found an solution for sub_problem $(sol.name) with value $(osol)."
 
@@ -380,6 +421,49 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
     finally
         # cleanup
         for a in sol.A # TODO: can we implement this faster?
+            delete(sol.mip_model, fixc[a])
+        end
+        unregister(sol.mip_model, :fixc)
+    end
+end
+
+function verify_sub_for_x_optimistic(sol::SubSolverJuMP, xvals, params::SolverParam, time_limit)
+    start_time = time()
+
+    @objective(sol.mip_model, Min, sol.c_objterm)
+    @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))
+
+    tie_constraint = nothing
+    try
+        solve_mip(sol, params, time_limit)
+
+        status = termination_status(sol.mip_model)
+        if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
+            @debug "The Subproblem $(sol.name) was infeasible during optimistic verification."
+            return false, 0, 0, Dict()
+        end
+
+        check_solution_status(sol)
+        opt_cost = objective_value(sol.mip_model)
+
+        remaining_time = time_limit - (time() - start_time)
+        if remaining_time <= 0
+            throw(TimeoutException("We hit the time limit while solving optimistic verification problem of subsolver $(sol.name)"))
+        end
+
+        tie_constraint = @constraint(sol.mip_model, sol.c_objterm <= opt_cost + 1e-6)
+        @objective(sol.mip_model, Min, sol.r_objterm)
+        solve_mip(sol, params, remaining_time)
+        check_solution_status(sol)
+
+        y_vals = sol.y_vars isa AbstractDict ? Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) : value.(sol.y_vars)
+        osol_L1 = value(sol.r_objterm)
+        return true, opt_cost, osol_L1, y_vals
+    finally
+        if !isnothing(tie_constraint)
+            delete(sol.mip_model, tie_constraint)
+        end
+        for a in sol.A
             delete(sol.mip_model, fixc[a])
         end
         unregister(sol.mip_model, :fixc)
@@ -432,7 +516,7 @@ end
 
 Solve the underlying MIP. Mainly calls 'optimize!' and handles Branch&Check for additional cuts. It also sets the time limit and adjusts it if necessary.
 """
-function solve_mip(sol::SubSolverJuMP, time_limit)
+function solve_mip(sol::SubSolverJuMP, params::SolverParam, time_limit)
     inner_time_limit = time_limit
     need_solving = true
 
@@ -447,6 +531,7 @@ function solve_mip(sol::SubSolverJuMP, time_limit)
         # set adjusted time limit
         @debug "Setting time limit of subsolver $(sol.name) to $inner_time_limit"
         set_time_limit_sec(sol.mip_model, inner_time_limit)
+        set_seed!(sol.mip_model, params.solver, get_seed(params))
 
         # solve MIP 
         optimize!(sol.mip_model)
@@ -466,4 +551,3 @@ function solve_mip(sol::SubSolverJuMP, time_limit)
         end
     end
 end
-

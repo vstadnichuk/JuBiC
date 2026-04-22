@@ -1,0 +1,32 @@
+{
+  "output_folder_path": "test/logs/batch_runs",
+  "common": {
+    "mip_solver": "Gurobi",
+    "debbug_out": true,
+    "file_format_output": "lp",
+    "runtime": 3600,
+    "threads_master": 1,
+    "threads_sub_con": 1
+  },
+  "experiments": [
+    {
+      "name": "gbc_simple",
+      "instance_name": "gbc_instance",
+      "pareto": "OPT",
+      "warmstart": true,
+      "bigMwithLC": false,
+      "trim_coeff": false
+    },
+    {
+      "name": "blc_simple",
+      "instance_name": "blc_instance"
+    },
+    {
+      "name": "blclag_simple",
+      "instance_name": "blclag_instance",
+      "pareto": "OPT",
+      "warmstart": true,
+      "infinity_num": 1000000000.0
+    }
+  ]
+}

@@ -11,7 +11,7 @@ instance = get_GBC_instance(mps_file, aux_file, Gurobi.Optimizer)
 
 # Set up the solver parameters
 params = GBCparam(
-    GurobiSolver(Gurobi.Env()),     # Solver used
+    GurobiSolver(),     # Solver used
     false,                          # Disable debug output
     "./output",                     # Output directory
     "lp",                           # Output file format

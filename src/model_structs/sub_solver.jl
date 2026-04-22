@@ -6,6 +6,7 @@ struct SubSolution
     vio::Bool  # vio=true iff we found a new violated constraint
     obj_first_level::Number  # The first level obj. value (of the solution)
     obj_second_level::Number  # The second level obj. value appearing in first level (of the solution)
+    obj_compare::Number  # The full subproblem objective value used for the violation test
     A_sub::Any  # The set of resources that are contained in found solution. 
 end
 
@@ -14,6 +15,12 @@ struct TimeoutException <: Exception
     message::String
 end
 Base.showerror(io::IO, err::TimeoutException) = print(io, err.message)
+
+struct NumericalIssueException <: Exception
+    message::String
+    status::String
+end
+Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)
 
 ############ Functions you have to implement yourself for your subsolver ############
 """
@@ -97,7 +104,8 @@ end
     separation_BlC!(sub_solver::SubSolver, sval, gvals, kvals::Dict, param::SolverParam, time_limit)
 
 Solves the separation problem for the Benders-like sub_problem in BlC generation. 
-This involves finding the feasible solution that maximizes 'obj_second_level - sum kvals'. 
+This involves finding the feasible solution that maximizes 'obj_second_level - sum kvals'.
+Attention: You need to ensure that the found second-level solution is bilevel feasible, as otherwise the behaviour is undefined.
 When implementing the function, you can assume that 'kvals' are non negative. 
 
 # Arguments
@@ -152,4 +160,14 @@ function solve_sub_for_x(sub_solver::SubSolver, xvals, params::SolverParam, time
     error(
         "You need to implement the function solving your second level problem for your own SubSolver!",
     )
+end
+
+"""
+    supports_bilevel_subproblem_solver(sub_solver::SubSolver)
+
+Return whether the subsolver can solve the bilevel subproblems required by the
+BlCLag solver. By default, custom subsolvers are assumed not to support this.
+"""
+function supports_bilevel_subproblem_solver(sub_solver::SubSolver)
+    return false
 end

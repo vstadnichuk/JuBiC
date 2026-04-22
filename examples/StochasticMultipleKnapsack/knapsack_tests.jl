@@ -49,14 +49,14 @@ function test_twosatge_JuBiC(time_limit::Number)
     for i in 1:30
         # create Instance
         paths = paths_smkp[i]
-        two_stage_JuBiC_instance = two_stage_JuBiC(paths[1], paths[2], GurobiSolver(Gurobi.Env()))
+        two_stage_JuBiC_instance = two_stage_JuBiC(paths[1], paths[2], GurobiSolver())
 
         # create Params 
         subfolder = myfolder * "/k_$i"
         create_folder_if_not_exists(subfolder)
 
         gbc_param = GBCparam(
-            GurobiSolver(Gurobi.Env()),
+            GurobiSolver(),
             true,
             subfolder,
             "lp",
@@ -88,7 +88,7 @@ function JuMP_to_instance(model::JuMP.Model, name::String, myfolder; timelimit=3
     inst = Instance(master, nothing)
     
     ca_param = MIPparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         myfolder,
         "lp",
@@ -101,6 +101,5 @@ function JuMP_to_instance(model::JuMP.Model, name::String, myfolder; timelimit=3
     # save generated and continue
     return inst, ca_param
 end
-
 
 

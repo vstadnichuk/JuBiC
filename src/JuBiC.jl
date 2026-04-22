@@ -5,6 +5,7 @@ include("solvers/solver_wrapper.jl")
 include("solvers/solver_parameters.jl")
 
 include("Auxilliaries.jl")
+include("utils/logging_utils.jl")
 
 include("model_structs/sub_solver.jl")
 include("model_structs/connector_lp_blc.jl")
@@ -18,23 +19,31 @@ include("model_structs/instance.jl")
 include("mibs_parser/mibs_input_reader.jl")
 
 include("solvers/sub_solvers/sub_solver_mip.jl")
+include("solvers/sub_solvers/sub_solver_blc_mip.jl")
 include("solvers/sub_solvers/sub_solver_mibs.jl")
+include("solvers/strong_duality_wrapper.jl")
 include("solvers/gbc_solver.jl")
 include("solvers/blc_solver.jl")
 include("solvers/blclag_solver.jl")
 include("solvers/mip_solver.jl")
 include("solvers/mibs_solver.jl")
 include("solvers/solvers.jl")
+include("solvers/batch_solve.jl")
+include("utils/gbc_instance_io.jl")
 include("solvers/sub_solvers/labeling.jl")
 include("solvers/sub_solvers/a_star_search.jl")
 
 
-export Master, Instance, SubSolverJuMP, SubSolverMiBS, BlCMaster, BlCLagMaster, MIPMaster, MibSMaster
+export Master, Instance, SubSolverJuMP, SubSolverBlCJuMP, SubSolverMiBS, BlCMaster, BlCLagMaster, MIPMaster, MibSMaster
 export extra_cuts_benderslike_JuMP
+export build_strong_duality_mip_instance
 export GBCparam, BLCparam, BlCLagparam, MIPparam, MibSparam, SolverParam, CostStructure, AStarSolver, get_next_optimizer, new_stat!, add_stat!, get_stats, output_file_path, should_debbug_print
 export GurobiSolver, SolverWrapper
 export solve_instance!
+export solve_batch!
+export output_GBC_solver_instance, read_GBC_solver_instance
 export AStarCostState, MASTER_LEVEL, SUB_PROBLEM_LEVEL, CONNECTOR_BASED
 export ParetoCut, PARETO_NONE, PARETO_OPTIMALITY_ONLY, PARETO_OPTIMALITY_AND_FEASIBILITY
+export create_folder_if_not_exists, init_logging_folder, print_stats_to_csv, stats_to_dataframe, collect_all_keys
 
 end

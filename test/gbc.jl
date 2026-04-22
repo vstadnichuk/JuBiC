@@ -1,5 +1,157 @@
-using JuBiC, JuMP, Gurobi
+using JuBiC, JuMP, Gurobi, BilevelJuMP
+import JuBiC: ConSubsolCut, ConnectorLP, SubSolution, SubSolver, genBenders_cut!
 
+const GBC_TEST_OBJ_ATOL = 2e-4
+
+mutable struct MockNumericDuplicateSubSolver <: SubSolver
+    name::String
+    mip_model::Model
+    A::Vector{Int}
+end
+
+function JuBiC.name(sub_solver::MockNumericDuplicateSubSolver)
+    return sub_solver.name
+end
+
+function JuBiC.check(sub_solver::MockNumericDuplicateSubSolver, params::SolverParam)
+    return nothing
+end
+
+function JuBiC.capacity_linking(sub_solver::MockNumericDuplicateSubSolver, a, params::SolverParam)
+    return 1
+end
+
+function JuBiC.compute_lower_bound_master_contribution(
+    sub_solver::MockNumericDuplicateSubSolver,
+    params::SolverParam,
+    time_limit,
+)
+    return 0.0
+end
+
+function JuBiC.solve_sub_for_x(
+    sub_solver::MockNumericDuplicateSubSolver,
+    xvals,
+    params::SolverParam,
+    time_limit,
+)
+    return true, 0.0, 1.0e9, Dict(a => 0.0 for a in sub_solver.A)
+end
+
+function JuBiC.separation!(
+    sub_solver::MockNumericDuplicateSubSolver,
+    sval,
+    gvals,
+    kvals::Dict,
+    params::SolverParam,
+    time_limit,
+)
+    return SubSolution(true, 0.0, 1000.0, sval - 1.0, [1])
+end
+
+function JuBiC.set_nthreads(sub_solver::MockNumericDuplicateSubSolver, n)
+    return nothing
+end
+
+"""
+    generate_gbc_simple_bilevel_instance()
+
+Generate the simple bilevel test instance used for the GBC solver tests.
+
+The upper-level problem is:
+    min x1 - x2 + 10 y2
+
+The lower-level problem is:
+    min -y1 - y2
+    s.t. y1 <= x1, y2 <= x2, y1 = 1
+
+The optimal first-level solution is x1 = 1, x2 = 0, with overall objective 1.
+This function returns the decomposed instance with a `Master` and one
+`SubSolverJuMP`.
+"""
+function generate_gbc_simple_bilevel_instance()
+    A = [1, 2]
+    nsub = "Sub0"
+
+    mm = Model(optimizer)
+    @variable(mm, x[A], Bin)
+    @objective(mm, Min, x[1] - x[2])
+    xdict = Dict(a => x[a] for a in A)
+    master = Master(mm, A, xdict, [nsub])
+
+    sub = Model(optimizer)
+    @variable(sub, y[1:2], Bin)
+    @constraint(sub, cB, y[1] == 1)
+    sub_obj = @expression(sub, -sum(y[A]))
+    @objective(sub, Min, sub_obj)
+    master_sub_obj = 10 * y[2]
+    subS = SubSolverJuMP(
+        nsub,
+        sub,
+        A,
+        y,
+        master_sub_obj,
+        sub_obj,
+        timelimit -> (false, 0),
+    )
+
+    set_silent(sub)
+    return Instance(master, [subS])
+end
+
+"""
+    generate_blc_simple_bilevel_instance()
+
+Generate the corresponding high-point-relaxation instance for the classical BlC
+solver on the same simple bilevel problem as
+`generate_gbc_simple_bilevel_instance`.
+
+The master is the high-point relaxation, i.e., it contains copies of the
+second-level variables and constraints, and the subproblem is the follower model
+used for cut generation. The instance has one subproblem and uses a constant big
+M value of 100 in the tests.
+"""
+function generate_blc_simple_bilevel_instance()
+    A = [1, 2]
+    nsub = "Sub0"
+
+    hpr = Model(optimizer)
+    @variable(hpr, x[A], Bin)
+    @variable(hpr, yh[A], Bin)
+    @constraint(hpr, hpr_link_1, yh[1] <= x[1])
+    @constraint(hpr, hpr_link_2, yh[2] <= x[2])
+    @constraint(hpr, hpr_fix, yh[1] == 1)
+    @objective(hpr, Min, x[1] - x[2] + 10 * yh[2])
+    xdict = Dict(a => x[a] for a in A)
+    sub_obj_hpr = @expression(hpr, -sum(yh[A]))
+    master = BlCMaster(
+        hpr,
+        A,
+        xdict,
+        (a, sub_name) -> 100.0,
+        [nsub],
+        Dict(nsub => sub_obj_hpr),
+    )
+
+    sub = Model(optimizer)
+    @variable(sub, y[1:2], Bin)
+    @constraint(sub, cB, y[1] == 1)
+    sub_obj = @expression(sub, -sum(y[A]))
+    @objective(sub, Min, sub_obj)
+    master_sub_obj = 10 * y[2]
+    subS = SubSolverJuMP(
+        nsub,
+        sub,
+        A,
+        y,
+        master_sub_obj,
+        sub_obj,
+        timelimit -> (false, 0),
+    )
+
+    set_silent(sub)
+    return Instance(master, [subS])
+end
 
 """
     simple_bilevel_example()
@@ -26,50 +178,10 @@ The lower-level problem is:
 The optimal solution is: x1 = 1 and x2 = 0.
 """
 function test_gbc_simple_bilevel()
-    # common ressources
-    A = [1, 2]
-
-    # names of subs
-    nsub = "Sub0"
-
-    # master MIP
-    mm = Model(optimizer)
-
-    @variable(mm, x[A], Bin)
-    @objective(mm, Min, x[1] - x[2])
-    xdict = Dict(a => x[a] for a in A)
-    master = Master(mm, A, xdict, [nsub])
-
-    # subproblem 
-    sub = Model(optimizer)
-
-    @variable(sub, y[1:2], Bin)
-    @variable(sub, xc[A], Bin)
-    @constraint(sub, c1, y[1] <= xc[1])
-    @constraint(sub, c2, y[2] <= xc[2])
-    @constraint(sub, cB, y[1] == 1)
-    sub_obj = @expression(sub, -sum(y[A]))
-    @objective(sub, Min, 1 * sub_obj)
-    master_sub_obj = 10 * y[2]
-    link_constraints_capacities = Dict(1 => 1.0, 2 => 1.0)
-    subS = SubSolverJuMP(
-        nsub,
-        sub,
-        A,
-        xc,
-        y,
-        link_constraints_capacities,
-        master_sub_obj,
-        sub_obj,
-        timelimit -> (false, 0)
-    )
-
-    # set model to silent and continue
-    set_silent(sub)
-    model = Instance(master, [subS])
+    model = generate_gbc_simple_bilevel_instance()
 
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         logging_folder * "/gbc_simple_bilevel",
         "lp",
@@ -79,7 +191,35 @@ function test_gbc_simple_bilevel()
     mkpath(logging_folder * "/gbc_simple_bilevel")
     stats = solve_instance!(model, parameter)
 
-    @test haskey(stats.data, "Opt") && stats.data["Opt"] ≈ 1
+    @test haskey(stats.data, "Opt") && isapprox(stats.data["Opt"], 1; atol=GBC_TEST_OBJ_ATOL)
+end
+
+function test_gbc_solver_instance_io_roundtrip()
+    instance = generate_gbc_simple_bilevel_instance()
+    export_dir = mktempdir()
+    output_GBC_solver_instance(instance, export_dir)
+
+    @test isfile(joinpath(export_dir, "master.lp"))
+    @test isfile(joinpath(export_dir, "sub_Sub0.lp"))
+    @test isfile(joinpath(export_dir, "metadata.json"))
+
+    imported = read_GBC_solver_instance(export_dir, GurobiSolver())
+    @test imported.master isa Master
+    @test length(imported.subproblems) == 1
+    @test imported.subproblems[1] isa SubSolverJuMP
+
+    solve_dir = mktempdir()
+    parameter = GBCparam(
+        GurobiSolver(),
+        true,
+        solve_dir,
+        "lp",
+        PARETO_OPTIMALITY_ONLY,
+    )
+
+    stats = solve_instance!(imported, parameter)
+    @test haskey(stats.data, "Opt")
+    @test isapprox(stats.data["Opt"], 1; atol=GBC_TEST_OBJ_ATOL)
 end
 
 
@@ -126,21 +266,15 @@ function test_gbc_feasibility_cuts()
     sub = Model(optimizer)
 
     @variable(sub, y[1:2], Bin)
-    @variable(sub, xc[A], Bin)
-    @constraint(sub, c1, y[1] <= xc[1])
-    @constraint(sub, c2, y[2] <= xc[2])
     @constraint(sub, cB, y[1] + y[2] == 2)
     sub_obj = @expression(sub, AffExpr(100))
     @objective(sub, Min, sub_obj)
     master_sub_obj = AffExpr(0)
-    link_constraints_capacities = Dict(1 => 1.0, 2 => 1.0)
     subS = SubSolverJuMP(
         nsub,
         sub,
         A,
-        xc,
         y,
-        link_constraints_capacities,
         master_sub_obj,
         sub_obj,
         timelimit -> (false, 0)
@@ -152,7 +286,7 @@ function test_gbc_feasibility_cuts()
 
     gbc_logging_folder = logging_folder * "/gbc_feasibility_cuts"
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         gbc_logging_folder,
         "lp",
@@ -219,19 +353,14 @@ function test_gbc_two_follower()
     sub1 = Model(optimizer)
 
     @variable(sub1, y1[[1]], Bin)
-    @variable(sub1, x1c[A], Bin)
-    @constraint(sub1, c1, y1[1] <= x1c[1])
     sub_obj1 = @expression(sub1, -y1[1])
     @objective(sub1, Min, sub_obj1)
     master_sub_obj1 = 1*y1[1]
-    link_constraints_capacities1 = Dict(1 => 1.0)
     subS1 = SubSolverJuMP(
         nsub1,
         sub1,
         A,
-        x1c,
         y1,
-        link_constraints_capacities1,
         master_sub_obj1,
         sub_obj1,
         timelimit -> (false, 0)
@@ -241,19 +370,14 @@ function test_gbc_two_follower()
     sub2 = Model(optimizer)
 
     @variable(sub2, y2[[1]], Bin)
-    @variable(sub2, x2c[A], Bin)
-    @constraint(sub2, c1, y2[1] <= x2c[1])
     sub_obj2 = @expression(sub2, -y2[1])
     @objective(sub2, Min, sub_obj2)
     master_sub_obj2 = 1*y2[1]
-    link_constraints_capacities2 = Dict(1 => 3.0)
     subS2 = SubSolverJuMP(
         nsub2,
         sub2,
         A,
-        x2c,
         y2,
-        link_constraints_capacities2,
         master_sub_obj2,
         sub_obj2,
         timelimit -> (false, 0)
@@ -266,7 +390,7 @@ function test_gbc_two_follower()
     model = Instance(master, [subS1, subS2])
 
     parameter = GBCparam(
-        GurobiSolver(Gurobi.Env()),
+        GurobiSolver(),
         true,
         logging_folder * "/gbc_two_follower",
         "lp",
@@ -276,10 +400,67 @@ function test_gbc_two_follower()
     mkpath(logging_folder * "/gbc_two_follower")
     stats = solve_instance!(model, parameter)
 
-    @test haskey(stats.data, "Opt") && stats.data["Opt"] ≈ 0
+    @test haskey(stats.data, "Opt") && isapprox(stats.data["Opt"], 0; atol=GBC_TEST_OBJ_ATOL)
 end
 
+function test_gbc_duplicate_cut_numerical_guard()
+    A = [1]
+
+    master = Model(optimizer)
+    @variable(master, x[A], Bin)
+    link_vars = Dict(a => x[a] for a in A)
+
+    sub_model = Model(optimizer)
+    set_silent(sub_model)
+    sub_solver = MockNumericDuplicateSubSolver("SubNumericDuplicate", sub_model, A)
+
+    connector_lp = Model(optimizer)
+    set_silent(connector_lp)
+    @variable(connector_lp, s <= 1.0e9)
+    @variable(connector_lp, k[A] >= 0)
+    @variable(connector_lp, 0 <= g <= 1.0e9)
+    @constraint(connector_lp, s == 1.0e9)
+    @constraint(connector_lp, g == 1.0e6)
+    @constraint(connector_lp, k[1] == 0.0)
+
+    duplicate_cut = ConSubsolCut([1], 1000.0, 0.0)
+    connector = ConnectorLP(
+        connector_lp,
+        A,
+        link_vars,
+        sub_solver,
+        0.0,
+        nothing,
+        ConSubsolCut[duplicate_cut],
+        0,
+        Dict{Symbol,Any}(),
+    )
+
+    parameter = GBCparam(
+        GurobiSolver(),
+        false,
+        mktempdir(),
+        "lp",
+        PARETO_NONE,
+        60.0,
+    )
+
+    feas, cut, bigMcut, pobj = genBenders_cut!(connector, Dict(1 => 0.0), parameter, 60.0)
+
+    @test !feas
+    @test bigMcut === nothing
+    @test pobj ≈ 1.0e9
+    @test cut.constant > 0.0
+    @test haskey(parameter.stats.data, "Opt_status_override")
+    @test parameter.stats.data["Opt_status_override"] == "Opt_Numerics"
+    @test haskey(parameter.stats.data, "GBCStatus")
+    @test parameter.stats.data["GBCStatus"] == "Opt_Numerics"
+    @test length(connector.my_subsolutions) == 1
+    @test isempty(connector.numeric_state)
+end
 
 test_gbc_simple_bilevel()
+test_gbc_solver_instance_io_roundtrip()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
+test_gbc_duplicate_cut_numerical_guard()
