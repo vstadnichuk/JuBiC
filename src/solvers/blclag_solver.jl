@@ -78,8 +78,15 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
         optimize!(master.model)
     catch e
         if (e isa TimeoutException)
-            @warn "We run into a timeout when solving a Submodel with BlCLagSolver. Note that this implies that the Subproblem run for the time passed by timelimit and did not terminate. "
-            new_stat!(param.stats, "BlCLagStatus", "Timeout_Submodel")
+            @warn "We run into a timeout when solving a subsolver with BlCLagSolver."
+            new_stat!(param.stats, "BlCLagStatus", "Timeout_Subsolver")
+            new_stat!(param.stats, "Opt_status", "Timeout_Subsolver")
+            param.stats.data["Opt_status_override"] = "Timeout_Subsolver"
+        elseif (e isa MibSFailureException)
+            @error "BlCLagSolver terminated because a MiBS subsolver failed: $e"
+            new_stat!(param.stats, "BlCLagStatus", "Terminate_MibS")
+            new_stat!(param.stats, "Opt_status", "Terminate_MibS")
+            param.stats.data["Opt_status_override"] = "Terminate_MibS"
         else
             @error "BlCLagSolver suffered an error: $e"
             @error stacktrace(catch_backtrace())

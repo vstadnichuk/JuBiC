@@ -184,7 +184,15 @@ function _build_hndp_model_from_spec(
             big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
             subproblem_method=_parse_hndp_subproblem_method(get(model_spec, "subproblem_method", "mip")),
         )
-        return instance, Dict{String,Any}()
+        return instance, hndp_model_size_metadata(instance)
+    elseif model_type == "blclag"
+        instance = build_hndp_blclag_instance(
+            hndp,
+            solver_wrapper;
+            big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
+            subproblem_method=_parse_hndp_subproblem_method(get(model_spec, "subproblem_method", "blc_jump")),
+        )
+        return instance, hndp_model_size_metadata(instance)
     elseif model_type == "gbc"
         instance = build_hndp_gbc_instance(
             hndp,
@@ -194,14 +202,14 @@ function _build_hndp_model_from_spec(
             subproblem_method=_parse_hndp_subproblem_method(get(model_spec, "subproblem_method", "mip")),
             big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
         )
-        return instance, Dict{String,Any}()
+        return instance, hndp_model_size_metadata(instance)
     elseif model_type == "mibs"
         instance = build_hndp_mibs_instance(
             hndp,
             solver_wrapper;
             partial_decomposition=Bool(get(model_spec, "partial_decomposition", false)),
         )
-        return instance, Dict{String,Any}()
+        return instance, hndp_model_size_metadata(instance)
     elseif model_type == "sd"
         instance = build_hndp_sd_instance(
             hndp,
@@ -413,6 +421,8 @@ function _parse_hndp_subproblem_method(value)
         return HNDP_SUBPROBLEM_ASTAR
     elseif value_str == "blc_jump"
         return HNDP_SUBPROBLEM_BLC_JUMP
+    elseif value_str == "mibs"
+        return HNDP_SUBPROBLEM_MIBS
     end
     throw(ArgumentError("Unsupported HNDP subproblem_method '$(value_str)'."))
 end

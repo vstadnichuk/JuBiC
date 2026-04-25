@@ -22,6 +22,11 @@ struct NumericalIssueException <: Exception
 end
 Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)
 
+struct MibSFailureException <: Exception
+    message::String
+end
+Base.showerror(io::IO, err::MibSFailureException) = print(io, err.message)
+
 ############ Functions you have to implement yourself for your subsolver ############
 """
     capacity_linking(sub_solver::SubSolver, a, params::SolverParam)

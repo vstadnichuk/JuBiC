@@ -13,6 +13,7 @@ const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive
 const HNDP_SUBPROBLEM_MIP = :mip
 const HNDP_SUBPROBLEM_ASTAR = :astar
 const HNDP_SUBPROBLEM_BLC_JUMP = :blc_jump
+const HNDP_SUBPROBLEM_MIBS = :mibs
 const HNDP_HYBRID_FALLBACK_SD = :sd
 
 """
@@ -90,7 +91,79 @@ function build_hndp_blc_instance(
         push!(subs, _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, subproblem_method))
     end
 
-    return Instance(master, subs)
+    instance = Instance(master, subs)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
+end
+
+"""
+    build_hndp_blclag_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
+
+Build a JuBiC `BlCLagMaster` instance for the passed HNDP network. In contrast
+to the classical `BlCMaster`, the separation subproblems are modeled as
+`SubSolverBlCJuMP` instances so the BlCLag solver can solve the follower oracle
+internally when generating Lagrangian Benders-like cuts.
+"""
+function build_hndp_blclag_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+    subproblem_method::Symbol=HNDP_SUBPROBLEM_BLC_JUMP,
+)
+    subproblem_method in (HNDP_SUBPROBLEM_BLC_JUMP, HNDP_SUBPROBLEM_MIBS) ||
+        throw(ArgumentError("Unknown HNDP BlCLag subproblem method $(subproblem_method)."))
+
+    all_arcs = _hndp_all_arcs(hndp)
+    user_names = [string(user.uname) for user in hndp.users]
+
+    hpr = Model(() -> get_next_optimizer(solver))
+    @variable(hpr, x[all_arcs], Bin)
+    _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+
+    master_terms = Dict{String,JuMP.AbstractJuMPScalar}()
+    sub_terms = Dict{String,JuMP.AbstractJuMPScalar}()
+    for user in hndp.users
+        leader_obj, follower_obj, _ = _add_user_flow_constraints!(
+            hpr,
+            user,
+            hndp,
+            all_arcs;
+            xvars=x,
+            binary_flow=true,
+            add_strong_duality=false,
+        )
+        user_name = string(user.uname)
+        opt_l1 = @variable(hpr, base_name = "optL1_blclag_$(user_name)")
+        opt_l2 = @variable(hpr, base_name = "optL2_blclag_$(user_name)")
+        @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_blclag_$(user_name)")
+        @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_blclag_$(user_name)")
+        master_terms[user_name] = opt_l1
+        sub_terms[user_name] = opt_l2
+    end
+
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
+    @variable(hpr, construction_cost_var)
+    @constraint(hpr, construction_cost_var == constructioncost, base_name = "construction_cost")
+    @objective(hpr, Min, construction_cost_var + sum(values(master_terms)))
+
+    xdec = Dict(a => x[a] for a in hndp.edgeA)
+    master = BlCLagMaster(hpr, hndp.edgeA, xdec, user_names, sub_terms)
+
+    subs = Any[]
+    if subproblem_method == HNDP_SUBPROBLEM_BLC_JUMP
+        big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
+        for user in hndp.users
+            push!(subs, _build_hndp_blclag_subsolver(user, hndp, all_arcs, solver, big_m_by_user))
+        end
+    else
+        for user in hndp.users
+            push!(subs, _build_hndp_blclag_mibs_subsolver(user, hndp, all_arcs, solver))
+        end
+    end
+
+    instance = Instance(master, subs)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
 end
 
 """
@@ -185,7 +258,9 @@ function build_hndp_gbc_instance(
         push!(subs, _build_hndp_gbc_subsolver(user, hndp, all_arcs, solver, subproblem_method, big_m_by_user))
     end
 
-    return Instance(master, subs)
+    instance = Instance(master, subs)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
 end
 
 """
@@ -210,7 +285,9 @@ function build_hndp_mibs_instance(
         subproblem_method=HNDP_SUBPROBLEM_MIP,
         enforce_integer_construction_cost=true,
     )
-    return transform_GBC_to_MibS(gbc_instance, solver)
+    instance = transform_GBC_to_MibS(gbc_instance, solver)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
 end
 
 function _build_hndp_blc_subsolver(
@@ -288,6 +365,162 @@ function _build_hndp_gbc_subsolver(
     end
 
     throw(ArgumentError("Unknown HNDP GBC subproblem method $(subproblem_method)."))
+end
+
+function _build_hndp_blclag_subsolver(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+    big_m_by_user::Dict{String,Float64},
+)
+    sub_model = Model(() -> get_next_optimizer(solver))
+    leader_obj, follower_obj, flow = _add_user_flow_constraints!(
+        sub_model,
+        user,
+        hndp,
+        all_arcs;
+        xvars=nothing,
+        binary_flow=true,
+        add_strong_duality=false,
+    )
+    @objective(sub_model, Min, follower_obj)
+    set_silent(sub_model)
+    y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+    user_big_m = big_m_by_user[string(user.uname)]
+    return SubSolverBlCJuMP(
+        string(user.uname),
+        sub_model,
+        hndp.edgeA,
+        y_vars,
+        leader_obj,
+        follower_obj,
+        a -> user_big_m,
+    )
+end
+
+function _build_hndp_blclag_mibs_subsolver(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+)
+    sub_model = BilevelModel(() -> get_next_optimizer(solver))
+    flow = @variable(Lower(sub_model), [a in all_arcs], Bin, base_name = "f_$(user.uname)")
+
+    if !isnothing(user.weighlimit)
+        @constraint(
+            Lower(sub_model),
+            sum(user.mweight[a...] * flow[a] for a in all_arcs) <= user.weighlimit,
+            base_name = "weight_$(user.uname)",
+        )
+    end
+
+    for node in vertices(hndp.mygraph)
+        rhs = node == user.origin ? 1 : (node == user.destination ? -1 : 0)
+        outgoing = sum((flow[(node, neigh)] for neigh in outneighbors(hndp.mygraph, node)); init=0.0)
+        incoming = sum((flow[(neigh, node)] for neigh in inneighbors(hndp.mygraph, node)); init=0.0)
+        @constraint(Lower(sub_model), outgoing - incoming == rhs, base_name = "flow_$(user.uname)_$(node)")
+    end
+
+    leader_obj = @expression(sub_model, sum(user.mrisk[a...] * flow[a] for a in all_arcs))
+    follower_obj = @expression(sub_model, sum(user.mcost[a...] * flow[a] for a in all_arcs))
+
+    @objective(Upper(sub_model), Min, leader_obj)
+    @objective(Lower(sub_model), Min, follower_obj)
+    set_silent(sub_model)
+
+    y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+    return SubSolverMiBS(
+        string(user.uname),
+        sub_model,
+        hndp.edgeA,
+        y_vars,
+        leader_obj,
+        follower_obj,
+    )
+end
+
+function _hndp_master_model(instance::Instance)
+    if instance.master isa Master
+        return instance.master.model
+    elseif instance.master isa BlCMaster
+        return instance.master.hpr
+    elseif instance.master isa BlCLagMaster
+        return instance.master.model
+    elseif instance.master isa MIPMaster
+        return instance.master.mymip
+    elseif instance.master isa MibSMaster
+        return instance.master.model
+    end
+    return nothing
+end
+
+function _hndp_subsolver_size(sub::SubSolverJuMP)
+    link_count = length(sub.link_varsC)
+    total_count = length(all_variables(sub.mip_model))
+    return (first_level=link_count, second_level=total_count - link_count, linking=link_count)
+end
+
+function _hndp_subsolver_size(sub::SubSolverBlCJuMP)
+    link_count = length(sub.link_varsC)
+    total_count = length(all_variables(sub.mip_model))
+    return (first_level=link_count, second_level=total_count - link_count, linking=link_count)
+end
+
+function _hndp_subsolver_size(sub::SubSolverMiBS)
+    upper_count = length(all_variables(Upper(sub.bi_model)))
+    lower_count = length(all_variables(Lower(sub.bi_model)))
+    link_count = length(sub.link_varsC)
+    return (first_level=upper_count, second_level=lower_count, linking=link_count)
+end
+
+function _hndp_subsolver_size(sub::AStarSolver)
+    return (first_level=0, second_level=missing, linking=0)
+end
+
+function hndp_model_size_metadata(instance::Instance)
+    metadata = Dict{String,Any}()
+    master_model = _hndp_master_model(instance)
+    if !isnothing(master_model)
+        metadata["master_variable_count"] = length(all_variables(master_model))
+    end
+
+    subs = instance.subproblems
+    if isnothing(subs)
+        metadata["subproblem_first_level_variable_count_total"] = 0
+        metadata["subproblem_second_level_variable_count_total"] = 0
+        metadata["subproblem_binary_linking_variable_count_total"] = 0
+        return metadata
+    end
+
+    first_level_total = 0
+    second_level_total = 0
+    linking_total = 0
+    second_level_known = true
+    for sub in subs
+        size_data = _hndp_subsolver_size(sub)
+        first_level_total += Int(size_data.first_level)
+        linking_total += Int(size_data.linking)
+        if ismissing(size_data.second_level)
+            second_level_known = false
+        else
+            second_level_total += Int(size_data.second_level)
+        end
+    end
+
+    metadata["subproblem_first_level_variable_count_total"] = first_level_total
+    metadata["subproblem_second_level_variable_count_total"] = second_level_known ? second_level_total : missing
+    metadata["subproblem_binary_linking_variable_count_total"] = linking_total
+    return metadata
+end
+
+function _attach_hndp_model_size_metadata!(instance::Instance)
+    master_model = _hndp_master_model(instance)
+    if !isnothing(master_model)
+        master_model.ext[:hndp_model_size_metadata] = hndp_model_size_metadata(instance)
+    end
+    return instance
 end
 
 """

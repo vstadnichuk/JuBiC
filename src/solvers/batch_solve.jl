@@ -373,6 +373,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         warmstart = _get_bool(config, "warmstart", true)
         bigMwithLC = _get_bool(config, "bigMwithLC", false)
         trim_coeff = _get_bool(config, "trim_coeff", false)
+        integer_obj = _get_bool(config, "integer_obj", false)
         infinity_num = _get_number(config, "infinity_num", 1e9)
         g_round_digit = _get_int(config, "g_round_digit", 0)
         return GBCparam(
@@ -391,6 +392,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             trim_coeff,
             infinity_num,
             g_round_digit,
+            integer_obj,
         )
     elseif solver_name == "BLC"
         wrapper = _build_mip_solver_wrapper(config)
