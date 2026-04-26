@@ -185,7 +185,8 @@ function separation!(sol::SubSolverBlCJuMP, sval, gvals, kvals::Dict, params::So
     var_non_zero_tolerance = 1e-3
 
     k_term = sum(kvals[a] * sol.link_varsC[a] for a in sol.A)
-    new_obj = sol.c_objterm * gvals + sol.r_objterm + k_term
+    k_penalty = sum(var_non_zero_tolerance * sol.link_varsC[a] for a in sol.A)
+    new_obj = sol.c_objterm * gvals + sol.r_objterm + k_term + k_penalty
     @objective(sol.mip_model, Min, new_obj)
 
     try
@@ -202,7 +203,7 @@ function separation!(sol::SubSolverBlCJuMP, sval, gvals, kvals::Dict, params::So
     solve_mip(sol, params, time_limit)
     check_solution_status(sol)
 
-    opt_obj = objective_value(sol.mip_model)
+    opt_obj = value(sol.c_objterm * gvals + sol.r_objterm + k_term)
     @debug "Optimal solution of sub $(sol.name) is $(opt_obj)"
 
     is_violate = Bool(!(sval < opt_obj + var_non_zero_tolerance))
