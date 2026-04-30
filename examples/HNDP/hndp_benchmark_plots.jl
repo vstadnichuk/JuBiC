@@ -294,10 +294,10 @@ function _quartiles(values::Vector{Float64})
     )
 end
 
-function _boxplot_panel(io, x0, y0, x1, y1, labels, values_by_label, styles, title, ylabel)
+function _boxplot_panel(io, x0, y0, x1, y1, labels, values_by_label, styles, title, ylabel; ymin=nothing, ymax=nothing)
     all_vals = reduce(vcat, values_by_label)
-    ymin = minimum(all_vals)
-    ymax = maximum(all_vals)
+    ymin = isnothing(ymin) ? minimum(all_vals) : Float64(ymin)
+    ymax = isnothing(ymax) ? maximum(all_vals) : Float64(ymax)
     ymax == ymin && (ymax = ymin + 1.0)
     _draw_axes(io, x0, y0, x1, y1; xlabel="Solver / Parameter Combination", ylabel=ylabel, title=title)
     _draw_y_ticks(io, x0, y0, y1, ymin, ymax; nticks=5, fmt=x -> string(round(Int, x)))
@@ -330,6 +330,17 @@ function _variable_boxplots(df::DataFrame, output_path::String)
         ("Second-Level Variables", :second_level_vars),
         ("Linking Variables", :linking_vars),
     ]
+    global_vals = Float64[]
+    for (_, col) in metrics
+        for v in df[!, col]
+            if !ismissing(v)
+                push!(global_vals, Float64(v))
+            end
+        end
+    end
+    isempty(global_vals) && error("Cannot draw variable boxplots because all variable-count columns are missing.")
+    global_ymin = minimum(global_vals)
+    global_ymax = maximum(global_vals)
 
     width, height = 1320, 520
     open(output_path, "w") do io
@@ -361,6 +372,8 @@ function _variable_boxplots(df::DataFrame, output_path::String)
                 styles,
                 title,
                 "Count",
+                ymin=global_ymin,
+                ymax=global_ymax,
             )
         end
         _svg_footer(io)
