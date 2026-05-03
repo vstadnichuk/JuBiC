@@ -85,9 +85,10 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     # add callback to master and solve 
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
     msol_cuts_mapping_blc = Dict()  # a mapping of master solution to found lazy blc constraints. They are only generated if BlC coef. are automatically computed in subroutine
+    msol_subobj_mapping = Dict()  # for each master solution, store per subproblem which subObj values were already separated
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
-        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, param))
+        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param))
     else
         @debug "We do not add any callbacks to GBCSolver as we run into a time out during the preprocessing."
         new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
@@ -250,7 +251,29 @@ end
 
 
 
-function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, parameter::GBCparam)
+function _normalize_subobj_cache_value(v::Real)
+    return round(Float64(v), digits=6)
+end
+
+function _cache_subobj_value!(mapping::Dict, msolkey, subname, value)
+    if !haskey(mapping, msolkey)
+        mapping[msolkey] = Dict{String, Set{Float64}}()
+    end
+    per_sub = mapping[msolkey]
+    if !haskey(per_sub, subname)
+        per_sub[subname] = Set{Float64}()
+    end
+    push!(per_sub[subname], _normalize_subobj_cache_value(value))
+end
+
+function _has_cached_subobj_value(mapping::Dict, msolkey, subname, value)
+    haskey(mapping, msolkey) || return false
+    per_sub = mapping[msolkey]
+    haskey(per_sub, subname) || return false
+    return _normalize_subobj_cache_value(value) in per_sub[subname]
+end
+
+function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam)
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
 
@@ -281,50 +304,59 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                 # if we already solved this sub_problem, we just recover the found lazy constraints 
                 lazy = msol_cuts_mapping[msolkey]
                 lazy_blc = msol_cuts_mapping_blc[msolkey]
-                @debug "We recovered the lazy cuts for solution $(x_vals) without resolving subproblems."
+                @debug "We recovered the lazy cuts for solution $(x_vals). We only rerun separators for subproblems whose current subObj value was not tested yet for this master solution."
             else
                 # solve each sub and add cut to list of cuts "lazy"
                 @debug "We found no saved lazy cuts for current solution and solve subproblems now."
-                for con in clps
-                    cuttime = @elapsed begin
-                        # solve corresponding connectorLP
-                        ## there does not seem to be an easy way to obtain the remaining runtime in solver-independent callbacks. So we stick with a worst case approximation for the time limit.
-                        feas = false
-                        cut=nothing
-                        pobj=-1
-                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, parameter, parameter.runtime)
-                        # in case of timeout within one subsolver, one of the Submodels run for timelimit time. We let this result in a timeout error 
+                msol_cuts_mapping[msolkey] = lazy
+                msol_cuts_mapping_blc[msolkey] = lazy_blc
+            end
 
-                        # generate cut from found solution
-                        if feas
-                            cutfeas = @build_constraint(cut >= 1)
-                            @debug "Adding feasibility cut $(cutfeas) to the master problem for sub $(name(con.sub_solver))."
-                            add_stat!(parameter.stats, "NFeasCuts", 1)
-                            push!(lazy, cutfeas)
-                        else
-                            # add opt cut only if required, i.e., it truly cuts of solution 
-                            if subObj_val[name(con)] + 1e-6 < pobj  #TODO: again, hard coded numeric
-                                cutopt = @build_constraint(cut <= subObj[name(con)])
-                                @debug "Adding optimality cut $(cutopt) to the master problem for sub $(name(con.sub_solver))."
-                                add_stat!(parameter.stats, "NOptCuts", 1)
-                                push!(lazy, cutopt)
+            for con in clps
+                subname = name(con)
+                current_subobj = subObj_val[subname]
+                if _has_cached_subobj_value(msol_subobj_mapping, msolkey, subname, current_subobj)
+                    @debug "For master solution $(x_vals) and sub $(subname), the current subObj value $(current_subobj) was already checked. Skip resolving this separator."
+                    continue
+                end
 
-                                # Add the BlC constraint if the required information is available
-                                if !isnothing(master.objL2) && !isnothing(bigMcut)
-                                    cutopt_blc = @build_constraint(master.objL2[name(con)] <= bigMcut)
-                                    @debug "Adding in addition to optimality cut also the BlC constraint $(cutopt_blc) to the master problem for sub $(name(con.sub_solver))."
-                                    add_stat!(parameter.stats, "BlCLagCuts", 1)
-                                    push!(lazy_blc, cutopt_blc)
-                                end
+                cuttime = @elapsed begin
+                    # solve corresponding connectorLP
+                    ## there does not seem to be an easy way to obtain the remaining runtime in solver-independent callbacks. So we stick with a worst case approximation for the time limit.
+                    feas = false
+                    cut=nothing
+                    pobj=-1
+                    feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, parameter, parameter.runtime)
+                    # in case of timeout within one subsolver, one of the Submodels run for timelimit time. We let this result in a timeout error 
+
+                    # record that we checked the current subObj value for this master solution
+                    _cache_subobj_value!(msol_subobj_mapping, msolkey, subname, current_subobj)
+
+                    # generate cut from found solution
+                    if feas
+                        cutfeas = @build_constraint(cut >= 1)
+                        @debug "Adding feasibility cut $(cutfeas) to the master problem for sub $(name(con.sub_solver))."
+                        add_stat!(parameter.stats, "NFeasCuts", 1)
+                        push!(lazy, cutfeas)
+                    else
+                        # add opt cut only if required, i.e., it truly cuts of solution 
+                        if current_subobj + 1e-6 < pobj  #TODO: again, hard coded numeric
+                            cutopt = @build_constraint(cut <= subObj[subname])
+                            @debug "Adding optimality cut $(cutopt) to the master problem for sub $(name(con.sub_solver))."
+                            add_stat!(parameter.stats, "NOptCuts", 1)
+                            push!(lazy, cutopt)
+
+                            # Add the BlC constraint if the required information is available
+                            if !isnothing(master.objL2) && !isnothing(bigMcut)
+                                cutopt_blc = @build_constraint(master.objL2[subname] <= bigMcut)
+                                @debug "Adding in addition to optimality cut also the BlC constraint $(cutopt_blc) to the master problem for sub $(name(con.sub_solver))."
+                                add_stat!(parameter.stats, "BlCLagCuts", 1)
+                                push!(lazy_blc, cutopt_blc)
                             end
                         end
                     end
-                    add_stat!(parameter.stats, "SepaTimeCut", cuttime)
                 end
-
-                # save that we found lazy const. for this sol
-                msol_cuts_mapping[msolkey] = lazy
-                msol_cuts_mapping_blc[msolkey] = lazy_blc
+                add_stat!(parameter.stats, "SepaTimeCut", cuttime)
             end
 
             # add lazy cuts to master model
