@@ -100,15 +100,48 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         if (e isa TimeoutException)
             @warn "We run into a timeout when solving a Submodel with GBCSolver. Note that this implies that the Subproblem run for the time passed by timelimit and did not terminate. "
             param.stats.data["GBCStatus"] = "Timeout_Submodel"
+            param.stats.data["Opt_status_override"] = "Timeout_Submodel"
         elseif (e isa NumericalIssueException)
             @error "GBCSolver stopped due to a detected numerical issue: $(e.message)"
             param.stats.data["GBCStatus"] = e.status
+            param.stats.data["Opt_status_override"] = e.status
         else
             @error "GBCsolver suffered an error: $e"
             @error stacktrace(catch_backtrace())
             #showerror(stdout, e, catch_backtrace())
             param.stats.data["GBCStatus"] = "Terminate"
+            param.stats.data["Opt_status_override"] = "Terminate"
             #rethrow(e)  
+        end
+
+        # collect whatever information is still available from the master after the interrupted solve
+        try
+            if primal_status(master.model) == MOI.FEASIBLE_POINT
+                mobj = objective_value(master.model)
+                xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
+                print_solution_to_file(mobj, xsol, param)
+                new_stat!(param.stats, "Opt", mobj)
+            end
+        catch err
+            @warn "Could not recover a master incumbent after interrupted GBC solve: $(sprint(showerror, err))"
+        end
+        try
+            set_optimization_status_stats(termination_status(master.model), param)
+        catch
+            set_optimization_status_stats(MOI.TIME_LIMIT, param)
+        end
+        try
+            new_stat!(param.stats, "runtime", solve_time(master.model))
+        catch
+            new_stat!(param.stats, "runtime", param.runtime)
+        end
+        try
+            new_stat!(param.stats, "gap", JuMP.relative_gap(master.model))
+        catch
+        end
+        try
+            new_stat!(param.stats, "BNodes", MOI.get(master.model, MOI.NodeCount()))
+        catch
         end
     else
         # print solution and collected data
