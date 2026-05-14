@@ -356,14 +356,18 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
             time_limit_pareto = time_limit - time_iterate
             pareto_snapshot = _connector_solution_snapshot(subLP)
             try
+                if !haskey(params.stats.data, "ConnectorLPTimePareto")
+                    new_stat!(params.stats, "ConnectorLPTimePareto", 0.0)
+                end
                 @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-                pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+                pareto_time = @elapsed pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+                add_stat!(params.stats, "ConnectorLPTimePareto", pareto_time)
                 time_limit_build_cut = time_limit_pareto
                 pobj = value(new_obj)
             catch err
                 @warn "Pareto-optimal cut generation failed for connector $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
-                params.stats.data["Opt_status_override"] = "Opt_Numerics"
-                params.stats.data["GBCStatus"] = "Opt_Numerics"
+                params.stats.data["Opt_status_override"] = "Numerics"
+                params.stats.data["GBCStatus"] = "Numerics"
                 subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
             end
         end
@@ -601,8 +605,19 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
     ## we stop the separation process in case we reach the timelimit set in the parameters (what still can take long, but at least the user is expected to wait this long) 
     current_time = time()
 
+    if !haskey(params.stats.data, "ConnectorLPIterations")
+        new_stat!(params.stats, "ConnectorLPIterations", 0)
+    end
+    if !haskey(params.stats.data, "ConnectorLPTimeLP")
+        new_stat!(params.stats, "ConnectorLPTimeLP", 0.0)
+    end
+    if !haskey(params.stats.data, "ConnectorLPTimePricing")
+        new_stat!(params.stats, "ConnectorLPTimePricing", 0.0)
+    end
+
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
+        add_stat!(params.stats, "ConnectorLPIterations", 1)
         # solve the sub_problem iteratively (but first debbug output)
         if params.debbug_out
             write_to_file(
@@ -613,20 +628,27 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # first, solve the LP
         #@debug subLP.lp # this debug output is not helpfull
-        optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
+        lp_time = @elapsed optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
+        add_stat!(params.stats, "ConnectorLPTimeLP", lp_time)
         check_solution_status_LP(subLP)  
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
         @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
-        sub_solver = separation!(
-            subLP.sub_solver,
-            value(subLP.lp[:s]),
-            value(subLP.lp[:g]),
-            kvals,
-            params,
-            time_limit
-        )
+        pricing_time = @elapsed begin
+            sub_solver = separation!(
+                subLP.sub_solver,
+                value(subLP.lp[:s]),
+                value(subLP.lp[:g]),
+                kvals,
+                params,
+                time_limit
+            )
+            subLP.numeric_state[:last_sub_solver_solution] = sub_solver
+        end
+        add_stat!(params.stats, "ConnectorLPTimePricing", pricing_time)
+        sub_solver = subLP.numeric_state[:last_sub_solver_solution]
+        delete!(subLP.numeric_state, :last_sub_solver_solution)
 
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
@@ -657,8 +679,8 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
                     @warn warning_msg
                     subLP.numeric_state[:accepted_numerically] = true
                     subLP.numeric_state[:g_override] = g_rounded
-                    params.stats.data["Opt_status_override"] = "Opt_Numerics"
-                    params.stats.data["GBCStatus"] = "Opt_Numerics"
+                    params.stats.data["Opt_status_override"] = "Numerics"
+                    params.stats.data["GBCStatus"] = "Numerics"
                     violated_cut = false
                     continue
                 else

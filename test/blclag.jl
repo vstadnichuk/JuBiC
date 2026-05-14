@@ -205,9 +205,9 @@ function test_blclag_pareto_fallback_numerical_guard()
     @test cut.constant ≈ 1.0
     @test cutcoeff[1] == 0
     @test haskey(parameter.stats.data, "Opt_status_override")
-    @test parameter.stats.data["Opt_status_override"] == "Opt_Numerics"
+    @test parameter.stats.data["Opt_status_override"] == "Numerics"
     @test haskey(parameter.stats.data, "BlCLagStatus")
-    @test parameter.stats.data["BlCLagStatus"] == "Opt_Numerics"
+    @test parameter.stats.data["BlCLagStatus"] == "Numerics"
     @test isempty(connector.numeric_state)
 end
 

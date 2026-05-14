@@ -61,7 +61,11 @@ function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict
     myLP = Model(() -> get_next_optimizer(solver))
     @variable(myLP, infinity_num >= s >= -infinity_num)
     @variable(myLP, k[sub_solver.A] >= 0)
-    set_attribute(myLP, MOI.NumberOfThreads(), used_nthreads(params.stats, "threads_sub_con"))
+    connector_threads = (
+        (params isa GBCparam && params.parallel_separation) ||
+        (params isa BlCLagparam && params.parallel_separation)
+    ) ? 1 : used_nthreads(params.stats, "threads_sub_con")
+    set_attribute(myLP, MOI.NumberOfThreads(), connector_threads)
 
     # TODO: This parameter combination seems to fix some numeric issues. Seems to have only neglectable impact on runtime
     if params.solver isa GurobiSolver
@@ -111,14 +115,14 @@ function _pareto_band_tolerance(subLP::ConnectorLP_BlC, current_obj::Real, param
 end
 
 function _set_pareto_numerics_status!(params::GBCparam)
-    params.stats.data["Opt_status_override"] = "Opt_Numerics"
-    params.stats.data["GBCStatus"] = "Opt_Numerics"
+    params.stats.data["Opt_status_override"] = "Numerics"
+    params.stats.data["GBCStatus"] = "Numerics"
     return nothing
 end
 
 function _set_pareto_numerics_status!(params::BlCLagparam)
-    params.stats.data["Opt_status_override"] = "Opt_Numerics"
-    params.stats.data["BlCLagStatus"] = "Opt_Numerics"
+    params.stats.data["Opt_status_override"] = "Numerics"
+    params.stats.data["BlCLagStatus"] = "Numerics"
     return nothing
 end
 

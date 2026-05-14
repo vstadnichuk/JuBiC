@@ -53,6 +53,28 @@ function SubSolverMiBS(
     A::Vector{T},
     link_varsC,
     y_vars,
+    r_objterm,
+    c_objterm,
+) where T
+    return SubSolverMiBS{T}(
+        name,
+        bi_model,
+        A,
+        link_varsC,
+        y_vars,
+        r_objterm,
+        c_objterm,
+        Dict{String,String}(),
+        Dict{String,String}(),
+    )
+end
+
+function SubSolverMiBS(
+    name,
+    bi_model,
+    A::Vector{T},
+    link_varsC,
+    y_vars,
     link_constraints_capacities,
     r_objterm,
     c_objterm,

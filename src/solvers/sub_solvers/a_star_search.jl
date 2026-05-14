@@ -348,6 +348,10 @@ function set_nthreads(sol::AStarSolver, n)
     )
 end
 
+function set_singlethread(sol::AStarSolver)
+    return nothing
+end
+
 function solve_sub_for_x(sol::AStarSolver, xvals, params::SolverParam, time_limit)
     # solve with A*-search
     cs = CostStructure(SUB_PROBLEM_LEVEL)

@@ -141,6 +141,16 @@ function set_nthreads(sub_solver::SubSolver, n)
 end
 
 """
+    set_singlethread(sub_solver::SubSolver)
+
+Force the subsolver to use a single thread. Solvers that do not support
+multi-threading can implement this as a no-op.
+"""
+function set_singlethread(sub_solver::SubSolver)
+    set_nthreads(sub_solver, 1)
+end
+
+"""
     solve_sub_for_x(sub_solver::SubSolver, xvals, params::SolverParam, time_limit)
 
 Solves the sub_problem for given solution of master variables.

@@ -50,7 +50,13 @@ function _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
         set_seed!(oracle_model, params.solver, get_seed(params))
 
         if haskey(params.stats.data, "threads_sub_con_used")
-            set_attribute(oracle_model, MOI.NumberOfThreads(), used_nthreads(params.stats, "threads_sub_con"))
+            oracle_threads =
+                (
+                    (params isa GBCparam && params.parallel_separation) ||
+                    (params isa BlCLagparam && params.parallel_separation)
+                ) ? 1 :
+                used_nthreads(params.stats, "threads_sub_con")
+            set_attribute(oracle_model, MOI.NumberOfThreads(), oracle_threads)
         end
 
         @constraint(oracle_model, fixc[a=A], oracle_link_vars[a] == round(x_vals[a]))
@@ -250,6 +256,10 @@ end
 
 function set_nthreads(sol::SubSolverBlCJuMP, n)
     set_attribute(sol.mip_model, MOI.NumberOfThreads(), capped_nthreads(n))
+end
+
+function set_singlethread(sol::SubSolverBlCJuMP)
+    set_attribute(sol.mip_model, MOI.NumberOfThreads(), 1)
 end
 
 function supports_bilevel_subproblem_solver(sol::SubSolverBlCJuMP)

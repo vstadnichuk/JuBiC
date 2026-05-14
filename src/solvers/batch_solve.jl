@@ -369,6 +369,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
+        parallel_separation = _get_bool(config, "parallel_separation", true)
         pareto = _parse_pareto_cut(get(config, "pareto", "OPT"))
         warmstart = _get_bool(config, "warmstart", true)
         bigMwithLC = _get_bool(config, "bigMwithLC", false)
@@ -386,6 +387,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             seed,
             threads_master,
             threads_sub_con,
+            parallel_separation,
             pareto,
             warmstart,
             bigMwithLC,
@@ -401,6 +403,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
+        parallel_separation = _get_bool(config, "parallel_separation", true)
         return BLCparam(
             wrapper,
             debbug_out,
@@ -411,6 +414,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             seed,
             threads_master,
             threads_sub_con,
+            parallel_separation,
         )
     elseif solver_name == "BlCLag"
         wrapper = _build_mip_solver_wrapper(config)
@@ -419,6 +423,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
+        parallel_separation = _get_bool(config, "parallel_separation", false)
         pareto = _parse_pareto_cut(get(config, "pareto", "OPT"))
         warmstart = _get_bool(config, "warmstart", true)
         infinity_num = _get_number(config, "infinity_num", 1e9)
@@ -432,6 +437,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             seed,
             threads_master,
             threads_sub_con,
+            parallel_separation,
             pareto,
             warmstart,
             infinity_num,

@@ -129,19 +129,46 @@ function round_master_solution(msol::Dict)
     return nsol
 end
 
+function _base_optimization_status_label(status)
+    if status == MOI.OPTIMAL
+        return "Optimal"
+    elseif status == MOI.LOCALLY_SOLVED
+        return "Suboptimal"
+    elseif status == MOI.TIME_LIMIT
+        return "Timelimit"
+    elseif status == MOI.INFEASIBLE
+        return "Infeasible"
+    elseif status == MOI.INFEASIBLE_OR_UNBOUNDED
+        return "Infeasible_or_Unbounded"
+    elseif status == MOI.DUAL_INFEASIBLE
+        return "Dual_Infeasible"
+    elseif status == MOI.INTERRUPTED
+        return "Interrupted"
+    elseif status == MOI.MEMORY_LIMIT
+        return "Memory_Limit"
+    elseif status == MOI.NUMERICAL_ERROR
+        return "Numerical_Error"
+    end
+    return string(status)
+end
+
+function _numerical_status_label(base_status::AbstractString)
+    if base_status == "Optimal"
+        return "Opt_Numerics"
+    end
+    return base_status * "_Numerics"
+end
 
 function set_optimization_status_stats(status, param)
     if haskey(param.stats.data, "Opt_status_override")
-        new_stat!(param.stats, "Opt_status", param.stats.data["Opt_status_override"])
+        override = String(param.stats.data["Opt_status_override"])
+        if override == "Numerics"
+            base_status = _base_optimization_status_label(status)
+            new_stat!(param.stats, "Opt_status", _numerical_status_label(base_status))
+        else
+            new_stat!(param.stats, "Opt_status", override)
+        end
         return nothing
     end
-    if status == MOI.OPTIMAL
-        new_stat!(param.stats, "Opt_status", "Optimal")
-    elseif status == MOI.LOCALLY_SOLVED
-        new_stat!(param.stats, "Opt_status", "Suboptimal")
-    elseif status == MOI.TIME_LIMIT
-        new_stat!(param.stats, "Opt_status", "Timelimit")
-    else
-        new_stat!(param.stats, "Opt_status", "Infeasible")
-    end
+    new_stat!(param.stats, "Opt_status", _base_optimization_status_label(status))
 end

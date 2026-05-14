@@ -129,21 +129,40 @@ end
 
 Run or resume the HNDP seed-hunt batch.
 """
-function run_seedhunt!(; output_root::AbstractString, resume::Bool=true)
+function run_seedhunt!(; output_root::AbstractString, resume::Bool=true, quiet::Bool=false)
     mkpath(output_root)
     instance_cfg_path, model_cfg_path, param_cfg_path = write_seedhunt_manifests(output_root)
 
-    println("Starting HNDP seed-hunt batch.")
-    println("output_root = $(output_root)")
-    println("resume = $(resume)")
+    if !quiet
+        println("Starting HNDP seed-hunt batch.")
+        println("output_root = $(output_root)")
+        println("resume = $(resume)")
+    end
 
-    run_hndp_experiments!(
-        instance_cfg_path,
-        model_cfg_path,
-        param_cfg_path;
-        output_root=output_root,
-        resume=resume,
-    )
+    if quiet
+        log_path = joinpath(output_root, "seedhunt_console.log")
+        open(log_path, "w") do io
+            redirect_stdout(io) do
+                redirect_stderr(io) do
+                    run_hndp_experiments!(
+                        instance_cfg_path,
+                        model_cfg_path,
+                        param_cfg_path;
+                        output_root=output_root,
+                        resume=resume,
+                    )
+                end
+            end
+        end
+    else
+        run_hndp_experiments!(
+            instance_cfg_path,
+            model_cfg_path,
+            param_cfg_path;
+            output_root=output_root,
+            resume=resume,
+        )
+    end
 
     print_seedhunt_summary(output_root)
     return nothing
@@ -162,5 +181,6 @@ end
 if abspath(PROGRAM_FILE) == @__FILE__
     output_root = length(ARGS) >= 1 ? ARGS[1] : joinpath(@__DIR__, "seedhunt_runs")
     resume = length(ARGS) >= 2 ? _parse_bool_arg(ARGS[2]) : true
-    run_seedhunt!(; output_root=output_root, resume=resume)
+    quiet = length(ARGS) >= 3 ? _parse_bool_arg(ARGS[3]) : false
+    run_seedhunt!(; output_root=output_root, resume=resume, quiet=quiet)
 end

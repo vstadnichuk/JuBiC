@@ -452,9 +452,9 @@ function test_gbc_duplicate_cut_numerical_guard()
     @test pobj ≈ 1.0e9
     @test cut.constant > 0.0
     @test haskey(parameter.stats.data, "Opt_status_override")
-    @test parameter.stats.data["Opt_status_override"] == "Opt_Numerics"
+    @test parameter.stats.data["Opt_status_override"] == "Numerics"
     @test haskey(parameter.stats.data, "GBCStatus")
-    @test parameter.stats.data["GBCStatus"] == "Opt_Numerics"
+    @test parameter.stats.data["GBCStatus"] == "Numerics"
     @test length(connector.my_subsolutions) == 1
     @test isempty(connector.numeric_state)
 end

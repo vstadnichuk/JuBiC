@@ -3,6 +3,7 @@ using JuMP
 using BenchmarkTools
 using CSV
 import MathOptInterface as MOI
+using Base.Threads
 
 
 """
@@ -36,8 +37,17 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "NBigMlagCuts", 0)  # number of Lagrangian cuts computed to obtain better big M coef. 
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "SepaTimeCut", 0)  # time spend in separator for generating cuts only
+    new_stat!(param.stats, "ConnectorLPTimeLP", 0.0)  # time spent solving the connector LP relaxation
+    new_stat!(param.stats, "ConnectorLPTimePricing", 0.0)  # time spent in subsolver pricing / separation calls
+    new_stat!(param.stats, "ConnectorLPTimePareto", 0.0)  # time spent in pareto refinement inside connectors
+    new_stat!(param.stats, "ConnectorLPIterations", 0)  # number of connector LP resolve/pricing iterations
+    new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
+    if param.parallel_separation
+        parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
+        new_stat!(param.stats, "parallel_connector_workers_used", parallel_workers)
+    end
 
     # do some initail checks for master and sub solvers
     @debug "Doing some checks if master and sub were created correctly."
@@ -57,21 +67,27 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         master.partial_decomposition(master.model, subObj)
     end
 
-    # debbug output
+    # configure solver logging before preprocessing and final export
     try
-        write_to_file(
-            master.model,
-            param.output_folder_path * "/master.$(param.file_format_output)",
-        )
         set_silent(master.model)
         set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/gbc_mip_log.txt")
     catch err 
-        @error "Could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+        @error "Could not set log file for folder $(param.output_folder_path). Error is $err"
     end
 
     # build the sub LPs for Benders subroutine 
     clps, runtime_init = init_connectorLPs(subs, master.link_vars, subObj, param) 
     new_stat!(param.stats, "runtime_preprocessingGBC", runtime_init)
+
+    # debug output: export the master only after preprocessing so stored subObj bounds match the live model
+    try
+        write_to_file(
+            master.model,
+            param.output_folder_path * "/master.$(param.file_format_output)",
+        )
+    catch err 
+        @error "Could not write model to file for folder $(param.output_folder_path). Error is $err"
+    end
 
     # set time limit and number of threads
     true_runtime = param.runtime - runtime_init
@@ -79,7 +95,11 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
     for sub in subs
-        set_nthreads(sub, sub_threads)
+        if param.parallel_separation
+            set_singlethread(sub)
+        else
+            set_nthreads(sub, sub_threads)
+        end
     end
 
     # add callback to master and solve 
@@ -251,7 +271,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     @variable(myLP, 0 <= g <= parameter.infinity_num)
 
     # set number of threads
-    set_attribute(myLP, MOI.NumberOfThreads(), used_nthreads(parameter.stats, "threads_sub_con"))
+    set_attribute(myLP, MOI.NumberOfThreads(), _connector_thread_count(parameter))
 
     # TODO: This parameter combination seems to fix some numeric issues. Seems to have only necglectable impact on runtime
     if parameter.solver isa GurobiSolver
@@ -286,6 +306,75 @@ end
 
 function _normalize_subobj_cache_value(v::Real)
     return round(Float64(v), digits=6)
+end
+
+function _resolve_parallel_workers!(stats::RunStats, requested_workers::Integer)
+    used = min(max(1, Int(requested_workers)), max(1, Threads.nthreads()))
+    if used < requested_workers
+        @warn "Requested $(requested_workers) parallel connector workers, but the Julia process only has $(Threads.nthreads()) thread(s). JuBiC will use $(used) worker(s) for parallel connector separation."
+    end
+    return used
+end
+
+function _connector_thread_count(params::GBCparam)
+    return params.parallel_separation ? 1 : used_nthreads(params.stats, "threads_sub_con")
+end
+
+function _local_gbc_param(params::GBCparam)
+    local_stats = RunStats()
+    new_stat!(local_stats, "threads_master_used", get(params.stats.data, "threads_master_used", 1))
+    new_stat!(local_stats, "threads_sub_con_used", get(params.stats.data, "threads_sub_con_used", 1))
+    new_stat!(local_stats, "ConnectorLPTimeLP", 0.0)
+    new_stat!(local_stats, "ConnectorLPTimePricing", 0.0)
+    new_stat!(local_stats, "ConnectorLPTimePareto", 0.0)
+    new_stat!(local_stats, "ConnectorLPIterations", 0)
+    return GBCparam(
+        params.solver,
+        params.debbug_out,
+        params.output_folder_path,
+        params.file_format_output,
+        local_stats,
+        params.runtime,
+        params.seed,
+        params.threads_master,
+        params.threads_sub_con,
+        params.parallel_separation,
+        params.pareto,
+        params.warmstart,
+        params.bigMwithLC,
+        params.trim_coeff,
+        params.infinity_num,
+        params.g_round_digit,
+        params.integer_obj,
+        params.pareto_band_tolerance,
+        params.blc_pareto_band_tolerance,
+    )
+end
+
+function _merge_parallel_gbc_stats!(target::RunStats, local_stats::RunStats)
+    for key in ("ConnectorLPTimeLP", "ConnectorLPTimePricing", "ConnectorLPTimePareto", "ConnectorLPIterations")
+        if haskey(local_stats.data, key)
+            add_stat!(target, key, local_stats.data[key])
+        end
+    end
+    if haskey(local_stats.data, "NOptCutValidationWarnings")
+        if haskey(target.data, "NOptCutValidationWarnings")
+            add_stat!(target, "NOptCutValidationWarnings", local_stats.data["NOptCutValidationWarnings"])
+        else
+            new_stat!(target, "NOptCutValidationWarnings", local_stats.data["NOptCutValidationWarnings"])
+        end
+    end
+    if haskey(local_stats.data, "OptCutValidationUsers")
+        offenders = get!(target.data, "OptCutValidationUsers", String[])
+        for uname in local_stats.data["OptCutValidationUsers"]
+            uname in offenders || push!(offenders, uname)
+        end
+    end
+    if get(local_stats.data, "Opt_status_override", nothing) == "Numerics"
+        target.data["Opt_status_override"] = "Numerics"
+        target.data["GBCStatus"] = "Numerics"
+    end
+    return nothing
 end
 
 function _cache_subobj_value!(mapping::Dict, msolkey, subname, value)
@@ -345,51 +434,93 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                 msol_cuts_mapping_blc[msolkey] = lazy_blc
             end
 
-            for con in clps
+            pending = Tuple{Int,Any,String,Float64}[]
+            for (idx, con) in enumerate(clps)
                 subname = name(con)
                 current_subobj = subObj_val[subname]
                 if _has_cached_subobj_value(msol_subobj_mapping, msolkey, subname, current_subobj)
                     @debug "For master solution $(x_vals) and sub $(subname), the current subObj value $(current_subobj) was already checked. Skip resolving this separator."
                     continue
                 end
+                push!(pending, (idx, con, subname, current_subobj))
+            end
 
-                cuttime = @elapsed begin
-                    # solve corresponding connectorLP
-                    ## there does not seem to be an easy way to obtain the remaining runtime in solver-independent callbacks. So we stick with a worst case approximation for the time limit.
-                    feas = false
-                    cut=nothing
-                    pobj=-1
-                    feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, parameter, parameter.runtime)
-                    # in case of timeout within one subsolver, one of the Submodels run for timelimit time. We let this result in a timeout error 
-
-                    # record that we checked the current subObj value for this master solution
-                    _cache_subobj_value!(msol_subobj_mapping, msolkey, subname, current_subobj)
-
-                    # generate cut from found solution
-                    if feas
-                        cutfeas = @build_constraint(cut >= 1)
-                        @debug "Adding feasibility cut $(cutfeas) to the master problem for sub $(name(con.sub_solver))."
-                        add_stat!(parameter.stats, "NFeasCuts", 1)
-                        push!(lazy, cutfeas)
-                    else
-                        # add opt cut only if required, i.e., it truly cuts of solution 
-                        if current_subobj + 1e-6 < pobj  #TODO: again, hard coded numeric
-                            cutopt = @build_constraint(cut <= subObj[subname])
-                            @debug "Adding optimality cut $(cutopt) to the master problem for sub $(name(con.sub_solver))."
-                            add_stat!(parameter.stats, "NOptCuts", 1)
-                            push!(lazy, cutopt)
-
-                            # Add the BlC constraint if the required information is available
-                            if !isnothing(master.objL2) && !isnothing(bigMcut)
-                                cutopt_blc = @build_constraint(master.objL2[subname] <= bigMcut)
-                                @debug "Adding in addition to optimality cut also the BlC constraint $(cutopt_blc) to the master problem for sub $(name(con.sub_solver))."
-                                add_stat!(parameter.stats, "BlCLagCuts", 1)
-                                push!(lazy_blc, cutopt_blc)
+            results = Vector{Any}(undef, length(pending))
+            if parameter.parallel_separation && length(pending) > 1
+                sem = Base.Semaphore(get(parameter.stats.data, "parallel_connector_workers_used", 1))
+                @sync for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
+                    Threads.@spawn begin
+                        Base.acquire(sem)
+                        try
+                            local_param = _local_gbc_param(parameter)
+                            result_ref = Ref{Any}(nothing)
+                            cuttime = @elapsed begin
+                                feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                                result_ref[] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    feas=feas,
+                                    cut=cut,
+                                    bigMcut=bigMcut,
+                                    pobj=pobj,
+                                    stats=local_param.stats,
+                                )
                             end
+                            base_result = result_ref[]
+                            results[res_idx] = (; base_result..., cuttime=cuttime)
+                        finally
+                            Base.release(sem)
                         end
                     end
                 end
-                add_stat!(parameter.stats, "SepaTimeCut", cuttime)
+            else
+                for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
+                    local_param = parameter.parallel_separation ? _local_gbc_param(parameter) : parameter
+                    result_ref = Ref{Any}(nothing)
+                    cuttime = @elapsed begin
+                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                        result_ref[] = (
+                            subname=subname,
+                            current_subobj=current_subobj,
+                            feas=feas,
+                            cut=cut,
+                            bigMcut=bigMcut,
+                            pobj=pobj,
+                            stats=(parameter.parallel_separation ? local_param.stats : nothing),
+                        )
+                    end
+                    base_result = result_ref[]
+                    results[res_idx] = (; base_result..., cuttime=cuttime)
+                end
+            end
+
+            for result in results
+                if !isnothing(result.stats)
+                    _merge_parallel_gbc_stats!(parameter.stats, result.stats)
+                end
+                _cache_subobj_value!(msol_subobj_mapping, msolkey, result.subname, result.current_subobj)
+                add_stat!(parameter.stats, "SepaTimeCut", result.cuttime)
+
+                if result.feas
+                    cutfeas = @build_constraint(result.cut >= 1)
+                    @debug "Adding feasibility cut $(cutfeas) to the master problem for sub $(result.subname)."
+                    add_stat!(parameter.stats, "NFeasCuts", 1)
+                    push!(lazy, cutfeas)
+                else
+                    if result.current_subobj + 1e-6 < result.pobj
+                        cutopt = @build_constraint(result.cut <= subObj[result.subname])
+                        @debug "Adding optimality cut $(cutopt) to the master problem for sub $(result.subname)."
+                        add_stat!(parameter.stats, "NOptCuts", 1)
+                        push!(lazy, cutopt)
+
+                        if !isnothing(master.objL2) && !isnothing(result.bigMcut)
+                            cutopt_blc = @build_constraint(master.objL2[result.subname] <= result.bigMcut)
+                            @debug "Adding in addition to optimality cut also the BlC constraint $(cutopt_blc) to the master problem for sub $(result.subname)."
+                            add_stat!(parameter.stats, "BlCLagCuts", 1)
+                            push!(lazy_blc, cutopt_blc)
+                        end
+                    end
+                end
             end
 
             # add lazy cuts to master model

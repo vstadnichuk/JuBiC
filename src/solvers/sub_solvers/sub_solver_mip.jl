@@ -348,6 +348,10 @@ function set_nthreads(sol::SubSolverJuMP, n)
     set_attribute(sol.mip_model, MOI.NumberOfThreads(), capped_nthreads(n))
 end
 
+function set_singlethread(sol::SubSolverJuMP)
+    set_attribute(sol.mip_model, MOI.NumberOfThreads(), 1)
+end
+
 function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_limit)
     # set original objective function (just to make sure)
     @objective(sol.mip_model, Min, sol.c_objterm)
