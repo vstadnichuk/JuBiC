@@ -552,6 +552,7 @@ function build_hndp_hybrid_blc_instance(
     enumeration_time_limit::Float64,
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
+    use_decision_arc_dominance::Bool=true,
 )
     subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_ASTAR) ||
         throw(ArgumentError("Unknown HNDP BlC subproblem method $(subproblem_method)."))
@@ -563,7 +564,14 @@ function build_hndp_hybrid_blc_instance(
     tasks = Dict{String,Task}()
     for user in hndp.users
         local_user = user
-        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(
+            local_user,
+            hndp,
+            all_arcs,
+            solver,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
 
     user_results = Dict{String,Any}()
@@ -774,11 +782,22 @@ function build_hndp_path_instance(
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
     parallelize::Bool=false,
+    use_decision_arc_dominance::Bool=true,
 )
     if parallelize
-        return build_hndp_path_instance_parallel(hndp, solver; enumeration_time_limit=enumeration_time_limit)
+        return build_hndp_path_instance_parallel(
+            hndp,
+            solver;
+            enumeration_time_limit=enumeration_time_limit,
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
-    return build_hndp_path_instance_sequential(hndp, solver; enumeration_time_limit=enumeration_time_limit)
+    return build_hndp_path_instance_sequential(
+        hndp,
+        solver;
+        enumeration_time_limit=enumeration_time_limit,
+        use_decision_arc_dominance=use_decision_arc_dominance,
+    )
 end
 
 """
@@ -807,6 +826,7 @@ function build_hndp_path_instance_sequential(
     hndp::HNDPwC,
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
+    use_decision_arc_dominance::Bool=true,
 )
     @info "Starting generation of the path-based HNDP reformulation."
     all_arcs = _hndp_all_arcs(hndp)
@@ -838,7 +858,13 @@ function build_hndp_path_instance_sequential(
             @warn "No feasible path was found in the fixed-arc network for user $(user.uname). Falling back to the n-1 edges heuristic bound $(bound)."
         end
 
-        paths, enum_runtime, timed_out = _enumerate_user_paths_v2(user, hndp, bound, deadline)
+        paths, enum_runtime, timed_out = _enumerate_user_paths_v2(
+            user,
+            hndp,
+            bound,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
         total_enum_runtime += enum_runtime
         total_enum_runtime = min(total_enum_runtime, enumeration_time_limit)
         path_counts[string(user.uname)] = length(paths)
@@ -893,6 +919,7 @@ function build_hndp_path_instance_parallel(
     hndp::HNDPwC,
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
+    use_decision_arc_dominance::Bool=true,
 )
     @info "Starting generation of the parallel path-based HNDP reformulation."
     all_arcs = _hndp_all_arcs(hndp)
@@ -901,7 +928,14 @@ function build_hndp_path_instance_parallel(
     tasks = Dict{String,Task}()
     for user in hndp.users
         local_user = user
-        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(
+            local_user,
+            hndp,
+            all_arcs,
+            solver,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
 
     user_results = Dict{String,Any}()
@@ -983,6 +1017,7 @@ function build_hndp_hybrid_instance(
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     indicator_constraints::Bool=false,
     bound_duals::Bool=true,
+    use_decision_arc_dominance::Bool=true,
 )
     _validate_hybrid_fallback_mode(fallback_mode)
     @info "Starting generation of the parallel hybrid HNDP reformulation."
@@ -993,7 +1028,14 @@ function build_hndp_hybrid_instance(
     tasks = Dict{String,Task}()
     for user in hndp.users
         local_user = user
-        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(
+            local_user,
+            hndp,
+            all_arcs,
+            solver,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
 
     user_results = Dict{String,Any}()
@@ -1350,7 +1392,7 @@ function _fixed_arc_path_bound(user::User, hndp::HNDPwC, all_arcs, solver::Solve
     runtime = time() - start_time
     if status == MOI.OPTIMAL || status == MOI.LOCALLY_SOLVED
         return objective_value(model), runtime, false, false
-    elseif status == MOI.INFEASIBLE
+    elseif status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
         return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, false
     elseif status == MOI.TIME_LIMIT
         return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, true
@@ -1365,6 +1407,26 @@ struct HNDPPath
     weight::Float64
 end
 
+struct HNDPPartialLabel
+    decision_arcs::Set{Tuple{Int,Int}}
+    cost::Float64
+    risk::Float64
+    weight::Float64
+end
+
+function _dominates_decision_label(
+    a::HNDPPartialLabel,
+    b::HNDPPartialLabel;
+    use_weight::Bool,
+)
+    cost_better = a.cost < b.cost
+    same_cost_better_risk = a.cost == b.cost && a.risk <= b.risk
+    (cost_better || same_cost_better_risk) || return false
+    use_weight && !(a.weight <= b.weight) && return false
+    issubset(a.decision_arcs, b.decision_arcs) || return false
+    return true
+end
+
 """
     _enumerate_user_paths_v2(user, hndp, length_bound, deadline)
 
@@ -1375,14 +1437,44 @@ simple follower paths even if the graph itself contains cycles. The search
 stops once the shared global deadline is reached and then returns the paths
 found so far together with a timeout flag.
 """
-function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float64, deadline::Float64)
+function _enumerate_user_paths_v2(
+    user::User,
+    hndp::HNDPwC,
+    length_bound::Float64,
+    deadline::Float64;
+    use_decision_arc_dominance::Bool=true,
+)
     start_time = time()
     mincostpairs = floyd_warshall_shortest_paths(hndp.mygraph, user.mcost)
     paths = HNDPPath[]
     visited = Set{Int}([user.origin])
     timed_out = false
+    decision_arc_set = Set(hndp.edgeA)
+    labels_by_node = Dict{Int,Vector{HNDPPartialLabel}}()
+    labels_by_node[user.origin] = [HNDPPartialLabel(Set{Tuple{Int,Int}}(), 0.0, 0.0, 0.0)]
 
-    function dfs(node::Int, arcs::Vector{Tuple{Int,Int}}, cost::Float64, risk::Float64, weight::Float64)
+    function _prune_or_register_label(node::Int, label::HNDPPartialLabel)
+        use_decision_arc_dominance || return false
+        bucket = get!(labels_by_node, node, HNDPPartialLabel[])
+        use_weight = !isnothing(user.weighlimit)
+        for existing in bucket
+            if _dominates_decision_label(existing, label; use_weight=use_weight)
+                return true
+            end
+        end
+        filter!(existing -> !_dominates_decision_label(label, existing; use_weight=use_weight), bucket)
+        push!(bucket, label)
+        return false
+    end
+
+    function dfs(
+        node::Int,
+        arcs::Vector{Tuple{Int,Int}},
+        cost::Float64,
+        risk::Float64,
+        weight::Float64,
+        traversed_decision_arcs::Set{Tuple{Int,Int}},
+    )
         if time() >= deadline
             timed_out = true
             return
@@ -1414,6 +1506,15 @@ function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float6
                 continue
             end
 
+            next_decision_arcs = traversed_decision_arcs
+            if use_decision_arc_dominance && edge in decision_arc_set
+                next_decision_arcs = copy(traversed_decision_arcs)
+                push!(next_decision_arcs, edge)
+            end
+
+            next_label = HNDPPartialLabel(next_decision_arcs, new_cost, risk + user.mrisk[edge...], new_weight)
+            _prune_or_register_label(next_node, next_label) && continue
+
             push!(arcs, edge)
             push!(visited, next_node)
             dfs(
@@ -1422,6 +1523,7 @@ function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float6
                 new_cost,
                 risk + user.mrisk[edge...],
                 new_weight,
+                next_decision_arcs,
             )
             pop!(arcs)
             delete!(visited, next_node)
@@ -1429,7 +1531,7 @@ function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float6
         end
     end
 
-    dfs(user.origin, Tuple{Int,Int}[], 0.0, 0.0, 0.0)
+    dfs(user.origin, Tuple{Int,Int}[], 0.0, 0.0, 0.0, Set{Tuple{Int,Int}}())
     if isempty(paths) && !timed_out
         throw(ArgumentError("No feasible path was enumerated for user $(user.uname) within the path bound $(length_bound)."))
     end
@@ -1446,7 +1548,14 @@ function _path_precompute_solver(solver::GurobiSolver)
     return GurobiSolver()
 end
 
-function _compute_user_path_data(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper, deadline::Float64)
+function _compute_user_path_data(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+    deadline::Float64;
+    use_decision_arc_dominance::Bool=true,
+)
     local_solver = _path_precompute_solver(solver)
     start_time = time()
     bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, local_solver, deadline)
@@ -1460,7 +1569,13 @@ function _compute_user_path_data(user::User, hndp::HNDPwC, all_arcs, solver::Sol
         )
     end
 
-    paths, enum_runtime, timed_out = _enumerate_user_paths_v2(user, hndp, bound, deadline)
+    paths, enum_runtime, timed_out = _enumerate_user_paths_v2(
+        user,
+        hndp,
+        bound,
+        deadline;
+        use_decision_arc_dominance=use_decision_arc_dominance,
+    )
     total_runtime = min(bound_runtime + enum_runtime, max(0.0, deadline - start_time))
     return (
         bound=bound,
