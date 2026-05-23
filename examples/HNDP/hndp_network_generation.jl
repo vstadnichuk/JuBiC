@@ -35,8 +35,11 @@ configuration dictionary.
 
 The current implementation supports two logical instance types:
 - `"constrained_shortest_path"`: a single-layer HNDP network
-- `"competition"`: a layered HNDP network where only the competitor layer is
-  interdicted or constructed
+- `"competition"`: either
+  - a two-layer competitive HNDP network when the topology id starts with
+    `"layered_"`, or
+  - a single-layer competitive HNDP network with a sampled set of decision arcs
+    otherwise
 
 For each entry in `instances`, the generator builds the Cartesian product of the
 declared parameter values and the selected parameter seeds. Different topology
@@ -318,53 +321,6 @@ function _build_competition_generated_network(
     max_weight = Int(get(spec, "max_weight", 100))
     construction_cost = Int(get(spec, "construction_cost", 0))
 
-    if topology_id == "layered_sioux_falls"
-        base_graph = _load_sioux_falls_graph()
-        graph, base_nodes, competitor_nodes, decision_arcs = _build_layered_competition_graph(base_graph)
-
-        users, minweights = _build_two_layer_users(
-            graph,
-            base_nodes,
-            nusers,
-            parameter_seed,
-            constrained,
-            length_slack,
-            max_cost,
-            max_risk,
-            max_weight,
-            base_graph,
-            competitor_nodes,
-            decision_arcs,
-            competitor_cost_factor,
-            user_parameter_mode,
-        )
-        edge_price = Dict((src(e), dst(e)) => rand(MersenneTwister(parameter_seed + 20_000), 0:construction_cost) for e in edges(graph))
-        instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
-
-        metadata = Dict{String,Any}(
-            "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs)),
-            "instance_type" => "competition",
-            "topology_family" => topology_id,
-            "nusers" => nusers,
-            "parameter_seed" => parameter_seed,
-            "length_constrained" => constrained,
-            "alpha" => constrained ? length_slack : nothing,
-            "length_slack" => constrained ? length_slack : nothing,
-            "beta" => competitor_cost_factor,
-            "competitor_cost_factor" => competitor_cost_factor,
-            "user_parameter_mode" => user_parameter_mode,
-            "construction_cost" => construction_cost,
-            "max_cost" => max_cost,
-            "max_risk" => max_risk,
-            "max_weight" => max_weight,
-            "nnodes" => nv(graph),
-            "narcs" => ne(graph),
-            "decision_arcs" => length(decision_arcs),
-        )
-
-        return HNDPGeneratedNetwork(metadata["name"], instance, metadata)
-    end
-
     if startswith(topology_id, "layered_")
         base_topology_id = topology_id[(findfirst('_', topology_id) + 1):end]
         base_graph = _load_named_base_graph(base_topology_id)
@@ -390,9 +346,12 @@ function _build_competition_generated_network(
         instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
         metadata = Dict{String,Any}(
-            "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs)),
+            "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode),
             "instance_type" => "competition",
             "topology_family" => topology_id,
+            "base_topology_family" => base_topology_id,
+            "competition_graph_style" => "two_layer",
+            "layered_instance" => true,
             "nusers" => nusers,
             "parameter_seed" => parameter_seed,
             "length_constrained" => constrained,
@@ -437,6 +396,9 @@ function _build_competition_generated_network(
         "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs)),
         "instance_type" => "competition",
         "topology_family" => topology_id,
+        "base_topology_family" => topology_id,
+        "competition_graph_style" => "single_layer_k",
+        "layered_instance" => false,
         "nusers" => nusers,
         "parameter_seed" => parameter_seed,
         "length_constrained" => constrained,
@@ -504,6 +466,8 @@ function _load_named_base_graph(topology_id::String)
         return _load_sioux_falls_graph()
     elseif topology_id == "anaheim"
         return _load_tntp_graph("examples/data/Anaheim_net.tntp")
+    elseif topology_id == "friedrichshain_center"
+        return _load_tntp_graph("examples/data/friedrichshain-center_net.tntp")
     elseif topology_id == "berlin_mitte_center"
         return _load_tntp_graph("examples/data/berlin-mitte-center_net.tntp")
     elseif topology_id == "ema"
