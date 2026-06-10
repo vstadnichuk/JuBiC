@@ -21,11 +21,13 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     end
 
     # save HPR to lp file and set log file
-    try
-        write_to_file(blcm.hpr, param.output_folder_path * "/hpr.$(param.file_format_output)")
-        set_optimizer_attribute(blcm.hpr, "LogFile", param.output_folder_path *"/blc_mip_log.txt")
-    catch err 
-        @error "Could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+    if should_write_output_logs(param)
+        try
+            write_to_file(blcm.hpr, param.output_folder_path * "/hpr.$(param.file_format_output)")
+            set_optimizer_attribute(blcm.hpr, "LogFile", param.output_folder_path *"/blc_mip_log.txt")
+        catch err 
+            @error "Could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+        end
     end
 
     # set runtime and number of threads
@@ -79,8 +81,10 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
                 new_stat!(param.stats, "Opt", mobj)
 
                 # print MIP solution to file
-                solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(blcm.hpr))
-                write(param.output_folder_path*"/solution.json", JSON.json(solution))
+                if should_write_output_logs(param)
+                    solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(blcm.hpr))
+                    write(param.output_folder_path*"/solution.json", JSON.json(solution))
+                end
             end
 
             # set status 

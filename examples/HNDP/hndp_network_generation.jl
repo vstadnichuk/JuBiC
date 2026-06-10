@@ -125,6 +125,8 @@ function _expand_hndp_generation_spec!(
     topology_ids = _string_vector(get(spec, "topologies", [get(spec, "topology_family", _default_topology_family(instance_type))]), "topologies")
     user_counts = _int_vector(get(spec, "nusers", [1]), "nusers")
     length_modes = _bool_vector(get(spec, "length_constrained", [true]), "length_constrained")
+    availability_budget_fraction_values = _get_optional_float_vector(spec, "availability_budget_fraction")
+    availability_budget_fraction_values = isnothing(availability_budget_fraction_values) ? [1.0] : availability_budget_fraction_values
 
     generated_here = HNDPGeneratedNetwork[]
 
@@ -140,20 +142,24 @@ function _expand_hndp_generation_spec!(
                     for constrained in length_modes
                         for length_slack in length_slack_values
                             for two_stage in two_stage_modes
-                                for user_parameter_mode in user_parameter_modes
-                                    !constrained && length_slack != first(length_slack_values) && continue
-                                    generated = _build_csp_generated_network(
-                                        base_name,
-                                        topology_id,
-                                        nusers,
-                                        parameter_seed,
-                                        constrained,
-                                        length_slack,
-                                        two_stage,
-                                        user_parameter_mode,
-                                        spec,
-                                    )
-                                    push!(generated_here, generated)
+                                for availability_budget_fraction in availability_budget_fraction_values
+                                    for user_parameter_mode in user_parameter_modes
+                                        !constrained && length_slack != first(length_slack_values) && continue
+                                        local_spec = copy(spec)
+                                        local_spec["availability_budget_fraction"] = availability_budget_fraction
+                                        generated = _build_csp_generated_network(
+                                            base_name,
+                                            topology_id,
+                                            nusers,
+                                            parameter_seed,
+                                            constrained,
+                                            length_slack,
+                                            two_stage,
+                                            user_parameter_mode,
+                                            local_spec,
+                                        )
+                                        push!(generated_here, generated)
+                                    end
                                 end
                             end
                         end
@@ -176,21 +182,25 @@ function _expand_hndp_generation_spec!(
                         for length_slack in length_slack_values
                             for competitor_cost_factor in competitor_cost_factor_values
                                 for decision_arc_count in decision_arc_counts
-                                    for user_parameter_mode in user_parameter_modes
-                                        !constrained && length_slack != first(length_slack_values) && continue
-                                        generated = _build_competition_generated_network(
-                                            base_name,
-                                            topology_id,
-                                            nusers,
-                                            parameter_seed,
-                                            constrained,
-                                            length_slack,
-                                            competitor_cost_factor,
-                                            user_parameter_mode,
-                                            spec;
-                                            decision_arc_count=decision_arc_count,
-                                        )
-                                        push!(generated_here, generated)
+                                    for availability_budget_fraction in availability_budget_fraction_values
+                                        for user_parameter_mode in user_parameter_modes
+                                            !constrained && length_slack != first(length_slack_values) && continue
+                                            local_spec = copy(spec)
+                                            local_spec["availability_budget_fraction"] = availability_budget_fraction
+                                            generated = _build_competition_generated_network(
+                                                base_name,
+                                                topology_id,
+                                                nusers,
+                                                parameter_seed,
+                                                constrained,
+                                                length_slack,
+                                                competitor_cost_factor,
+                                                user_parameter_mode,
+                                                local_spec;
+                                                decision_arc_count=decision_arc_count,
+                                            )
+                                            push!(generated_here, generated)
+                                        end
                                     end
                                 end
                             end
@@ -238,11 +248,16 @@ function _build_csp_generated_network(
         user_parameter_mode,
     )
     edgeA = [(src(e), dst(e)) for e in edges(graph)]
-    edge_price = Dict((src(e), dst(e)) => rand(MersenneTwister(parameter_seed + 10_000), 0:construction_cost) for e in edges(graph))
+    construction_cost_min = Int(get(spec, "construction_cost_min", 0))
+    construction_cost_max = Int(get(spec, "construction_cost_max", construction_cost))
+    construction_cost_min <= construction_cost_max ||
+        throw(ArgumentError("construction_cost_min must be <= construction_cost_max."))
+    availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(edgeA), spec)
+    edge_price = _sample_edge_prices(graph, parameter_seed + 10_000, construction_cost_min, construction_cost_max)
     instance = HNDPwC(graph, users, edgeA, edge_price, minweights)
 
     metadata = Dict{String,Any}(
-        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, two_stage=two_stage, user_parameter_mode=user_parameter_mode),
+        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, two_stage=two_stage, user_parameter_mode=user_parameter_mode, availability_budget_fraction=availability_budget_fraction),
         "instance_type" => "constrained_shortest_path",
         "objective_style" => "weighted",
         "topology_family" => topology_id,
@@ -254,6 +269,10 @@ function _build_csp_generated_network(
         "two_stage" => two_stage,
         "user_parameter_mode" => user_parameter_mode,
         "construction_cost" => construction_cost,
+        "construction_cost_min" => construction_cost_min,
+        "construction_cost_max" => construction_cost_max,
+        "availability_budget_fraction" => availability_budget_fraction,
+        "availability_budget_count" => availability_budget_count,
         "max_cost" => max_cost,
         "max_risk" => max_risk,
         "max_weight" => max_weight,
@@ -320,7 +339,10 @@ function _build_competition_generated_network(
     max_risk = Int(get(spec, "max_risk", 100))
     max_weight = Int(get(spec, "max_weight", 100))
     construction_cost = Int(get(spec, "construction_cost", 0))
-
+    construction_cost_min = Int(get(spec, "construction_cost_min", 0))
+    construction_cost_max = Int(get(spec, "construction_cost_max", construction_cost))
+    construction_cost_min <= construction_cost_max ||
+        throw(ArgumentError("construction_cost_min must be <= construction_cost_max."))
     if startswith(topology_id, "layered_")
         base_topology_id = topology_id[(findfirst('_', topology_id) + 1):end]
         base_graph = _load_named_base_graph(base_topology_id)
@@ -342,11 +364,12 @@ function _build_competition_generated_network(
             competitor_cost_factor,
             user_parameter_mode,
         )
-        edge_price = Dict((src(e), dst(e)) => rand(MersenneTwister(parameter_seed + 20_000), 0:construction_cost) for e in edges(graph))
+        availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(decision_arcs), spec)
+        edge_price = _sample_edge_prices(graph, parameter_seed + 20_000, construction_cost_min, construction_cost_max)
         instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
         metadata = Dict{String,Any}(
-            "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode),
+            "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, availability_budget_fraction=availability_budget_fraction),
             "instance_type" => "competition",
             "topology_family" => topology_id,
             "base_topology_family" => base_topology_id,
@@ -361,6 +384,10 @@ function _build_competition_generated_network(
             "competitor_cost_factor" => competitor_cost_factor,
             "user_parameter_mode" => user_parameter_mode,
             "construction_cost" => construction_cost,
+            "construction_cost_min" => construction_cost_min,
+            "construction_cost_max" => construction_cost_max,
+            "availability_budget_fraction" => availability_budget_fraction,
+            "availability_budget_count" => availability_budget_count,
             "max_cost" => max_cost,
             "max_risk" => max_risk,
             "max_weight" => max_weight,
@@ -389,11 +416,12 @@ function _build_competition_generated_network(
         competitor_cost_factor,
         user_parameter_mode,
     )
-    edge_price = Dict((src(e), dst(e)) => rand(MersenneTwister(parameter_seed + 20_000), 0:construction_cost) for e in edges(graph))
+    availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(decision_arcs), spec)
+    edge_price = _sample_edge_prices(graph, parameter_seed + 20_000, construction_cost_min, construction_cost_max)
     instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
     metadata = Dict{String,Any}(
-        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs)),
+        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction),
         "instance_type" => "competition",
         "topology_family" => topology_id,
         "base_topology_family" => topology_id,
@@ -408,6 +436,10 @@ function _build_competition_generated_network(
         "competitor_cost_factor" => competitor_cost_factor,
         "user_parameter_mode" => user_parameter_mode,
         "construction_cost" => construction_cost,
+        "construction_cost_min" => construction_cost_min,
+        "construction_cost_max" => construction_cost_max,
+        "availability_budget_fraction" => availability_budget_fraction,
+        "availability_budget_count" => availability_budget_count,
         "max_cost" => max_cost,
         "max_risk" => max_risk,
         "max_weight" => max_weight,
@@ -483,6 +515,38 @@ function _load_tntp_graph(file_path::String)
         add_edge!(graph, i, j)
     end
     return graph
+end
+
+function _sample_edge_prices(
+    graph::DiGraph,
+    seed::Int,
+    construction_cost_min::Int,
+    construction_cost_max::Int,
+)
+    rng = MersenneTwister(seed)
+    return Dict(
+        (src(e), dst(e)) => rand(rng, construction_cost_min:construction_cost_max) for e in edges(graph)
+    )
+end
+
+function _resolve_availability_budget(decision_arc_count::Int, spec::Dict{String,Any})
+    if haskey(spec, "availability_budget_fraction") && haskey(spec, "availability_budget_count")
+        throw(ArgumentError("Specify at most one of availability_budget_fraction and availability_budget_count in the instance spec."))
+    end
+
+    if haskey(spec, "availability_budget_count")
+        count = Int(spec["availability_budget_count"])
+        0 <= count <= decision_arc_count ||
+            throw(ArgumentError("availability_budget_count must lie between 0 and $(decision_arc_count)."))
+        fraction = decision_arc_count == 0 ? 0.0 : count / decision_arc_count
+        return fraction, count
+    end
+
+    fraction = Float64(get(spec, "availability_budget_fraction", 1.0))
+    0.0 <= fraction <= 1.0 ||
+        throw(ArgumentError("availability_budget_fraction must lie in [0, 1]."))
+    count = max(0, floor(Int, fraction * decision_arc_count))
+    return fraction, count
 end
 
 function parse_tntp_edges(file_path::String)
@@ -1047,6 +1111,7 @@ function _generated_name(
     two_stage=nothing,
     user_parameter_mode=nothing,
     decision_arc_count=nothing,
+    availability_budget_fraction=nothing,
 )
     parts = [
         base_name,
@@ -1058,6 +1123,7 @@ function _generated_name(
     length_slack !== nothing && push!(parts, "LS$(length_slack)")
     competitor_cost_factor !== nothing && push!(parts, "CCF$(competitor_cost_factor)")
     decision_arc_count !== nothing && push!(parts, "K$(decision_arc_count)")
+    availability_budget_fraction !== nothing && push!(parts, "B$(availability_budget_fraction)")
     two_stage !== nothing && push!(parts, two_stage ? "coop" : "bilevel")
     user_parameter_mode !== nothing && push!(parts, user_parameter_mode == "shared" ? "shared" : "peruser")
     return join(parts, "_")

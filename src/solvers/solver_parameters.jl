@@ -36,6 +36,17 @@ function should_debbug_print(param::SolverParam)
 end
 
 """
+    should_write_output_logs(param::SolverParam)
+
+Return true if solver-side output artifacts such as log files, exported models,
+and written solutions should be emitted.
+"""
+function should_write_output_logs(param::SolverParam)
+    stats = get_stats(param)
+    return Bool(get(stats.data, "enable_output_logs", true))
+end
+
+"""
     get_seed(param::SolverParam)
 
 Return the random seed that should be forwarded to the underlying solver. If a

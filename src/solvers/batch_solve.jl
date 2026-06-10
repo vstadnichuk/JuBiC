@@ -267,7 +267,7 @@ function _write_batch_summary_csv(output_folder_path::AbstractString, rows::Vect
         df[!, key] = [get(row, key, "") for row in rows]
     end
 
-    CSV.write(joinpath(output_folder_path, "batch_summary.csv"), df)
+    _atomic_write_batch_summary_csv(joinpath(output_folder_path, "batch_summary.csv"), df)
     return nothing
 end
 
@@ -281,11 +281,9 @@ function _append_batch_summary_csv!(csv_path::AbstractString, row::Dict{String,A
             value = get(row, key, "")
             df[!, key] = [isnothing(value) ? missing : value]
         end
-        CSV.write(
+        _atomic_write_batch_summary_csv(
             csv_path,
             df;
-            append=false,
-            writeheader=true,
             transform=(col, val) -> isnothing(val) ? missing : val,
         )
         return nothing
@@ -310,13 +308,151 @@ function _append_batch_summary_csv!(csv_path::AbstractString, row::Dict{String,A
     end
 
     combined = vcat(existing, new_row; cols=:union)
-    CSV.write(
+    _atomic_write_batch_summary_csv(
         csv_path,
         combined;
-        append=false,
-        writeheader=true,
         transform=(col, val) -> isnothing(val) ? missing : val,
     )
+    return nothing
+end
+
+function _atomic_write_batch_summary_csv(
+    csv_path::AbstractString,
+    df::DataFrames.AbstractDataFrame;
+    kwargs...,
+)
+    dir = dirname(csv_path)
+    mkpath(dir)
+
+    tmp_path = csv_path * ".tmp"
+    backup_path = csv_path * ".bak"
+
+    try
+        if isfile(tmp_path)
+            rm(tmp_path; force=true)
+        end
+
+        CSV.write(
+            tmp_path,
+            df;
+            append=false,
+            writeheader=true,
+            kwargs...,
+        )
+
+        _maybe_refresh_batch_summary_backup!(csv_path, backup_path)
+
+        mv(tmp_path, csv_path; force=true)
+        _maybe_write_batch_summary_snapshot!(csv_path)
+    catch err
+        if isfile(tmp_path)
+            try
+                rm(tmp_path; force=true, allow_delayed_delete=true)
+            catch
+            end
+        end
+        rethrow(err)
+    end
+    return nothing
+end
+
+const _BATCH_SUMMARY_BACKUP_REFRESH_SECONDS = 3600.0
+const _BATCH_SUMMARY_IMMUTABLE_SNAPSHOT_SECONDS = 24 * 3600.0
+
+function _maybe_refresh_batch_summary_backup!(csv_path::AbstractString, backup_path::AbstractString)
+    if !isfile(csv_path)
+        return nothing
+    end
+
+    if !_batch_summary_backup_due(backup_path)
+        return nothing
+    end
+
+    try
+        _copy_file_manual(csv_path, backup_path)
+    catch err
+        @warn "Could not refresh batch summary backup $(backup_path). Continuing without updating the backup. Error: $(sprint(showerror, err))"
+    end
+    return nothing
+end
+
+function _maybe_write_batch_summary_snapshot!(csv_path::AbstractString)
+    if !isfile(csv_path)
+        return nothing
+    end
+
+    if !_batch_summary_snapshot_due(csv_path)
+        return nothing
+    end
+
+    snapshot_path = _new_batch_summary_snapshot_path(csv_path)
+    try
+        _copy_file_manual(csv_path, snapshot_path)
+    catch err
+        @warn "Could not write immutable batch summary snapshot $(snapshot_path). Continuing without updating the snapshot history. Error: $(sprint(showerror, err))"
+    end
+    return nothing
+end
+
+function _batch_summary_backup_due(backup_path::AbstractString)
+    if !isfile(backup_path)
+        return true
+    end
+
+    age_seconds = time() - mtime(backup_path)
+    return age_seconds >= _BATCH_SUMMARY_BACKUP_REFRESH_SECONDS
+end
+
+function _batch_summary_snapshot_due(csv_path::AbstractString)
+    latest_snapshot = _latest_batch_summary_snapshot(csv_path)
+    if isnothing(latest_snapshot)
+        return true
+    end
+
+    age_seconds = time() - mtime(latest_snapshot)
+    return age_seconds >= _BATCH_SUMMARY_IMMUTABLE_SNAPSHOT_SECONDS
+end
+
+function _latest_batch_summary_snapshot(csv_path::AbstractString)
+    dir = dirname(csv_path)
+    prefix = _batch_summary_snapshot_prefix(basename(csv_path))
+    candidates = String[]
+
+    for entry in readdir(dir; join=true)
+        if isfile(entry) && startswith(basename(entry), prefix)
+            push!(candidates, entry)
+        end
+    end
+
+    isempty(candidates) && return nothing
+    return candidates[argmax(mtime.(candidates))]
+end
+
+function _new_batch_summary_snapshot_path(csv_path::AbstractString)
+    dir = dirname(csv_path)
+    stem, ext = splitext(basename(csv_path))
+    timestamp = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
+    return joinpath(dir, "$(stem)__snapshot_$(timestamp)$(ext)")
+end
+
+function _batch_summary_snapshot_prefix(base::AbstractString)
+    stem, _ = splitext(String(base))
+    return "$(stem)__snapshot_"
+end
+
+function _copy_file_manual(src::AbstractString, dst::AbstractString)
+    tmp_dst = String(dst) * ".tmpcopy"
+    if isfile(tmp_dst)
+        rm(tmp_dst; force=true)
+    end
+
+    open(src, "r") do in_io
+        open(tmp_dst, "w") do out_io
+            write(out_io, read(in_io))
+        end
+    end
+
+    mv(tmp_dst, dst; force=true)
     return nothing
 end
 
@@ -361,6 +497,7 @@ end
 function _build_solver_params(solver_name::AbstractString, config::Dict{String,Any})
     debbug_out = _get_bool(config, "debbug_out", false)
     output_folder_path = _required_string(config, "output_folder_path")
+    enable_output_logs = _get_bool(config, "enable_output_logs", true)
 
     if solver_name == "GBC"
         wrapper = _build_mip_solver_wrapper(config)
@@ -377,7 +514,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         integer_obj = _get_bool(config, "integer_obj", false)
         infinity_num = _get_number(config, "infinity_num", 1e9)
         g_round_digit = _get_int(config, "g_round_digit", 0)
-        return GBCparam(
+        param = GBCparam(
             wrapper,
             debbug_out,
             output_folder_path,
@@ -396,6 +533,8 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             g_round_digit,
             integer_obj,
         )
+        new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        return param
     elseif solver_name == "BLC"
         wrapper = _build_mip_solver_wrapper(config)
         file_format_output = _get_string(config, "file_format_output", "lp")
@@ -404,7 +543,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
         parallel_separation = _get_bool(config, "parallel_separation", true)
-        return BLCparam(
+        param = BLCparam(
             wrapper,
             debbug_out,
             output_folder_path,
@@ -416,6 +555,8 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             threads_sub_con,
             parallel_separation,
         )
+        new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        return param
     elseif solver_name == "BlCLag"
         wrapper = _build_mip_solver_wrapper(config)
         file_format_output = _get_string(config, "file_format_output", "lp")
@@ -427,7 +568,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         pareto = _parse_pareto_cut(get(config, "pareto", "OPT"))
         warmstart = _get_bool(config, "warmstart", true)
         infinity_num = _get_number(config, "infinity_num", 1e9)
-        return BlCLagparam(
+        param = BlCLagparam(
             wrapper,
             debbug_out,
             output_folder_path,
@@ -442,13 +583,15 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             warmstart,
             infinity_num,
         )
+        new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        return param
     elseif solver_name == "MIP"
         wrapper = _build_mip_solver_wrapper(config)
         file_format_output = _get_string(config, "file_format_output", "lp")
         runtime = _get_number(config, "runtime", 3600)
         seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
-        return MIPparam(
+        param = MIPparam(
             wrapper,
             debbug_out,
             output_folder_path,
@@ -458,9 +601,13 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             seed,
             threads_master,
         )
+        new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        return param
     elseif solver_name == "MibS"
         runtime = _get_number(config, "runtime", 3600)
-        return MibSparam(debbug_out, output_folder_path, runtime, RunStats())
+        param = MibSparam(debbug_out, output_folder_path, runtime, RunStats())
+        new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        return param
     end
 
     error("Unsupported inferred JuBiC solver '$(solver_name)'.")

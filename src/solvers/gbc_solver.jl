@@ -68,11 +68,15 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     end
 
     # configure solver logging before preprocessing and final export
-    try
+    if should_write_output_logs(param)
+        try
+            set_silent(master.model)
+            set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/gbc_mip_log.txt")
+        catch err 
+            @error "Could not set log file for folder $(param.output_folder_path). Error is $err"
+        end
+    else
         set_silent(master.model)
-        set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/gbc_mip_log.txt")
-    catch err 
-        @error "Could not set log file for folder $(param.output_folder_path). Error is $err"
     end
 
     # build the sub LPs for Benders subroutine 
@@ -80,13 +84,15 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "runtime_preprocessingGBC", runtime_init)
 
     # debug output: export the master only after preprocessing so stored subObj bounds match the live model
-    try
-        write_to_file(
-            master.model,
-            param.output_folder_path * "/master.$(param.file_format_output)",
-        )
-    catch err 
-        @error "Could not write model to file for folder $(param.output_folder_path). Error is $err"
+    if should_write_output_logs(param)
+        try
+            write_to_file(
+                master.model,
+                param.output_folder_path * "/master.$(param.file_format_output)",
+            )
+        catch err 
+            @error "Could not write model to file for folder $(param.output_folder_path). Error is $err"
+        end
     end
 
     # set time limit and number of threads
@@ -177,8 +183,10 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
                     new_stat!(param.stats, "Opt", mobj)
 
                     # print full MIP solution to file
-                    solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
-                    write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                    if should_write_output_logs(param)
+                        solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
+                        write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                    end
                 catch err
                     @warn "Could not read back the final GBC master incumbent after optimization: $(sprint(showerror, err))"
                     if haskey(param.stats.data, "GBCStatus")

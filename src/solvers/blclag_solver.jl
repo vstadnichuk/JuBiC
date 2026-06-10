@@ -52,14 +52,16 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     end
 
     # debbug output
-    try
-        write_to_file(
-            master.model,
-            param.output_folder_path * "/master.$(param.file_format_output)",
-        )
-        set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/blclag_mip_log.txt")
-    catch err 
-        @error "In BlCLagSolver, could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+    if should_write_output_logs(param)
+        try
+            write_to_file(
+                master.model,
+                param.output_folder_path * "/master.$(param.file_format_output)",
+            )
+            set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/blclag_mip_log.txt")
+        catch err 
+            @error "In BlCLagSolver, could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+        end
     end
 
     # build the sub LPs for Benders subroutine 
@@ -117,7 +119,9 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
 
                 # print full MIP solution to file
                 solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
-                write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                if should_write_output_logs(param)
+                    write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                end
             end
 
             # set status 

@@ -21,7 +21,11 @@ Solve the passed insatnce with our GBCSolver employing hierarchical decompositio
 - 'stats': The statitics collected while solving.
 """
 function solve_instance!(inst::Instance, params::GBCparam)
-    logger, io = new_file_logger(params.output_folder_path * "/debuglogGBC.txt", params.debbug_out)
+    logger, io = new_file_logger(
+        params.output_folder_path * "/debuglogGBC.txt",
+        params.debbug_out;
+        enable_output_logs=should_write_output_logs(params),
+    )
     try
         with_logger(logger) do
             solve_with_GBC!(inst, params)
@@ -46,7 +50,11 @@ Solve the passed insatnce with our BlCSolver employing Benders-like decompositio
 - 'stats': The statitics collected while solving.
 """
 function solve_instance!(inst::Instance, params::BLCparam)
-    logger, io = new_file_logger(params.output_folder_path * "/debuglogBLC.txt", params.debbug_out)
+    logger, io = new_file_logger(
+        params.output_folder_path * "/debuglogBLC.txt",
+        params.debbug_out;
+        enable_output_logs=should_write_output_logs(params),
+    )
     try
         with_logger(logger) do
             solve_with_BLC!(inst, params)
@@ -71,7 +79,11 @@ Solve the passed insatnce with our BlCLagSolver employing Benders-like decomposi
 - 'stats': The statitics collected while solving.
 """
 function solve_instance!(inst::Instance, params::BlCLagparam)
-    logger, io = new_file_logger(params.output_folder_path * "/debuglogBlCLag.txt", params.debbug_out)
+    logger, io = new_file_logger(
+        params.output_folder_path * "/debuglogBlCLag.txt",
+        params.debbug_out;
+        enable_output_logs=should_write_output_logs(params),
+    )
     try 
         with_logger(logger) do
             solve_with_BlCLag!(inst, params)
@@ -96,7 +108,11 @@ Solve the passed insatnce with our MIPsolver employing that just executes the un
 - 'stats': The statitics collected while solving.
 """
 function solve_instance!(inst::Instance, params::MIPparam)
-    logger, io = new_file_logger(params.output_folder_path * "/debuglogMIP.txt", params.debbug_out)
+    logger, io = new_file_logger(
+        params.output_folder_path * "/debuglogMIP.txt",
+        params.debbug_out;
+        enable_output_logs=should_write_output_logs(params),
+    )
     try 
         with_logger(logger) do
             solve_with_MIP!(inst, params)
@@ -121,7 +137,11 @@ Solve the passed instance with the MibS solver.
 - 'stats': The statitics collected while solving.
 """
 function solve_instance!(inst::Instance, params::MibSparam)
-    logger, io = new_file_logger(params.output_folder_path * "/debuglogMibS.txt", params.debbug_out)
+    logger, io = new_file_logger(
+        params.output_folder_path * "/debuglogMibS.txt",
+        params.debbug_out;
+        enable_output_logs=should_write_output_logs(params),
+    )
     try 
         with_logger(logger) do
             solve_with_MibS!(inst, params)

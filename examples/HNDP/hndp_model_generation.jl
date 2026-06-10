@@ -32,6 +32,40 @@ function _fix_non_decision_arcs!(model::JuMP.Model, xvars, decision_arcs)
     end
 end
 
+function _apply_hndp_availability_budget!(
+    model::JuMP.Model,
+    xvars,
+    decision_arcs;
+    availability_budget_fraction=nothing,
+    availability_budget_count=nothing,
+)
+    if !isnothing(availability_budget_fraction) && !isnothing(availability_budget_count)
+        throw(ArgumentError("Specify at most one of availability_budget_fraction and availability_budget_count."))
+    end
+    if isnothing(availability_budget_fraction) && isnothing(availability_budget_count)
+        return nothing
+    end
+
+    effective_count = if !isnothing(availability_budget_count)
+        Int(availability_budget_count)
+    else
+        fraction = Float64(availability_budget_fraction)
+        0.0 <= fraction <= 1.0 ||
+            throw(ArgumentError("availability_budget_fraction must lie in [0, 1]."))
+        max(0, floor(Int, fraction * length(decision_arcs)))
+    end
+
+    0 <= effective_count <= length(decision_arcs) ||
+        throw(ArgumentError("The effective availability budget $(effective_count) must lie between 0 and the number of decision arcs $(length(decision_arcs))."))
+
+    @constraint(
+        model,
+        sum(xvars[a] for a in decision_arcs) <= effective_count,
+        base_name = "availability_budget",
+    )
+    return effective_count
+end
+
 """
     build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH, subproblem_method=HNDP_SUBPROBLEM_MIP)
 
@@ -523,6 +557,10 @@ function _attach_hndp_model_size_metadata!(instance::Instance)
     return instance
 end
 
+function _hndp_hybrid_path_count_exceeds_flow_vars(path_count::Integer, all_arcs)::Bool
+    return path_count > length(all_arcs)
+end
+
 """
     build_hndp_hybrid_blc_instance(
         hndp,
@@ -545,6 +583,8 @@ Returns:
 - `enum_runtime`: wall-clock time spent in the parallel precomputation stage
 - `path_counts`: number of enumerated paths for each path-mode user
 - `fallback_users`: names of users that were added as BlC subproblems
+- `path_count_fallback_users`: names of users that fell back because their
+  path count exceeded the size of the arc-based fallback formulation
 """
 function build_hndp_hybrid_blc_instance(
     hndp::HNDPwC,
@@ -553,6 +593,9 @@ function build_hndp_hybrid_blc_instance(
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
     use_decision_arc_dominance::Bool=true,
+    fallback_if_paths_exceed_flow_vars::Bool=false,
+    availability_budget_fraction=nothing,
+    availability_budget_count=nothing,
 )
     subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_ASTAR) ||
         throw(ArgumentError("Unknown HNDP BlC subproblem method $(subproblem_method)."))
@@ -583,12 +626,20 @@ function build_hndp_hybrid_blc_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_availability_budget!(
+        hpr,
+        x,
+        hndp.edgeA;
+        availability_budget_fraction=availability_budget_fraction,
+        availability_budget_count=availability_budget_count,
+    )
 
     master_terms = Dict{String,Any}()
     sub_terms = Dict{String,Any}()
     subs = Any[]
     path_counts = Dict{String,Int}()
     fallback_users = String[]
+    path_count_fallback_users = String[]
 
     for user in hndp.users
         uname = string(user.uname)
@@ -600,23 +651,32 @@ function build_hndp_hybrid_blc_instance(
             end
 
             path_counts[uname] = length(result.paths)
-            leader_obj, follower_obj = _add_user_path_constraints!(
-                hpr,
-                user,
-                result.paths,
-                x;
-                add_strong_duality=true,
-            )
-            opt_l1 = @variable(hpr, base_name = "optL1_hybrid_blc_path_$(uname)")
-            opt_l2 = @variable(hpr, base_name = "optL2_hybrid_blc_path_$(uname)")
-            @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_hybrid_blc_path_$(uname)")
-            @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_blc_path_$(uname)")
-            master_terms[uname] = opt_l1
-            continue
+            if fallback_if_paths_exceed_flow_vars &&
+               _hndp_hybrid_path_count_exceeds_flow_vars(path_counts[uname], all_arcs)
+                push!(fallback_users, uname)
+                push!(path_count_fallback_users, uname)
+                @info "User $(user.uname) switches to the BlC fallback because $(path_counts[uname]) enumerated paths exceed the $(length(all_arcs)) arc-flow variables of the fallback formulation."
+            else
+                leader_obj, follower_obj = _add_user_path_constraints!(
+                    hpr,
+                    user,
+                    result.paths,
+                    x;
+                    add_strong_duality=true,
+                )
+                opt_l1 = @variable(hpr, base_name = "optL1_hybrid_blc_path_$(uname)")
+                opt_l2 = @variable(hpr, base_name = "optL2_hybrid_blc_path_$(uname)")
+                @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_hybrid_blc_path_$(uname)")
+                @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_blc_path_$(uname)")
+                master_terms[uname] = opt_l1
+                continue
+            end
         end
 
-        push!(fallback_users, uname)
-        @warn "Path enumeration reached the global deadline for user $(user.uname). Keeping this user as a BlC subproblem."
+        if !(uname in fallback_users)
+            push!(fallback_users, uname)
+            @warn "Path enumeration reached the global deadline for user $(user.uname). Keeping this user as a BlC subproblem."
+        end
 
         leader_obj, follower_obj, _ = _add_user_flow_constraints!(
             hpr,
@@ -655,7 +715,7 @@ function build_hndp_hybrid_blc_instance(
 
     enum_runtime = min(enumeration_time_limit, maximum((result.runtime for result in values(user_results)); init=0.0))
     @info "Finished generation of the hybrid BlC HNDP reformulation."
-    return Instance(master, subs), enum_runtime, path_counts, fallback_users
+    return Instance(master, subs), enum_runtime, path_counts, fallback_users, path_count_fallback_users
 end
 
 """
@@ -1008,6 +1068,8 @@ Returns:
 - `enum_runtime`: wall-clock time spent in the parallel precomputation stage
 - `path_counts`: number of enumerated paths for each path-mode user
 - `fallback_users`: names of users that were modeled with the fallback
+- `path_count_fallback_users`: names of users that fell back because their
+  path count exceeded the size of the arc-based fallback formulation
 """
 function build_hndp_hybrid_instance(
     hndp::HNDPwC,
@@ -1018,6 +1080,7 @@ function build_hndp_hybrid_instance(
     indicator_constraints::Bool=false,
     bound_duals::Bool=true,
     use_decision_arc_dominance::Bool=true,
+    fallback_if_paths_exceed_flow_vars::Bool=false,
 )
     _validate_hybrid_fallback_mode(fallback_mode)
     @info "Starting generation of the parallel hybrid HNDP reformulation."
@@ -1050,6 +1113,7 @@ function build_hndp_hybrid_instance(
     leader_terms = Dict{String,Any}()
     path_counts = Dict{String,Int}()
     fallback_users = String[]
+    path_count_fallback_users = String[]
     big_m_values = nothing
 
     for user in hndp.users
@@ -1062,21 +1126,30 @@ function build_hndp_hybrid_instance(
             end
 
             path_counts[uname] = length(result.paths)
-            leader_obj, follower_obj = _add_user_path_constraints!(
-                mip,
-                user,
-                result.paths,
-                x;
-                add_strong_duality=true,
-            )
-            opt_l2 = @variable(mip, base_name = "optL2_hybrid_path_$(uname)")
-            @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_path_$(uname)")
-            leader_terms[uname] = leader_obj
-            continue
+            if fallback_if_paths_exceed_flow_vars &&
+               _hndp_hybrid_path_count_exceeds_flow_vars(path_counts[uname], all_arcs)
+                push!(fallback_users, uname)
+                push!(path_count_fallback_users, uname)
+                @info "User $(user.uname) switches to the fallback formulation because $(path_counts[uname]) enumerated paths exceed the $(length(all_arcs)) arc-flow variables of the fallback formulation."
+            else
+                leader_obj, follower_obj = _add_user_path_constraints!(
+                    mip,
+                    user,
+                    result.paths,
+                    x;
+                    add_strong_duality=true,
+                )
+                opt_l2 = @variable(mip, base_name = "optL2_hybrid_path_$(uname)")
+                @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_path_$(uname)")
+                leader_terms[uname] = leader_obj
+                continue
+            end
         end
 
-        push!(fallback_users, uname)
-        @warn "Path enumeration reached the global deadline for user $(user.uname). Using fallback formulation $(fallback_mode) for this user."
+        if !(uname in fallback_users)
+            push!(fallback_users, uname)
+            @warn "Path enumeration reached the global deadline for user $(user.uname). Using fallback formulation $(fallback_mode) for this user."
+        end
 
         if isnothing(big_m_values)
             big_m_values = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
@@ -1107,7 +1180,7 @@ function build_hndp_hybrid_instance(
 
     enum_runtime = min(enumeration_time_limit, maximum((result.runtime for result in values(user_results)); init=0.0))
     @info "Finished generation of the parallel hybrid HNDP reformulation."
-    return Instance(MIPMaster(mip), nothing), enum_runtime, path_counts, fallback_users
+    return Instance(MIPMaster(mip), nothing), enum_runtime, path_counts, fallback_users, path_count_fallback_users
 end
 
 function _hndp_all_arcs(hndp::HNDPwC)

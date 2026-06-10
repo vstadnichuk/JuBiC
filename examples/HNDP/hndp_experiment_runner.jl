@@ -1,6 +1,7 @@
 using JuBiC
 using JSON
 using Dates
+using SHA
 
 include("hndp_model_generation.jl")
 
@@ -60,12 +61,11 @@ function run_hndp_experiments!(
                     continue
                 end
 
-                run_output_path = write_run_logs ?
-                    joinpath(output_root, "runs", experiment_id) :
-                    mktempdir()
-                if write_run_logs
-                    mkpath(run_output_path)
-                end
+                run_output_path = _allocate_hndp_run_output_path(
+                    output_root,
+                    experiment_id;
+                    write_run_logs=write_run_logs,
+                )
 
                 aggregate_row = Dict{String,Any}()
                 try
@@ -82,6 +82,7 @@ function run_hndp_experiments!(
                         model_spec,
                         param_spec,
                         run_output_path,
+                        write_run_logs,
                     )
                     results[experiment_id] = stats
                 catch err
@@ -99,7 +100,11 @@ function run_hndp_experiments!(
                     push!(completed_ids, experiment_id)
 
                     if !write_run_logs
-                        rm(run_output_path; recursive=true, force=true)
+                        try
+                            rm(run_output_path; recursive=true, force=true, allow_delayed_delete=true)
+                        catch err
+                            @warn "Could not immediately remove transient HNDP run folder $(run_output_path). Continuing. Error: $(sprint(showerror, err))"
+                        end
                     end
                 end
             end
@@ -118,6 +123,7 @@ function _maybe_export_hndp_solver_instance!(
     solver_wrapper = _build_hndp_mip_wrapper(param_spec)
     model_instance, _ = _build_hndp_model_from_spec(
         generated_network.instance,
+        generated_network.metadata,
         solver_wrapper,
         model_spec,
         param_spec,
@@ -142,19 +148,27 @@ function _run_hndp_experiment(
     model_spec::Dict{String,Any},
     param_spec::Dict{String,Any},
     run_output_path::AbstractString,
+    write_run_logs::Bool,
 )
     hndp = generated_network.instance
     solver_wrapper = _build_hndp_mip_wrapper(param_spec)
 
     model_instance, model_metadata = _build_hndp_model_from_spec(
         hndp,
+        generated_network.metadata,
         solver_wrapper,
         model_spec,
         param_spec,
     )
 
     solver_name = JuBiC._infer_solver_name(model_instance)
-    resolved_param_config = _resolve_hndp_param_config(param_spec, solver_name, run_output_path, model_metadata)
+    resolved_param_config = _resolve_hndp_param_config(
+        param_spec,
+        solver_name,
+        run_output_path,
+        model_metadata,
+        write_run_logs,
+    )
     params = JuBiC._build_solver_params(solver_name, resolved_param_config)
     stats = solve_instance!(model_instance, params)
 
@@ -170,6 +184,7 @@ end
 
 function _build_hndp_model_from_spec(
     hndp::HNDPwC,
+    instance_metadata::Dict{String,Any},
     solver_wrapper::SolverWrapper,
     model_spec::Dict{String,Any},
     param_spec::Dict{String,Any},
@@ -226,6 +241,7 @@ function _build_hndp_model_from_spec(
             solver_wrapper;
             enumeration_time_limit=enum_limit,
             parallelize=Bool(get(model_spec, "parallelize", false)),
+            use_decision_arc_dominance=Bool(get(model_spec, "use_decision_arc_dominance", true)),
         )
         remaining_runtime = max(total_runtime - enum_runtime, 0.0)
         metadata = Dict{String,Any}(
@@ -236,7 +252,7 @@ function _build_hndp_model_from_spec(
         return instance, metadata
     elseif model_type == "hybrid_sd"
         enum_limit = _effective_hndp_enumeration_limit(model_spec, total_runtime)
-        instance, enum_runtime, path_counts, fallback_users = build_hndp_hybrid_instance(
+        instance, enum_runtime, path_counts, fallback_users, path_count_fallback_users = build_hndp_hybrid_instance(
             hndp,
             solver_wrapper;
             enumeration_time_limit=enum_limit,
@@ -244,29 +260,39 @@ function _build_hndp_model_from_spec(
             big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
             indicator_constraints=Bool(get(model_spec, "indicator_constraints", false)),
             bound_duals=Bool(get(model_spec, "bound_duals", true)),
+            use_decision_arc_dominance=Bool(get(model_spec, "use_decision_arc_dominance", true)),
+            fallback_if_paths_exceed_flow_vars=Bool(get(model_spec, "fallback_if_paths_exceed_flow_vars", false)),
         )
         remaining_runtime = max(total_runtime - enum_runtime, 0.0)
         metadata = Dict{String,Any}(
             "enum_runtime" => enum_runtime,
             "path_counts" => path_counts,
             "fallback_users" => fallback_users,
+            "path_count_fallback_users" => path_count_fallback_users,
+            "path_count_fallback_user_count" => length(path_count_fallback_users),
             "runtime_override" => remaining_runtime,
         )
         return instance, metadata
     elseif model_type == "hybrid_blc"
         enum_limit = _effective_hndp_enumeration_limit(model_spec, total_runtime)
-        instance, enum_runtime, path_counts, fallback_users = build_hndp_hybrid_blc_instance(
+        instance, enum_runtime, path_counts, fallback_users, path_count_fallback_users = build_hndp_hybrid_blc_instance(
             hndp,
             solver_wrapper;
             enumeration_time_limit=enum_limit,
             big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
             subproblem_method=_parse_hndp_subproblem_method(get(model_spec, "subproblem_method", "mip")),
+            use_decision_arc_dominance=Bool(get(model_spec, "use_decision_arc_dominance", true)),
+            fallback_if_paths_exceed_flow_vars=Bool(get(model_spec, "fallback_if_paths_exceed_flow_vars", false)),
+            availability_budget_fraction=nothing,
+            availability_budget_count=get(instance_metadata, "availability_budget_count", nothing),
         )
         remaining_runtime = max(total_runtime - enum_runtime, 0.0)
         metadata = Dict{String,Any}(
             "enum_runtime" => enum_runtime,
             "path_counts" => path_counts,
             "fallback_users" => fallback_users,
+            "path_count_fallback_users" => path_count_fallback_users,
+            "path_count_fallback_user_count" => length(path_count_fallback_users),
             "runtime_override" => remaining_runtime,
         )
         return instance, metadata
@@ -289,10 +315,12 @@ function _resolve_hndp_param_config(
     solver_name::AbstractString,
     run_output_path::AbstractString,
     model_metadata::Dict{String,Any},
+    write_run_logs::Bool,
 )
     resolved = deepcopy(param_spec)
     resolved["solver"] = solver_name
     resolved["output_folder_path"] = String(run_output_path)
+    resolved["enable_output_logs"] = write_run_logs
     if haskey(model_metadata, "runtime_override")
         resolved["runtime"] = model_metadata["runtime_override"]
     end
@@ -396,11 +424,53 @@ end
 function _hndp_experiment_id(instance_name::String, model_spec::Dict{String,Any}, param_spec::Dict{String,Any})
     model_name = String(get(model_spec, "name", get(model_spec, "model_type", "model")))
     param_name = String(get(param_spec, "name", "params"))
-    return string(_slugify(instance_name), "__", _slugify(model_name), "__", _slugify(param_name))
+    instance_slug = _short_slug(instance_name, 32)
+    model_slug = _short_slug(model_name, 20)
+    param_slug = _short_slug(param_name, 20)
+    digest = bytes2hex(sha1(string(instance_name, "::", model_name, "::", param_name)))[1:12]
+    return string(instance_slug, "__", model_slug, "__", param_slug, "__", digest)
+end
+
+function _allocate_hndp_run_output_path(
+    output_root::AbstractString,
+    experiment_id::AbstractString;
+    write_run_logs::Bool,
+)
+    runs_root = joinpath(String(output_root), "runs")
+    target_path = write_run_logs ?
+        joinpath(runs_root, String(experiment_id)) :
+        joinpath(runs_root, "_transient", String(experiment_id))
+
+    try
+        mkpath(target_path)
+        return target_path
+    catch err
+        @warn "Could not create HNDP run folder $(target_path). Error: $(sprint(showerror, err)). Falling back to $(runs_root)."
+    end
+
+    try
+        mkpath(runs_root)
+        return runs_root
+    catch err
+        @warn "Could not create fallback HNDP run folder $(runs_root). Error: $(sprint(showerror, err)). Falling back to $(output_root)."
+    end
+
+    if isdir(String(output_root))
+        @warn "Could not create a dedicated HNDP run folder under $(runs_root). Logging will use the explicit output root $(output_root)."
+        return String(output_root)
+    end
+
+    error("Could not allocate an HNDP run output folder under $(output_root).")
 end
 
 function _slugify(text::AbstractString)
     return replace(lowercase(String(text)), r"[^a-z0-9]+" => "_")
+end
+
+function _short_slug(text::AbstractString, max_len::Int)
+    slug = strip(_slugify(text), '_')
+    isempty(slug) && return "x"
+    return first(slug, min(max_len, ncodeunits(slug)))
 end
 
 function _parse_hndp_big_m_mode(value)
@@ -429,6 +499,6 @@ end
 
 function _build_hndp_mip_wrapper(param_spec::Dict{String,Any})
     mip_solver = String(get(param_spec, "mip_solver", "Gurobi"))
-    mip_solver == "Gurobi" || throw(ArgumentError("Unsupported HNDP mip_solver '$(mip_solver)'."))
+    mip_solver == "Gurobi" || throw(ArgumentError("Unsupported HNDP mip_solver '$(mip_solver)'."))    
     return GurobiSolver()
 end
