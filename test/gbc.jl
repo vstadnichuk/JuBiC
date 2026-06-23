@@ -1,5 +1,7 @@
 using JuBiC, JuMP, Gurobi, BilevelJuMP
-import JuBiC: ConSubsolCut, ConnectorLP, SubSolution, SubSolver, genBenders_cut!
+import JuBiC: ConSubsolCut, ConnectorLP, SubSolution, SubSolver, genBenders_cut!,
+    _compute_opt_cut_blc_g_coefficients, _compute_opt_cut_k_coefficients,
+    _sanitize_nonnegative_opt_cut_coefficient
 
 const GBC_TEST_OBJ_ATOL = 2e-4
 
@@ -187,6 +189,7 @@ function test_gbc_simple_bilevel()
         "lp",
         PARETO_OPTIMALITY_ONLY,
     )
+    parameter.stats.data["enable_output_logs"] = true
 
     mkpath(logging_folder * "/gbc_simple_bilevel")
     stats = solve_instance!(model, parameter)
@@ -216,6 +219,7 @@ function test_gbc_solver_instance_io_roundtrip()
         "lp",
         PARETO_OPTIMALITY_ONLY,
     )
+    parameter.stats.data["enable_output_logs"] = true
 
     stats = solve_instance!(imported, parameter)
     @test haskey(stats.data, "Opt")
@@ -292,6 +296,7 @@ function test_gbc_feasibility_cuts()
         "lp",
         PARETO_OPTIMALITY_ONLY,
     )
+    parameter.stats.data["enable_output_logs"] = true
 
     mkpath(gbc_logging_folder)
     stats = solve_instance!(model, parameter)
@@ -396,6 +401,7 @@ function test_gbc_two_follower()
         "lp",
         PARETO_OPTIMALITY_ONLY,
     )
+    parameter.stats.data["enable_output_logs"] = true
 
     mkpath(logging_folder * "/gbc_two_follower")
     stats = solve_instance!(model, parameter)
@@ -459,8 +465,89 @@ function test_gbc_duplicate_cut_numerical_guard()
     @test isempty(connector.numeric_state)
 end
 
+function test_gbc_opt_cut_coefficient_refactor_helpers()
+    A = [1, 2]
+
+    master = Model(optimizer)
+    @variable(master, x[A], Bin)
+    link_vars = Dict(a => x[a] for a in A)
+
+    sub_model = Model(optimizer)
+    set_silent(sub_model)
+    sub_solver = MockNumericDuplicateSubSolver("SubCoeffHelper", sub_model, A)
+
+    connector_lp = Model(optimizer)
+    set_silent(connector_lp)
+    @variable(connector_lp, s)
+    @variable(connector_lp, k[A] >= 0)
+    @variable(connector_lp, g >= 0)
+
+    connector = ConnectorLP(
+        connector_lp,
+        A,
+        link_vars,
+        sub_solver,
+        0.0,
+        nothing,
+        ConSubsolCut[],
+        0,
+        Dict{Symbol,Any}(),
+    )
+
+    parameter = GBCparam(
+        GurobiSolver(),
+        false,
+        mktempdir(),
+        "lp",
+        PARETO_NONE,
+        60.0,
+    )
+    parameter.stats.data["enable_output_logs"] = true
+    parameter = GBCparam(
+        parameter.solver,
+        parameter.debbug_out,
+        parameter.output_folder_path,
+        parameter.file_format_output,
+        parameter.stats,
+        parameter.runtime,
+        parameter.seed,
+        parameter.threads_master,
+        parameter.threads_sub_con,
+        parameter.parallel_separation,
+        parameter.pareto,
+        parameter.warmstart,
+        parameter.bigMwithLC,
+        true,
+        parameter.infinity_num,
+        parameter.g_round_digit,
+        parameter.integer_obj,
+        parameter.pareto_band_tolerance,
+        parameter.blc_pareto_band_tolerance,
+    )
+    parameter.stats.data["enable_output_logs"] = true
+
+    kvals = Dict(1 => 10.0, 2 => 3.0)
+    k_coeffs = _compute_opt_cut_k_coefficients(connector, kvals, 7.0, parameter)
+    @test k_coeffs[1] == 7.0
+    @test k_coeffs[2] == 3.0
+
+    blc_g_coeffs = _compute_opt_cut_blc_g_coefficients(
+        connector,
+        Dict(1 => 5.0, 2 => 1.0),
+        2.0,
+        7.0,
+        parameter,
+    )
+    @test blc_g_coeffs[1] == 7.0
+    @test blc_g_coeffs[2] == 2.0
+
+    @test _sanitize_nonnegative_opt_cut_coefficient(-1e-10, "test", connector) == 0.0
+    @test_throws ArgumentError _sanitize_nonnegative_opt_cut_coefficient(-1.0, "test", connector)
+end
+
 test_gbc_simple_bilevel()
 test_gbc_solver_instance_io_roundtrip()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
 test_gbc_duplicate_cut_numerical_guard()
+test_gbc_opt_cut_coefficient_refactor_helpers()

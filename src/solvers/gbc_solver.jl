@@ -359,6 +359,13 @@ function _local_gbc_param(params::GBCparam)
     )
 end
 
+function _format_parallel_gbc_task_error(subname::AbstractString, err, bt)
+    io = IOBuffer()
+    print(io, "Parallel GBC separator failed for subproblem ", subname, ". ")
+    showerror(io, err, bt)
+    return String(take!(io))
+end
+
 function _merge_parallel_gbc_stats!(target::RunStats, local_stats::RunStats)
     for key in ("ConnectorLPTimeLP", "ConnectorLPTimePricing", "ConnectorLPTimePareto", "ConnectorLPIterations")
         if haskey(local_stats.data, key)
@@ -454,6 +461,8 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
             end
 
             results = Vector{Any}(undef, length(pending))
+            task_errors = Vector{Any}(undef, length(pending))
+            fill!(task_errors, nothing)
             if parameter.parallel_separation && length(pending) > 1
                 sem = Base.Semaphore(get(parameter.stats.data, "parallel_connector_workers_used", 1))
                 @sync for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
@@ -476,10 +485,25 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             end
                             base_result = result_ref[]
                             results[res_idx] = (; base_result..., cuttime=cuttime)
+                        catch err
+                            task_errors[res_idx] = (
+                                subname=subname,
+                                current_subobj=current_subobj,
+                                err=err,
+                                bt=stacktrace(catch_backtrace()),
+                            )
                         finally
                             Base.release(sem)
                         end
                     end
+                end
+
+                failures = [failure for failure in task_errors if !isnothing(failure)]
+                if !isempty(failures)
+                    for failure in failures
+                        @error _format_parallel_gbc_task_error(failure.subname, failure.err, failure.bt)
+                    end
+                    throw(first(failures).err)
                 end
             else
                 for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)

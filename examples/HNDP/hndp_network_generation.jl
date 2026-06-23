@@ -38,8 +38,12 @@ The current implementation supports two logical instance types:
 - `"competition"`: either
   - a two-layer competitive HNDP network when the topology id starts with
     `"layered_"`, or
-  - a single-layer competitive HNDP network with a sampled set of decision arcs
-    otherwise
+  - a single-layer network with a sampled set of decision arcs otherwise.
+    The single-layer variant currently supports two arc modes:
+    - `"competition"`: sampled decision arcs receive the `beta` cost scaling and
+      only those arcs contribute operator risk
+    - `"decision_only"`: sampled decision arcs are only the controllable arcs;
+      no `beta` scaling is applied and operator risk remains on all arcs
 
 For each entry in `instances`, the generator builds the Cartesian product of the
 declared parameter values and the selected parameter seeds. Different topology
@@ -334,6 +338,7 @@ function _build_competition_generated_network(
     decision_arc_count::Int=-1,
 )
     _validate_user_parameter_mode(user_parameter_mode)
+    single_layer_arc_mode = _parse_single_layer_arc_mode(get(spec, "single_layer_arc_mode", "competition"))
 
     max_cost = Int(get(spec, "max_cost", 100))
     max_risk = Int(get(spec, "max_risk", 100))
@@ -403,29 +408,44 @@ function _build_competition_generated_network(
     graph = base_graph
     decision_arcs = _sample_decision_arcs(graph, parameter_seed, decision_arc_count)
 
-    users, minweights = _build_single_layer_competition_users(
-        graph,
-        nusers,
-        parameter_seed,
-        constrained,
-        length_slack,
-        max_cost,
-        max_risk,
-        max_weight,
-        decision_arcs,
-        competitor_cost_factor,
-        user_parameter_mode,
-    )
+    users, minweights = if single_layer_arc_mode == "competition"
+        _build_single_layer_competition_users(
+            graph,
+            nusers,
+            parameter_seed,
+            constrained,
+            length_slack,
+            max_cost,
+            max_risk,
+            max_weight,
+            decision_arcs,
+            competitor_cost_factor,
+            user_parameter_mode,
+        )
+    else
+        _build_single_layer_decision_only_users(
+            graph,
+            nusers,
+            parameter_seed,
+            constrained,
+            length_slack,
+            max_cost,
+            max_risk,
+            max_weight,
+            user_parameter_mode,
+        )
+    end
     availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(decision_arcs), spec)
     edge_price = _sample_edge_prices(graph, parameter_seed + 20_000, construction_cost_min, construction_cost_max)
     instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
     metadata = Dict{String,Any}(
-        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction),
+        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction, single_layer_arc_mode=single_layer_arc_mode),
         "instance_type" => "competition",
         "topology_family" => topology_id,
         "base_topology_family" => topology_id,
-        "competition_graph_style" => "single_layer_k",
+        "competition_graph_style" => "single_layer_k_" * single_layer_arc_mode,
+        "single_layer_arc_mode" => single_layer_arc_mode,
         "layered_instance" => false,
         "nusers" => nusers,
         "parameter_seed" => parameter_seed,
@@ -456,6 +476,14 @@ function _required_string(cfg::Dict{String,Any}, key::String)
     value = cfg[key]
     value isa String || throw(ArgumentError("Config entry '$key' must be a string."))
     return value
+end
+
+function _parse_single_layer_arc_mode(value)
+    mode = lowercase(String(value))
+    if mode == "competition" || mode == "decision_only"
+        return mode
+    end
+    throw(ArgumentError("Unsupported single_layer_arc_mode '$value'. Supported values are 'competition' and 'decision_only'."))
 end
 
 function _int_vector(value, key::String)
@@ -756,7 +784,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=true,
+            negative_risk=false,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
@@ -778,9 +806,64 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=true,
+            negative_risk=false,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
+        user_weight = constrained ? rweight : nothing
+        user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+        bound = _compute_weight_bound(user_minweights, origin, destination, length_slack, nv(graph) * max_weight)
+        push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
+    end
+    _validate_users_reachable!(graph, users)
+    return users, nothing
+end
+
+function _build_single_layer_decision_only_users(
+    graph::DiGraph,
+    nusers::Int,
+    seed::Int,
+    constrained::Bool,
+    length_slack,
+    max_cost::Int,
+    max_risk::Int,
+    max_weight::Int,
+    user_parameter_mode::String,
+)
+    rng = MersenneTwister(seed)
+    users = User[]
+    feasible_targets = _feasible_od_targets(graph)
+
+    if user_parameter_mode == "shared"
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=true,
+        )
+        user_weight = constrained ? rweight : nothing
+        minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        for user_id in 1:nusers
+            origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+            bound = _compute_weight_bound(minweights, origin, destination, length_slack, nv(graph) * max_weight)
+            push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
+        end
+        _validate_users_reachable!(graph, users)
+        return users, minweights
+    end
+
+    for user_id in 1:nusers
+        user_seed = seed + 1000 * user_id
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            user_seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=true,
+        )
         user_weight = constrained ? rweight : nothing
         user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
         origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
@@ -1112,6 +1195,7 @@ function _generated_name(
     user_parameter_mode=nothing,
     decision_arc_count=nothing,
     availability_budget_fraction=nothing,
+    single_layer_arc_mode=nothing,
 )
     parts = [
         base_name,
@@ -1123,6 +1207,9 @@ function _generated_name(
     length_slack !== nothing && push!(parts, "LS$(length_slack)")
     competitor_cost_factor !== nothing && push!(parts, "CCF$(competitor_cost_factor)")
     decision_arc_count !== nothing && push!(parts, "K$(decision_arc_count)")
+    if decision_arc_count !== nothing && single_layer_arc_mode !== nothing
+        push!(parts, single_layer_arc_mode == "competition" ? "KCOMP" : "KDEC")
+    end
     availability_budget_fraction !== nothing && push!(parts, "B$(availability_budget_fraction)")
     two_stage !== nothing && push!(parts, two_stage ? "coop" : "bilevel")
     user_parameter_mode !== nothing && push!(parts, user_parameter_mode == "shared" ? "shared" : "peruser")
