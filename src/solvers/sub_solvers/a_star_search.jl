@@ -34,6 +34,18 @@ CostStructure(cost_state::AStarCostState) =
     error("Cost structure lacking ConnectorLP parameters") :
     CostStructure(cost_state, -1, -1, Dict())
 
+"""
+    validate_nonnegative_arc_costs(sol::AStarSolver, xmapping, cs::CostStructure, params::SolverParam)
+
+Optional hook for A*-based subsolvers to reject objective configurations with
+negative transition costs before the labeling search starts. The default
+implementation does nothing because generic JuBiC subsolvers may not expose a
+finite arc set that can be screened cheaply.
+"""
+function validate_nonnegative_arc_costs(sol::AStarSolver, xmapping, cs::CostStructure, params::SolverParam)
+    return nothing
+end
+
 
 ########## Wrapper functions for A*-search algorithm ##########
 
@@ -448,6 +460,7 @@ Prepare and execute the labeling algorithm for the A*-search.
 """
 function run_astar(sol::AStarSolver, xmapping, cs::CostStructure, params::SolverParam, time_limit)
     prepare(sol.structure, cs, params)
+    validate_nonnegative_arc_costs(sol, xmapping, cs, params)
     neighborhood(x) = neighbours_w(x, xmapping, sol.structure, params)
     heuristicf(x, g) = heuristic_w(x, g, xmapping, sol.structure, cs, params)
     costf(x, y) = cost_w(x, y, sol.structure, cs, params)
