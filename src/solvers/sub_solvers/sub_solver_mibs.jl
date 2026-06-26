@@ -512,7 +512,8 @@ end
 
 function _solve_mip(sol::SubSolverMiBS, printlog::Bool, time_limit::Real)
     @debug "Starting MiBS subsolver $(sol.name)"
-    return mktempdir() do path
+    path = repo_local_tempdir("mibs_subsolver", _mibs_safe_name(sol.name); prefix="mibs_sub")
+    try
         mps_filename = joinpath(path, "model.mps")
         aux_filename = joinpath(path, "model.aux")
         new_model, variables, objective, constraints, sense =
@@ -540,10 +541,12 @@ function _solve_mip(sol::SubSolverMiBS, printlog::Bool, time_limit::Real)
         end
         if printlog
             print(output)
-            cp(mps_filename, "model.mps"; force=true)
-            cp(aux_filename, "model.aux"; force=true)
-            write("mibs_output.txt", output)
-            write("mibs_errors.txt", err)
+            debug_dir = repo_local_tempdir("mibs_subsolver_logs", _mibs_safe_name(sol.name); prefix="mibs_log")
+            cp(mps_filename, joinpath(debug_dir, "model.mps"); force=true)
+            cp(aux_filename, joinpath(debug_dir, "model.aux"); force=true)
+            write(joinpath(debug_dir, "mibs_output.txt"), output)
+            write(joinpath(debug_dir, "mibs_errors.txt"), err)
+            @info "Stored MiBS subsolver debug files for $(sol.name) in $(debug_dir)."
         end
 
         return _parse_mibs_output_local(
@@ -553,5 +556,7 @@ function _solve_mip(sol::SubSolverMiBS, printlog::Bool, time_limit::Real)
             sol.lower_name_map,
             sol.upper_name_map,
         )
+    finally
+        rm(path; force=true, recursive=true)
     end
 end

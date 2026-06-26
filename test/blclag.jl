@@ -1,6 +1,9 @@
 using JuBiC, JuMP, Gurobi, BilevelJuMP
 import JuBiC: ConnectorLP_BlC, SubSolution, SubSolver, genBenderslike_cut!
 
+_blclag_test_tempdir() = JuBiC.repo_local_tempdir("tests", "blclag"; prefix="blclag_test")
+const mktempdir = _blclag_test_tempdir
+
 mutable struct MockBlCParetoFallbackSubSolver <: SubSolver
     name::String
     mip_model::Model

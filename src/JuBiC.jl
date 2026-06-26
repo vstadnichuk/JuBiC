@@ -44,6 +44,6 @@ export solve_batch!
 export output_GBC_solver_instance, read_GBC_solver_instance
 export AStarCostState, MASTER_LEVEL, SUB_PROBLEM_LEVEL, CONNECTOR_BASED
 export ParetoCut, PARETO_NONE, PARETO_OPTIMALITY_ONLY, PARETO_OPTIMALITY_AND_FEASIBILITY
-export create_folder_if_not_exists, init_logging_folder, print_stats_to_csv, stats_to_dataframe, collect_all_keys
+export create_folder_if_not_exists, init_logging_folder, print_stats_to_csv, stats_to_dataframe, collect_all_keys, repo_root_path, scoped_local_tempdir, repo_local_tempdir
 
 end

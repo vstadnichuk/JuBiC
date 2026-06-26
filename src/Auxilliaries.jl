@@ -48,6 +48,45 @@ function new_file_logger(filepath, print_debug; enable_output_logs::Bool=true)
 end
 
 """
+    repo_root_path()
+
+Return the JuBiC repository root path.
+"""
+repo_root_path() = normpath(joinpath(@__DIR__, ".."))
+
+"""
+    scoped_local_tempdir(parent::AbstractString; prefix="tmp")
+
+Create a unique temporary directory under the explicitly provided `parent`
+directory. The directory is created immediately and returned as an absolute
+path.
+"""
+function scoped_local_tempdir(parent::AbstractString; prefix::AbstractString="tmp")
+    mkpath(parent)
+    while true
+        candidate = tempname(parent)
+        candidate_dir = dirname(candidate)
+        basename_prefix = string(prefix, "_", basename(candidate))
+        candidate = joinpath(candidate_dir, basename_prefix)
+        if !ispath(candidate)
+            mkdir(candidate)
+            return candidate
+        end
+    end
+end
+
+"""
+    repo_local_tempdir(parts...; prefix="tmp")
+
+Create a unique temporary directory under the repo-local temp root
+`<repo>/tmp/jubic_temp/...`.
+"""
+function repo_local_tempdir(parts::AbstractString...; prefix::AbstractString="tmp")
+    parent = joinpath(repo_root_path(), "tmp", "jubic_temp", parts...)
+    return scoped_local_tempdir(parent; prefix=prefix)
+end
+
+"""
     capped_nthreads(n)
 
 Cap a requested thread count to the number of threads available on the current

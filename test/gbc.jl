@@ -4,6 +4,8 @@ import JuBiC: ConSubsolCut, ConnectorLP, SubSolution, SubSolver, genBenders_cut!
     _sanitize_nonnegative_opt_cut_coefficient
 
 const GBC_TEST_OBJ_ATOL = 2e-4
+_gbc_test_tempdir() = JuBiC.repo_local_tempdir("tests", "gbc"; prefix="gbc_test")
+const mktempdir = _gbc_test_tempdir
 
 mutable struct MockNumericDuplicateSubSolver <: SubSolver
     name::String
