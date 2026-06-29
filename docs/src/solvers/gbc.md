@@ -1,75 +1,171 @@
-# Generalized Benders Cut (GBC)
+# Generalized Benders Cuts (`GBC`)
 
-This is the hierarchical decomposition method for solving as described in the [preprint](https://optimization-online.org/?p=28877) and the major part of the implementation of the `JuBiC` package. It is a branch-and-cut method that iteratively generates second-level feasibility and optimality cuts, after solving the first-level problem.
+`GBC` is JuBiC's native generalized Benders decomposition solver. Technical
+details of the method are described in
+[Stadnichuk and Koster](https://optimization-online.org/?p=28877).
 
+## Mathematical Structure
 
-## Master Type
+For a first-level solution `x`, follower `k` solves its own lower-level problem
 
-The `Master` type the following fields:
-
-- `model`: The JuMP model representing the master problem
-- `A`: The set of shared resources between the first-level and second-level problems
-- `link_vars`: A dictionary mapping each shared resource to its corresponding first-level linking variable
-- `sub_name`: The names of the second-level problems
-- `partial_decomposition`: Either `nothing` or a function
-- `objL2`: A dictionary mapping each second-level problem name to its objective function
-
-The `Master` type can be constructed using the following constructor:
-
-```julia
-Master(model, A, link_vars, sub_name)
-Master(model, A, link_vars, sub_name, partial_decomposition)
-Master(model, A, link_vars, sub_name, partial_decomposition, objL2)
+```math
+\min\{ f_k(y) : y \in Y_k,\; y_a \le x_a \ \forall a \in A \}.
 ```
 
+The contribution of follower `k` to the first-level objective is then evaluated
+only over lower-level optimal solutions:
+
+```math
+\varphi_k(x) =
+\min\{ r_k(y) :
+    y \in \arg\min\{ f_k(z) : z \in Y_k(x) \}
+\}.
+```
+
+The first-level problem solved by `GBC` can therefore be written as
+
+```math
+\begin{aligned}
+\min_x\quad & F(x) + \sum_{k \in \mathcal{K}} \varphi_k(x) \\
+\text{s.t.}\quad & x \in X \subseteq \{0,1\}^{|A|}.
+\end{aligned}
+```
+
+## Lazy Cut Structure
+
+The core idea of `GBC` is to approximate each unknown value function ``\varphi_k``
+from below by linear constraints in the first-level variables. The master
+contains one auxiliary variable `subObj[k]` per follower and lazy cuts enforce
+increasingly tight lower bounds on these variables.
+
+If the current first-level solution is feasible for follower `k`, `GBC`
+generates an optimality cut. These cuts generalize
+[Lagrangian cuts](https://doi.org/10.1007/s10107-018-1249-5) to the bilevel
+setting and are added as linear constraints of the form
+
+```math
+\alpha_k + \sum_{a \in A} \beta_{ka} x_a \le \text{subObj}_k,
+```
+
+where the coefficients define a generated linear expression in the first-level
+linking variables.
+
+If the current first-level solution is infeasible for a follower, `GBC`
+generates a feasibility cut to cut off this master solution. These are
+automatically generated
+[combinatorial Benders cuts](https://doi.org/10.1007/978-3-540-25960-2_14)
+in the first-level variables.
+They are added as linear constraints of the form
+
+```math
+\gamma + \sum_{a \in A} \delta_a x_a \ge 1.
+```
+
+## Master Representation Used by `GBC`
+
+The first level is passed as a JuMP model through `Master`.
+
+Important inputs are:
+
+- `model`: the JuMP model containing the first-level variables, constraints, and the direct first-level objective term `F(x)`.
+- `A`: the set over which the binary linking variables are defined.
+- `link_vars`: a dictionary mapping each `a in A` to the corresponding first-level variable `x_a`.
+- `sub_names`: names of the follower subproblems; these names are used to match master-side objects with subsolver objects.
+- `objL2`: optional expressions for the lower-level objective contribution in the master representation, when this information is available and useful to the solver.
+- `partial_decomposition`: optional callback for adding additional master-side variables or constraints when only part of the follower structure is decomposed.
+
+The master model should contain the first-level structure only. The follower
+value functions are represented through the generated lazy cuts.
+
+## Compatible Subsolvers
+
+`GBC` is decomposition-based, so one
+[subsolver](../sub_solvers.md) is required for each follower. The currently
+implemented supported subsolvers are:
+
+- `SubSolverJuMP`
+- `SubSolverMiBS`
+- `AStarSolver`
 
 ## Solver Parameters
 
-The GBC solver accepts the following parameters:
+`GBC` is configured with `GBCparam`. The most relevant inputs are:
 
-- `solver`: The optimization solver to be used
-- `debbug_out`: Boolean flag to enable or disable the debug output
-- `output_folder_path`: The path to the output directory
-- `file_format_output`: The format of the output files (e.g., "lp", "mps")
-- `stats`: The runtime statistics (default: `JuBiC.RunStats()`)
-- `runtime`: The maximum allowed runtime for the solver (in seconds) (default: 3600)
-- `threads_master`: Number of threads for the master problem (default: 8)
-- `threads_sub_con`: Number of threads for the subproblems (default: 8)
-- `pareto`: The setting for the pareto cuts to be used (default: `JuBiC.PARETO_OPTIMALITY_ONLY`). Possible values are:
-    - `PARETO_NONE`: No pareto cuts are generated
-    - `PARETO_OPTIMALITY_ONLY`: Only pareto optimality cuts are generated
-    - `PARETO_OPTIMALITY_AND_FEASIBILITY`: Both pareto optimality cuts and pareto feasibility cuts are generated
-- `warmstart`: Boolean flag to enable or disable warmstart in ConnectorLP (if false, ConnectorLP is reset at each iteration) (default: true)
-- `bigMwithLC`: Boolean flag to enable or disable BlC cuts (default: false)
-- `trim_coeff`: Boolean flag that determines whether to apply coefficient trimming optimization. When set to `true`, the solver uses bounds on cut coefficients to also trim k-coefficients and big M values generated from BlC coefficients (default: false)
-- `infinity_num`: The value used to represent infinity in the solver (default: 1e9)
-- `g_round_digit`: The number of digits to round the coefficients in the solver (default: 0)
+- `solver`: the MIP solver wrapper used for the master problem and auxiliary JuMP models.
+- `debbug_out`: whether instance-level debug artifacts should be written.
+- `output_folder_path`: output directory used when output logs are enabled.
+- `file_format_output`: file format used for exported JuMP models, for example `"lp"` or `"mps"`.
+- `pareto`: Pareto-cut mode, for example `PARETO_OPTIMALITY_ONLY`.
+- `runtime`: runtime limit in seconds.
+- `warmstart`: whether connector state is reused across callback solves.
+- `bigMwithLC`: whether BlC-style subroutines are used to strengthen some GBC coefficients.
+- `trim_coeff`: whether generated coefficients are trimmed by available bounds.
 
-The parameters can be set using one of the following constructors:
+Additional constructor variants expose seed, thread, and numerical-tolerance
+settings; see [Core API Reference](../solver_api.md).
 
-```julia
-GBCparam(solver, debbug_out, output_folder_path, file_format_output)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, stats, runtime, threads_master, threads_sub_con, pareto, warmstart, bigMwithLC, trim_coeff, infinity_num, g_round_digit)
+## Minimal Working Example
+
+The following example is the simple unit-test bilevel problem used in
+`test/gbc.jl`.
+
+```math
+\begin{aligned}
+\min_{x_1,x_2,y_1,y_2}\quad & x_1 - x_2 + 10 y_2 \\
+\text{s.t.}\quad & x_1, x_2 \in \{0,1\}, \\
+& (y_1, y_2) \in \arg\min \Big\{-y_1 - y_2 : \\
+& \qquad y_1 \le x_1, \\
+& \qquad y_2 \le x_2, \\
+& \qquad y_1 = 1, \\
+& \qquad y_1, y_2 \in \{0,1\}\Big\}.
+\end{aligned}
 ```
 
+```julia
+using JuBiC
+using JuMP
 
-## Solver Output Statistics
+function build_gbc_example()
+    solver = GurobiSolver()
+    optimizer = () -> get_next_optimizer(solver)
 
-- `Solver`: 'GBCSolver' the name of the solver used
-- `time_limit`: The time limit set for the solver
-- `NSub`: The number of second-level problems
-- `NFeasCuts`: The number of feasibility cuts generated
-- `NOptCuts`: The number of optimality cuts generated
-- `SepaTime`: The time spent in the separator
-- `SepaTimeCut`: The time spent generating cuts in the separator
-- `runtime_preprocessingGBC`: The time spent in preprocessing for GBC
-- `GBCStatus`: The status of the GBC solver termination. Possible values are:
-    - `Timeout_Submodel`: The solver terminated due to a timeout
-    - `Terminate`: The solver terminated normally
-- `Opt`: The objective value of the solution found
-- `runtime`: The total runtime of the solver
-- `gap`: The optimality gap of the solution
-- `BNodes`: The number of branch-and-bound nodes explored
+    A = [1, 2]
+    sub_name = "Sub0"
+
+    master_model = Model(optimizer)
+    @variable(master_model, x[A], Bin)
+    @objective(master_model, Min, x[1] - x[2])
+    master = Master(master_model, A, Dict(a => x[a] for a in A), [sub_name])
+
+    sub_model = Model(optimizer)
+    set_silent(sub_model)
+    @variable(sub_model, y[1:2], Bin)
+    @constraint(sub_model, y[1] == 1)
+    follower_obj = @expression(sub_model, -y[1] - y[2])
+    @objective(sub_model, Min, follower_obj)
+    master_obj_term = @expression(sub_model, 10 * y[2])
+
+    subsolver = SubSolverJuMP(
+        sub_name,
+        sub_model,
+        A,
+        y,
+        master_obj_term,
+        follower_obj,
+    )
+
+    return Instance(master, [subsolver]), solver
+end
+
+instance, solver = build_gbc_example()
+params = GBCparam(
+    solver,
+    false,
+    mktempdir(),
+    "lp",
+    PARETO_OPTIMALITY_ONLY,
+)
+
+stats = solve_instance!(instance, params)
+println(stats.data["Opt"])
+```

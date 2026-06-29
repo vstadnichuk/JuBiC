@@ -81,16 +81,31 @@ Each entry in `instances` supports the following common fields.
   - `"competition"`
 - Meaning:
   - `constrained_shortest_path` builds a single-layer network.
-  - `competition` builds a layered network where the competitor layer contains
-    the decision arcs.
+  - `competition` builds either:
+    - a two-layer competition network when the topology id starts with
+      `"layered_"`, or
+    - a single-layer network with a sampled set of decision arcs otherwise.
 
 ### `topologies`
 
 - Type: array of strings
 - Optional: yes
 - Current supported values:
-  - for `constrained_shortest_path`: `"sioux_falls"`
-  - for `competition`: `"layered_sioux_falls"`
+  - for `constrained_shortest_path`:
+    - `"sioux_falls"`
+  - for `competition`:
+    - layered families:
+      - `"layered_sioux_falls"`
+      - `"layered_anaheim"`
+      - `"layered_berlin_mitte_center"`
+      - `"layered_ema"`
+      - `"layered_friedrichshain_center"`
+    - single-layer families:
+      - `"sioux_falls"`
+      - `"anaheim"`
+      - `"berlin_mitte_center"`
+      - `"ema"`
+      - `"friedrichshain_center"`
 - Meaning: selects the topology family used for this batch.
 
 ### `nusers`
@@ -169,6 +184,35 @@ Each entry in `instances` supports the following common fields.
   - `0` for no construction cost
   - small or medium nonnegative integers such as `10`, `50`, `100`
 
+### `construction_cost_min`
+
+- Type: integer
+- Optional: yes
+- Default: `0`
+- Meaning: lower bound for random construction cost on decision arcs.
+- Current behavior:
+  - if omitted, the lower bound is `0`
+  - if present together with `construction_cost_max`, costs are drawn from the
+    inclusive range `[construction_cost_min, construction_cost_max]`
+
+### `construction_cost_max`
+
+- Type: integer
+- Optional: yes
+- Default: inherited from `construction_cost` when only that older field is used
+- Meaning: upper bound for random construction cost on decision arcs.
+
+### `availability_budget_fraction`
+
+- Type: array of numbers
+- Optional: yes
+- Default: `[1.0]`
+- Meaning: fraction of decision arcs that may be made available by the leader.
+- Current behavior:
+  - the generator stores both the fraction and the realized decision-arc count
+    implied by that fraction in the instance metadata
+  - if omitted, the effective budget is all decision arcs
+
 ### `parameter_seeds`
 
 - Type: array of integers
@@ -211,7 +255,7 @@ Each entry in `instances` supports the following common fields.
 - Optional: yes
 - Default: `[1.0]`
 - Meaning: same meaning as for `constrained_shortest_path`, but applied to the
-  layered competition network.
+  generated competition network.
 - Reasonable values: numbers in `[0, 1]`.
 
 ### `competitor_cost_factor`
@@ -227,6 +271,58 @@ Each entry in `instances` supports the following common fields.
   - values above `1.0` make them more expensive
 - Reasonable values: positive numbers such as `0.5`, `0.8`, `1.0`, `1.2`
 - Typical safe range: `(0, 2]`
+
+### `single_layer_arc_mode`
+
+- Type: array of strings
+- Optional: yes
+- Default: `["competition"]`
+- Relevant only when:
+  - `instance_type = "competition"`
+  - and the topology id does **not** start with `"layered_"`
+- Supported values:
+  - `"competition"`
+  - `"decision_only"`
+- Meaning:
+  - `"competition"`:
+    - exactly `k` arcs are sampled as decision arcs,
+    - the sampled arcs receive the `beta` cost scaling,
+    - and only those sampled arcs contribute operator-side risk
+  - `"decision_only"`:
+    - exactly `k` arcs are sampled as decision arcs,
+    - no `beta` scaling is applied,
+    - sampled arcs are only the controllable arcs,
+    - and operator risk remains on all arcs
+- Important sign convention:
+  - `"competition"` keeps the older negative-risk / profit convention
+  - `"decision_only"` now uses positive risk coefficients
+
+### `decision_arc_count`
+
+- Type: array of integers
+- Optional: yes
+- Relevant only for single-layer competition instances
+- Meaning: number of arcs sampled into the leader-controlled set `edgeA`
+- Current behavior:
+  - if the requested value exceeds the number of arcs in the base graph, the
+    implementation clamps it to all arcs
+
+## Competition Graph Styles
+
+Generated competition metadata records:
+
+- `competition_graph_style = "two_layer"`
+  - for `layered_*` topologies
+- `competition_graph_style = "single_layer_k_competition"`
+  - for single-layer `k`-arc competition mode
+- `competition_graph_style = "single_layer_k_decision_only"`
+  - for single-layer `k`-arc decision-only mode
+
+Additional metadata flags include:
+
+- `layered_instance`
+- `base_topology_family`
+- `single_layer_arc_mode` for the single-layer competition family
 
 ## Batch Expansion
 

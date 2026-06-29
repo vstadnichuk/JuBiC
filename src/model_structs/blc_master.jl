@@ -1,5 +1,12 @@
 # The master problem in the Benders-like Cuts model, i.e., the high point relaxation and a rule on how to generate big Ms.
 
+"""
+Master wrapper for the Benders-like Cuts (`BlC`) solver.
+
+`BlCMaster` stores the high-point relaxation, binary linking variables,
+subproblem objective expressions in the relaxation, and a user-provided
+big-M function for BlC cut generation.
+"""
 struct BlCMaster{T}
     hpr::JuMP.Model  # The high-point-relaxation of the bilevel problem
     A::Vector{T}  # Iterable of common resources

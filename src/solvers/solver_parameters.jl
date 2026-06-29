@@ -2,6 +2,12 @@
 # TODO: I do not think that having an own file for all parameters is a good idea, or?
 # TODO: parameters implemented not clean
 
+"""
+Abstract supertype for solver-parameter objects passed to `solve_instance!`.
+
+Concrete subtypes select the solver family and store runtime limits, logging
+options, solver wrappers, and the `RunStats` object filled during the solve.
+"""
 abstract type SolverParam end
 
 """
@@ -59,6 +65,9 @@ end
 
 ###### Parameters for GBCsolver, i.e., the generation of Bilevel Lagrangian Cuts ######
 
+"""
+Pareto-refinement mode used by GBC and BlCLag cut generation.
+"""
 @enum ParetoCut begin
     PARETO_NONE  # No Pareto cuts used
     PARETO_OPTIMALITY_ONLY  # Pareto cuts used only for optimality cuts
@@ -77,6 +86,13 @@ function Base.string(po::ParetoCut)
     end
 end
 
+"""
+Parameters for the Generalized Benders Cuts (`GBC`) solver.
+
+Important options include the MIP solver wrapper, runtime and thread limits,
+parallel separation, Pareto-cut mode, warm-start behavior for connector LPs,
+and optional coefficient strengthening through BlC-style subroutines.
+"""
 struct GBCparam <: SolverParam
     solver::SolverWrapper
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
@@ -252,6 +268,13 @@ function get_seed(param::GBCparam)
 end
 
 ###### Parameter for Benders-like Cuts Solver (BlCSolver) ######
+"""
+Parameters for the Benders-like Cuts (`BlC`) solver.
+
+The parameters configure the MIP solver wrapper, output behavior, runtime and
+thread limits, random seed, and whether follower separations are solved in
+parallel.
+"""
 struct BLCparam <: SolverParam
     solver::SolverWrapper
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
@@ -289,6 +312,13 @@ end
 
 
 ###### Parameter for Benders-like Cuts Solver where we solve the Lagrangian dual (BlCSLagsolver) ######
+"""
+Parameters for the BlC solver variant with Lagrangian coefficient generation.
+
+Besides the common solver, output, runtime, seed, and thread settings, this
+type controls Pareto refinement, connector warm-start behavior, and numerical
+big-M related bounds.
+"""
 struct BlCLagparam <: SolverParam
     solver::SolverWrapper
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
@@ -397,6 +427,12 @@ end
 
 
 ###### Parameter for the compact Solver (MIPSolver) that is a wrapper for underlying MIP solver ######
+"""
+Parameters for JuBiC's compact MIP wrapper.
+
+Use this when the instance master is already a single JuMP MIP model and JuBiC
+should only forward it to the configured MIP solver wrapper.
+"""
 struct MIPparam <: SolverParam
     solver::SolverWrapper
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
@@ -431,6 +467,12 @@ end
 
 
 ###### Parameter for MibSSolver that is a wrapper for the MibS solver ######
+"""
+Parameters for JuBiC's direct MiBS wrapper.
+
+This route expects an instance with a `MibSMaster` and delegates the solve to
+MiBS rather than to JuBiC's native decomposition solvers.
+"""
 struct MibSparam <: SolverParam
     debbug_out::Bool  # if true, print additional output to files (debug messages and files during run of model)
     output_folder_path::Any  # path to where to store output files 

@@ -1,43 +1,64 @@
-# Mixed Integer Program (MIP) Solver
+# Compact MIP Wrapper (`MIP`)
 
-The Mixed Integer Program (MIP) solver provides an interface for solving bilevel problems by reformulating them as a single-level mixed-integer program. The user must perform this procedure explicitly. It provides a wrapper for passing a single-level MIP problem to JuBiC, which is especially useful if you want to benchmark other methods against an MIP solver. 
+`MIP` is JuBiC's direct wrapper around a JuMP MIP model. It is useful when an
+instance is already available as a compact single-level model and should be
+solved through JuBiC's common `solve_instance!` interface.
 
+## Required Instance Shape
 
-## Master Type
+`solve_instance!(inst, params::MIPparam)` expects:
 
-The `MIPMaster` type has the following fields:
+- `inst.master isa MIPMaster`
+- `inst.subproblems == nothing`
 
-- `mymip`: The MIP expression of the bilevel problem modeled using JuMP
-
-When creating a MIP instance, set the `master` to the `MIPMaster` and set the `subproblems` to nothing.
-
+`MIPMaster` stores the JuMP model in `mymip`. No decomposition-specific master,
+connector, or follower subsolver objects are used.
 
 ## Solver Parameters
 
-The MIP solver accepts the following parameters:
+`MIP` is configured with `MIPparam`. The most relevant inputs are:
 
-- `solver`: The optimization solver to be used
-- `debbug_out`: Boolean flag to enable or disable the debug output
-- `output_folder_path`: The path to the output directory
-- `file_format_output`: The format of the output files (e.g., "lp", "mps")
-- `stats`: The runtime statistics (default: `JuBiC.RunStats()`)
-- `runtime`: The maximum allowed runtime for the solver (in seconds) (default: 3600)
-- `threads_master`: Number of threads for the master problem (default: 8)
+- `solver`: the MIP solver wrapper used to optimize the stored JuMP model.
+- `debbug_out`: whether instance-level debug artifacts should be written.
+- `output_folder_path`: output directory used when output logs are enabled.
+- `file_format_output`: file format used if the model is exported.
+- `runtime`: runtime limit in seconds.
+- `threads_master`: thread limit passed to the MIP solve.
 
-The parameters can be set using one of the following constructors:
+## Minimal Working Example
 
-```julia
-MIPparam(solver, debbug_out, output_folder_path, file_format_output)
-MIPparam(solver, debbug_out, output_folder_path, file_format_output, runtime)
-MIPparam(solver, debbug_out, output_folder_path, file_format_output, stats, runtime, threads_master)
+The following example solves a small binary MIP through JuBiC's common
+`solve_instance!` interface.
+
+```math
+\begin{aligned}
+\min_x\quad & x_1 + 2x_2 \\
+\text{s.t.}\quad & x_1 + x_2 \ge 1, \\
+& x_1,x_2 \in \{0,1\}.
+\end{aligned}
 ```
 
+```julia
+using JuBiC
+using JuMP
 
-## Solver Output Statistics
+solver = GurobiSolver()
+optimizer = () -> get_next_optimizer(solver)
 
-- `Solver`: 'MIPSolver' the name of the solver used
-- `time_limit`: The time limit set for the solver
-- `Opt`: The objective value of the solution found
-- `runtime`: The total runtime of the solver
-- `gap`: The optimality gap of the solution
-- `BNodes`: The number of branch-and-bound nodes explored
+model = Model(optimizer)
+@variable(model, x[1:2], Bin)
+@constraint(model, x[1] + x[2] >= 1)
+@objective(model, Min, x[1] + 2 * x[2])
+
+instance = Instance(MIPMaster(model), nothing)
+params = MIPparam(
+    solver,
+    false,
+    mktempdir(),
+    "lp",
+    60.0,
+)
+
+stats = solve_instance!(instance, params)
+println(stats.data["Opt"])
+```

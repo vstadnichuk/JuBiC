@@ -2,8 +2,20 @@
 using JuMP, Gurobi
 
 
+"""
+Abstract wrapper for MIP solvers used by JuBiC.
+
+Concrete wrappers must provide `get_next_optimizer` so JuBiC can create fresh
+JuMP optimizer objects for master models, connector LPs, and helper models.
+"""
 abstract type SolverWrapper end
 
+"""
+Gurobi-based implementation of `SolverWrapper`.
+
+The wrapper stores a `Gurobi.Env` and creates `Gurobi.Optimizer` objects through
+`get_next_optimizer`.
+"""
 struct GurobiSolver <: SolverWrapper
     env::Any  # The enviroment for the currernt solver 
 end

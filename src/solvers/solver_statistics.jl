@@ -2,6 +2,13 @@
 
 using CSV, DataFrames
 
+"""
+Container for statistics collected during a JuBiC solve.
+
+Solvers write status information, timings, bounds, objective values, and
+experiment-specific metadata into the `data` dictionary. `solve_instance!`
+returns this object.
+"""
 struct RunStats
     data::Dict{String,Any}
     RunStats() = new(Dict{String,Any}())  # Constructor to initialize an empty instance

@@ -1,37 +1,65 @@
-# Mixed Integer Bilevel Solver (MibS)
+# Direct `MiBS` Wrapper
 
-The MibS solver serves as a wrapper around the bilevel optimization solver [MibS_jll.jl](https://github.com/JuliaBinaryWrappers/MibS_jll.jl/), which itself wraps the underlying [MibS solver](https://github.com/coin-or/MibS) developed by COIN-OR.
+JuBiC contains a direct wrapper for the external
+[`MiBS`](https://github.com/coin-or/MibS) solver.
 
+## Required Instance Shape
 
-## Master Type
+`solve_instance!(inst, params::MibSparam)` expects:
 
-The `MibSMaster` type has the following fields:
+- `inst.master isa MibSMaster`
+- `inst.subproblems == nothing`
 
-- `model`: The bilevel model expressed using BilevelJuMP
-
-When creating a MibS instance, set the `master` to the `MibSMaster` and set the `subproblems` to nothing.
-
+`MibSMaster` stores a
+[`BilevelJuMP.BilevelModel`](https://joaquimg.github.io/BilevelJuMP.jl/stable/).
+JuBiC uses the BilevelJuMP-based interface to pass the model to MiBS, so this
+wrapper operates on a bilevel model directly rather than on a decomposed
+master/subsolver representation.
 
 ## Solver Parameters
 
-The MibS solver accepts the following parameters:
+`MiBS` is configured with `MibSparam`. The most relevant inputs are:
 
-- `output_folder_path`: The path to the output directory
-- `file_format_output`: The format of the output files (e.g., "lp", "mps")
-- `stats`: The runtime statistics (default: `JuBiC.RunStats()`)
+- `debbug_out`: whether instance-level debug artifacts should be written.
+- `output_folder_path`: output directory used when output logs are enabled.
+- `runtime`: requested runtime limit in seconds.
 
-The parameters can be set using one of the following constructors:
+## Minimal Working Example
 
-```julia
-MibSparam(output_folder_path, file_format_output)
-MibSparam(output_folder_path, file_format_output, stats)
+The following example builds a small MIP-MIP bilevel model directly as a
+`BilevelJuMP.BilevelModel` and solves it through the direct MiBS wrapper.
+
+```math
+\begin{aligned}
+\min_{x_1,x_2,y_1,y_2}\quad & x_1 - x_2 + 10 y_2 \\
+\text{s.t.}\quad & x_1, x_2 \in \{0,1\}, \\
+& (y_1, y_2) \in \arg\min \Big\{-y_1 - y_2 : \\
+& \qquad y_1 \le x_1,\; y_2 \le x_2,\; y_1 = 1,\;
+          y_1,y_2 \in \{0,1\}\Big\}.
+\end{aligned}
 ```
 
+```julia
+using JuBiC
+using BilevelJuMP
 
-## Solver Output Statistics
+model = BilevelModel()
+@variable(Upper(model), x[1:2], Bin)
+@variable(Lower(model), y[1:2], Bin)
 
-- `Solver`: 'MibSSolver' the name of the solver used
-- `Opt`: The objective value of the solution found
-- `runtime`: The total runtime of the solver
-- `gap`: The optimality gap of the solution
-- `BNodes`: The number of branch-and-bound nodes explored
+@constraints(Lower(model), begin
+    y[1] <= x[1]
+    y[2] <= x[2]
+    y[1] >= 1
+    y[1] <= 1
+end)
+
+@objective(Upper(model), Min, x[1] - x[2] + 10 * y[2])
+@objective(Lower(model), Min, -y[1] - y[2])
+
+instance = Instance(MibSMaster(model), nothing)
+params = MibSparam(false, mktempdir(), 60.0)
+
+stats = solve_instance!(instance, params)
+println(stats.data["Opt"])
+```
