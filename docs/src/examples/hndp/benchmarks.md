@@ -168,50 +168,9 @@ For path and hybrid models, enumeration time is counted against the total
 runtime. The model builder records `enum_runtime`, and the remaining MIP runtime
 is reduced accordingly.
 
-## Reproducing a Sweep
-
-Most benchmark scripts in `examples/HNDP/` are thin wrappers around
-`run_hndp_experiments!`. They create temporary JSON config files, write them
-into the benchmark output root, and call the runner.
-
-Examples include:
-
-- `hndp_path_sd_blc_layered_benchmark.jl`
-- `hndp_path_sd_blc_layered_benchmark_u100_1000_with_dom.jl`
-- `hndp_path_sd_budgeted_layered_ema_sioux_alpha1_benchmark.jl`
-- `hndp_gbc_single_layer_k_sweep.jl`
-- `hndp_gbc_single_layer_k_decision_only_sweep.jl`
-
-A typical script call has the form:
-
-```powershell
-julia --project=. examples\HNDP\hndp_path_sd_blc_layered_benchmark_u100_1000_with_dom.jl `
-    tmp_compare\runs\my_hndp_run `
-    100,200,500,1000 `
-    1.0,0.8,0.6 `
-    600 `
-    42
-```
-
-The exact positional arguments depend on the benchmark script. The reproducible
-record is the output folder: keep `manifests/` and `results/batch_summary.csv`.
-
 ## Result Columns
 
-`batch_summary.csv` combines:
-
-- instance metadata with prefix `instance_`,
-- model metadata with prefix `model_`,
-- parameter metadata with prefix `param_`,
-- JuBiC `RunStats` fields.
-
-For path and hybrid models, additional useful columns include:
-
-- `model_enum_runtime`,
-- `model_path_counts`,
-- `model_fallback_users`,
-- `model_path_count_fallback_users`,
-- `model_path_count_fallback_user_count`.
-
-These columns make it possible to compare pure path, strong-duality, BlC, and
-hybrid formulations from the same CSV file.
+`batch_summary.csv` combines information from all three stages of the pipeline:
+instance-generation parameters, model-generation metrics, and solver run
+metrics. The concrete columns depend on the selected instance generator, model
+builder, and solver configuration.

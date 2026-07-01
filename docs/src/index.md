@@ -45,13 +45,15 @@ JuBiC provides several solver interfaces for this problem class. The package is
 organized around a small number of common concepts:
 
 - **model wrappers**, which describe how the first-level model and follower problems are passed to JuBiC,
+- **solver parameter objects**, which define runtime behavior such as solver selection, output handling, logging, and runtime limits,
 - **solver methods**, which define the algorithmic route used to solve an `Instance`,
 - **subsolvers**, which implement follower-side oracle calls for decomposition methods,
+- **application examples**, which show how concrete problem families are generated, modeled, and benchmarked,
 - and **run statistics**, which report solver status, objective values, runtimes, and numerical fallback information.
 
-The documentation follows this structure. Start with a small complete example,
-then read the wrapper overview, and then move to the solver or subsolver page
-that matches the algorithm you want to use.
+The documentation follows this structure. Start with a small runnable example,
+then read the JuBiC usage overview, and then move to the solver, subsolver, or
+application-example page that matches the task.
 
 ## Installation
 
@@ -78,15 +80,17 @@ The current test suite uses `Gurobi`, so running the tests requires a working `G
 - [Getting Started](getting_started.md)
   A small bilevel model written in JuBiC syntax and solved with representative solver routes.
 - [Using JuBiC](model_objects.md)
-  The main conceptual overview: `Instance`, master wrappers, subsolver wrappers, solver families, and experiment output.
+  The main conceptual overview: `Instance`, master wrappers, subsolver wrappers, solver parameter objects, solver families, and experiment output.
+- [Extending JuBiC](extending_jubic.md)
+  Practical guidance and current limitations for implementing custom solver or subsolver components.
 - [Solver Methods](solvers/gbc.md)
   Algorithm-specific pages for `GBC`, `BlC`, `BlCLag`, the compact MIP wrapper, and the direct `MiBS` wrapper.
 - [SubSolvers](sub_solvers.md)
   The follower-oracle interface and the currently implemented subsolver wrappers.
 - [Numerics and Status Codes](numerics_and_status.md)
   Numerical safeguards, fallback logic, and the status values written to `RunStats`.
-- [Examples](examples/hndp/motivation.md)
-  Application examples built on top of the JuBiC package, starting with HNDP.
+- [HNDP Example](examples/hndp/motivation.md)
+  Application documentation split into motivation, instance generation, solver models, A* subsolver implementation, and benchmark pipeline.
 - [Core Solver API](solver_api.md)
   A generated technical reference for exported JuBiC objects.
 

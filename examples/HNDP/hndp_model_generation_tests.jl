@@ -11,6 +11,9 @@ const TOY_TWO_USER_OPT = -7.0
 const TOY_ALL_DECISION_OPT = -7.0
 const TOY_WEIGHTED_OPT = -4.0
 
+_hndp_test_tempdir() = JuBiC.repo_local_tempdir("tests", "hndp_model_generation"; prefix="hndp_test")
+const mktempdir = _hndp_test_tempdir
+
 """
     build_toy_hndp_two_users()
 
@@ -160,6 +163,18 @@ function build_toy_hndp_weighted_user()
         (5, 4) => 2,
     )
     return HNDPwC(graph, users, decision_arcs, edge_price, nothing)
+end
+
+function _copy_hndp_with_nonnegative_risk(hndp::HNDPwC)
+    users = User[]
+    for user in hndp.users
+        risk = copy(user.mrisk)
+        for i in axes(risk, 1), j in axes(risk, 2)
+            risk[i, j] = abs(risk[i, j])
+        end
+        push!(users, User(user.uname, user.origin, user.destination, risk, user.mcost, user.mweight, user.weighlimit))
+    end
+    return HNDPwC(hndp.mygraph, users, hndp.edgeA, hndp.edge_price, hndp.minweights)
 end
 
 function _run_hndp_model_pair_test(big_m_mode::Symbol)
@@ -470,8 +485,8 @@ function _run_hndp_hybrid_path_count_fallback_test()
     hybrid_blc_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
     blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
 
-    @test hybrid_stats.data["Opt"] â‰ˆ sd_stats.data["Opt"] atol = 1e-6
-    @test hybrid_blc_stats.data["Opt"] â‰ˆ blc_stats.data["Opt"] atol = 1e-6
+    @test isapprox(hybrid_stats.data["Opt"], sd_stats.data["Opt"]; atol=1e-6)
+    @test isapprox(hybrid_blc_stats.data["Opt"], blc_stats.data["Opt"]; atol=1e-6)
 end
 
 function _run_hndp_gbc_subsolver_triplet_test(hndp::HNDPwC, big_m_mode::Symbol, expected_opt::Float64)
@@ -698,6 +713,14 @@ function _run_hndp_mibs_runtime_toy_solve_test()
     @test isapprox(gbc_stats.data["Opt"], mibs_stats.data["Opt"]; atol=1e-6)
 end
 
+function _run_hndp_astar_negative_master_cost_guard_test()
+    hndp = build_toy_hndp_two_users()
+    subsolver = build_hndp_astar_user(hndp.users[1], hndp, hndp.edgeA)
+    params = GBCparam(GurobiSolver(), false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true)
+
+    @test_throws ArgumentError compute_lower_bound_master_contribution(subsolver, params, HNDP_TEST_TIME_LIMIT)
+end
+
 function build_toy_hndp_many_paths_user()
     graph = DiGraph(6)
     all_arcs = Tuple{Int,Int}[]
@@ -781,14 +804,56 @@ function _run_hndp_competition_topology_mode_test()
         );
         decision_arc_count=60,
     )
+    generated_k_decision_only = _build_competition_generated_network(
+        "competition_mode_test",
+        "ema",
+        1,
+        1,
+        false,
+        1.0,
+        0.8,
+        "shared",
+        Dict{String,Any}(
+            "max_cost" => 20,
+            "max_risk" => 20,
+            "max_weight" => 20,
+            "construction_cost" => 0,
+            "single_layer_arc_mode" => "decision_only",
+        );
+        decision_arc_count=60,
+    )
     base_graph = _load_named_base_graph("ema")
-    @test generated_k.metadata["competition_graph_style"] == "single_layer_k"
+    @test generated_k.metadata["competition_graph_style"] == "single_layer_k_competition"
+    @test generated_k.metadata["single_layer_arc_mode"] == "competition"
     @test generated_k.metadata["layered_instance"] == false
     @test generated_k.metadata["base_topology_family"] == "ema"
     @test nv(generated_k.instance.mygraph) == nv(base_graph)
     @test ne(generated_k.instance.mygraph) == ne(base_graph)
     @test length(generated_k.instance.edgeA) == 60
     @test occursin("_K60_", generated_k.metadata["name"])
+    @test occursin("_KCOMP_", generated_k.metadata["name"])
+
+    @test generated_k_decision_only.metadata["competition_graph_style"] == "single_layer_k_decision_only"
+    @test generated_k_decision_only.metadata["single_layer_arc_mode"] == "decision_only"
+    @test generated_k_decision_only.metadata["layered_instance"] == false
+    @test generated_k_decision_only.metadata["base_topology_family"] == "ema"
+    @test nv(generated_k_decision_only.instance.mygraph) == nv(base_graph)
+    @test ne(generated_k_decision_only.instance.mygraph) == ne(base_graph)
+    @test length(generated_k_decision_only.instance.edgeA) == 60
+    @test occursin("_K60_", generated_k_decision_only.metadata["name"])
+    @test occursin("_KDEC_", generated_k_decision_only.metadata["name"])
+
+    @test generated_k.instance.edgeA == generated_k_decision_only.instance.edgeA
+
+    decision_arc = generated_k.instance.edgeA[1]
+    decision_only_user = generated_k_decision_only.instance.users[1]
+    competition_user = generated_k.instance.users[1]
+    @test competition_user.mcost[decision_arc...] == round(Int, 0.8 * decision_only_user.mcost[decision_arc...])
+
+    decision_arc_set = Set(generated_k.instance.edgeA)
+    nondecision_arc = first([(src(e), dst(e)) for e in edges(base_graph) if !((src(e), dst(e)) in decision_arc_set)])
+    @test competition_user.mrisk[nondecision_arc...] == 0
+    @test decision_only_user.mrisk[nondecision_arc...] > 0
 end
 
 @testset "HNDP Model Generation Tests" begin
@@ -801,9 +866,10 @@ end
     end
 
     @testset "GBC Models" begin
-        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users(), HNDP_BIGM_FIXED_NETWORK_PATH, TOY_TWO_USER_OPT)
-        _run_hndp_gbc_subsolver_triplet_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, TOY_ALL_DECISION_OPT)
-        _run_hndp_gbc_weighted_subsolver_pair_test(build_toy_hndp_weighted_user(), TOY_WEIGHTED_OPT)
+        _run_hndp_gbc_subsolver_triplet_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_two_users()), HNDP_BIGM_FIXED_NETWORK_PATH, 7.0)
+        _run_hndp_gbc_subsolver_triplet_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_two_users_all_decision_arcs()), HNDP_BIGM_N_MINUS_ONE, 7.0)
+        _run_hndp_gbc_weighted_subsolver_pair_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_weighted_user()), 4.0)
+        _run_hndp_astar_negative_master_cost_guard_test()
     end
 
     @testset "Path Model" begin

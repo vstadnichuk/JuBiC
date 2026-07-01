@@ -19,13 +19,15 @@ This split is especially useful when:
 
 Not every solver in JuBiC uses decomposition, but this master/subproblem view is the main organizational idea of the package.
 
-## Technical Structure: `Instance`, `Master`, and `SubSolver`
+## Technical Structure: `Instance`, `Master`, `SubSolver`, and Parameters
 
-At the technical level, JuBiC organizes a solve around three object layers:
+At the technical level, JuBiC organizes a solve around model wrappers and a
+solver-parameter object:
 
 - `Instance`
 - one master wrapper
 - zero or more subsolver wrappers
+- one solver-specific parameter object
 
 The basic pattern is:
 
@@ -34,7 +36,19 @@ The basic pattern is:
 
 The master wrapper stores the first-level representation used by the selected solver. Subsolver wrappers store the follower-side models or follower-side algorithms.
 
-The role of `Instance` is to collect these pieces into one object that can be passed to JuBiC's common solve interface, `solve_instance!`.
+The role of `Instance` is to collect the model-side pieces into one object. The
+associated parameter object defines how the selected solver should behave: for
+example which MIP solver wrapper to use, where output should be written, whether
+logs are enabled, and what runtime limit applies.
+
+The common solve interface takes both objects:
+
+```julia
+stats = solve_instance!(instance, params)
+```
+
+The exact parameter type depends on the solver route, for example `GBCparam`,
+`BLCparam`, `BlCLagparam`, `MIPparam`, or `MibSparam`.
 
 ## Solver Families and Their Modeling View
 
@@ -66,6 +80,10 @@ At a high level, the included solvers can be grouped as follows.
   - Built around [`BilevelJuMP`](https://joaquimg.github.io/BilevelJuMP.jl/stable/) and modeled with `MibSMaster`.
 
 So the wrapper you choose is tightly connected to the algorithm you intend to run.
+
+Each solver family also has an associated parameter object. The wrapper defines
+the mathematical model representation; the parameter object defines the runtime
+behavior of the algorithm.
 
 ## Master Wrappers
 

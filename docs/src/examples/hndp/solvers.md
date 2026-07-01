@@ -20,10 +20,6 @@ solver drivers.
 - [`BlCLag`](../../solvers/blc_lag.md) is built by `build_hndp_blclag_instance(...)`.
 - [`MiBS`](../../solvers/mibs.md) is built by `build_hndp_mibs_instance(...)`.
 
-The HNDP code contributes the network-specific master and follower models, the
-mapping from decision arcs to linking variables, big-M estimates where needed,
-and optional custom follower oracles such as the A* subsolver.
-
 ## Strong-Duality Compact Model
 
 `build_hndp_sd_instance(...)` builds a compact MIP reformulation for HNDP
@@ -31,7 +27,7 @@ instances without weight bounds.
 
 The follower shortest-path problem can be written as a linear network-flow
 problem. Because the network-flow relaxation is integral, the shortest-path
-choice can be represented through primal flow variables and dual potentials. A
+choice can be represented through primal flow variables and dual variables. A
 strong-duality equation enforces that the selected follower flow is optimal for
 the user's cost objective.
 
@@ -45,9 +41,20 @@ For each user, the compact model contains:
   values.
 
 The resulting model is a single-level MIP and is solved through JuBiC's
-[`MIPMaster`](../../solvers/mip.md). JuBiC provides the generic MIP wrapper and
-solver dispatch; the HNDP code implements the specific strong-duality
-reformulation and the HNDP-specific big-M bounds.
+[`MIPMaster`](../../solvers/mip.md).
+
+HNDP currently has two routes for strong-duality reformulations. The main
+benchmark route, `build_hndp_sd_instance(...)`, uses the HNDP-specific network
+structure directly and builds the arc-flow, dual, linking, and strong-duality
+constraints explicitly. This gives the HNDP code control over network-specific
+big-M values and optional indicator constraints.
+
+The experimental route, `build_hndp_sd_auto_instance(...)`, starts from a
+JuBiC-style decomposition model with JuMP follower subproblems and then calls
+JuBiC's generic `build_strong_duality_mip_instance(...)` helper. That helper
+copies the follower LP blocks, creates fresh primal and dual blocks, adds dual
+feasibility and strong-duality constraints, and returns an `MIPMaster`
+instance.
 
 Important options are:
 
@@ -55,7 +62,7 @@ Important options are:
   `HNDP_BIGM_FIXED_NETWORK_PATH` and `HNDP_BIGM_N_MINUS_ONE`.
 - `indicator_constraints`: optionally replaces parts of the big-M logic by
   indicator constraints.
-- `bound_duals`: bounds dual potentials using the derived big-M values.
+- `bound_duals`: bounds dual variables using the derived big-M values.
 
 Typical construction:
 
@@ -96,9 +103,18 @@ operator-side contributions over the path. Construction cost remains attached
 to `x`.
 
 This route is also solved through JuBiC's [`MIPMaster`](../../solvers/mip.md).
-JuBiC provides the generic compact-MIP solve path; HNDP implements path
-enumeration, optional dominance pruning, and the conversion from paths to the
-path-selection model.
+The main modeling challenge is that the path formulation is only valid if the
+path set ``P_u`` contains all feasible paths that a user may choose. Therefore,
+the HNDP builder first has to enumerate complete feasible path sets before the
+MIP can be solved. This can dominate runtime on larger or less constrained
+instances.
+
+The basic enumeration variant searches feasible simple paths for each user
+until the enumeration deadline is reached. The stronger variant enables
+decision-arc dominance. During enumeration, labels that cannot improve cost,
+weight feasibility, or decision-arc usage relative to another label are pruned.
+This can improve enumeration time and reduce the size of the enumerated path
+set.
 
 Current builder options include:
 
@@ -150,16 +166,34 @@ separately from enumeration timeouts.
 
 ## Subproblem Methods in Arc-Based Models
 
-Arc-based HNDP builders can use different follower oracles:
+The decomposition methods rely on separation loops. In these loops, JuBiC needs
+to compute optimal follower solutions for the current first-level solution. The
+following subproblem methods provide these follower solves for HNDP.
 
-- `HNDP_SUBPROBLEM_MIP`: generic JuMP follower model through
-  [`SubSolverJuMP`](../../subsolvers/subsolver_jump.md).
-- `HNDP_SUBPROBLEM_ASTAR`: custom HNDP A* / labeling oracle through
-  [`AStarSolver`](../../subsolvers/astar.md).
-- `HNDP_SUBPROBLEM_BLC_JUMP`: bilevel-capable JuMP follower through
-  [`SubSolverBlCJuMP`](../../subsolvers/subsolver_blc_jump.md).
-- `HNDP_SUBPROBLEM_MIBS`: bilevel follower solve through
-  [`SubSolverMiBS`](../../subsolvers/subsolver_mibs.md).
+`HNDP_SUBPROBLEM_MIP` uses [`SubSolverJuMP`](../../subsolvers/subsolver_jump.md).
+The user routing problem is modeled as a JuMP MIP or LP with arc-flow variables,
+flow-conservation constraints, decision-arc linking constraints, and optional
+weight constraints. This is the most direct formulation and is useful as a
+generic baseline because the oracle is solved by the selected MIP solver.
+
+`HNDP_SUBPROBLEM_ASTAR` uses [`AStarSolver`](../../subsolvers/astar.md). The
+user routing problem is solved by a custom labeling / A* routine instead of by a
+JuMP model. For HNDP, labels represent partial paths, resources track path
+weight, and the objective can switch between follower cost, operator
+contribution, and connector-based reduced costs. This route is useful when the
+shortest-path structure should be exploited directly.
+
+`HNDP_SUBPROBLEM_BLC_JUMP` uses
+[`SubSolverBlCJuMP`](../../subsolvers/subsolver_blc_jump.md). This oracle solves
+a bilevel subproblem inside the decomposition routine. It is needed when the
+separation routine changes the upper-level objective of the subproblem but must
+still enforce optimality with respect to the original follower routing
+objective.
+
+`HNDP_SUBPROBLEM_MIBS` uses
+[`SubSolverMiBS`](../../subsolvers/subsolver_mibs.md). It plays the same role as
+the bilevel JuMP oracle above, but delegates the internal bilevel follower solve
+to MiBS.
 
 The model configuration file selects these routes through fields such as
 `model_type`, `subproblem_method`, `big_m_mode`, `parallelize`, and

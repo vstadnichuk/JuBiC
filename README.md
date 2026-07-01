@@ -11,6 +11,23 @@ While JuBiC was originally developed for **bilevel optimization problems**, it c
 
 ---
 
+## Documentation
+
+The current documentation starts at [`docs/src/index.md`](./docs/src/index.md).
+From there, GitHub links lead to the Getting Started page, solver descriptions,
+subsolver documentation, HNDP example pages, and the core API overview.
+
+To build the rendered HTML documentation locally, run:
+
+```julia
+julia --project=. docs/make.jl
+```
+
+If a hosted documentation page is added later, this section should be updated to
+link directly to that rendered site.
+
+---
+
 ## Key Features
 
 - Flexible interface for implementing your own decomposition methods or using the already available ones.  

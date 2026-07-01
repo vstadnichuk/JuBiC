@@ -2,8 +2,7 @@
 
 The HNDP example uses JuBiC's generic [`AStarSolver`](../../subsolvers/astar.md)
 wrapper to implement a graph-specific follower oracle. This page explains the
-pattern so the HNDP code can serve as a template for custom labeling
-subsolvers.
+HNDP implementation.
 
 The implementation is in `examples/HNDP/hndp_astar_wrapper.jl`.
 
@@ -14,13 +13,8 @@ solved by a custom labeling algorithm than by repeatedly building and solving a
 JuMP model.
 
 For HNDP, each follower is a shortest-path or constrained-shortest-path problem.
-The A* wrapper is therefore a good fit:
-
-- states are partial paths,
-- transitions are graph arcs,
-- resources track path weight,
-- the objective changes depending on the JuBiC oracle call,
-- dominance can prune labels at the same node.
+The A* wrapper is therefore used instead of a JuMP follower model in selected
+arc-based decomposition runs.
 
 ## Step 1: Define the Label
 
@@ -35,9 +29,6 @@ struct HNDPAStarLabel
     predecessor::Union{HNDPAStarLabel,Nothing}
 end
 ```
-
-For another application, this is the place to store the state information that
-the labeling algorithm needs for feasibility, dominance, and solution recovery.
 
 ## Step 2: Store Problem Data
 
@@ -61,8 +52,9 @@ mutable struct HNDPAStarStructure
 end
 ```
 
-The important point is that the JuBiC wrapper remains generic. Application data
-is stored in the `structure` object and accessed by the methods below.
+The structure contains the HNDP graph, the user OD pair, the weight limit, the
+cost/risk/weight matrices, and precomputed shortest-path matrices used as
+heuristics.
 
 ## Step 3: Implement Start and Goal States
 
@@ -115,10 +107,6 @@ function neighbours_w(state::HNDPAStarLabel, xsol, structure::HNDPAStarStructure
 end
 ```
 
-This is the main application-specific part of a labeling subsolver. For a
-different problem, replace the expansion and feasibility test by the relevant
-state-transition logic.
-
 ## Step 5: Provide Costs for Different Oracle Calls
 
 JuBiC calls subsolvers in different cost states. HNDP distinguishes:
@@ -160,10 +148,6 @@ function dominate_w(::HNDPAStarLabel, a, b, structure::HNDPAStarStructure, cs::C
     return a.me.weight >= b.me.weight && a.cost >= b.cost
 end
 ```
-
-Dominance is optional but important for performance. It must be conservative:
-discarding a label is only valid when the discarded label cannot lead to a
-better feasible solution.
 
 ## Step 7: Validate Algorithm Assumptions
 
@@ -210,23 +194,3 @@ end
 
 The returned object can be used by HNDP model builders as
 `HNDP_SUBPROBLEM_ASTAR`.
-
-## Implementation Checklist
-
-To implement a custom labeling subsolver through JuBiC, provide:
-
-- a label type,
-- a structure type containing application data,
-- `start_state` and `end_state`,
-- `neighbours_w`,
-- `cost_w`,
-- `heuristic_w`,
-- `isgoal_w`,
-- `hashfn_w`,
-- `reconstract_path`,
-- optional resource helpers such as `used_resource`,
-- optional dominance through `dominate_w`,
-- optional validation such as `validate_nonnegative_arc_costs`.
-
-The HNDP implementation is deliberately small enough to be used as a reference
-for this pattern.

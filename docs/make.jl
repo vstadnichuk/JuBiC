@@ -12,6 +12,7 @@ makedocs(
         "Home" => "index.md",
         "Getting Started" => "getting_started.md",
         "Using JuBiC" => "model_objects.md",
+        "Extending JuBiC" => "extending_jubic.md",
         "Solver Methods" => [
             "Generalized Benders Cuts (GBC)" => joinpath("solvers", "gbc.md"),
             "Benders-like Cuts (BlC)" => joinpath("solvers", "blc.md"),
@@ -29,7 +30,8 @@ makedocs(
         "Numerics and Status Codes" => "numerics_and_status.md",
         "Examples" => [
             "HNDP" => [
-                "Motivation and Instances" => joinpath("examples", "hndp", "motivation.md"),
+                "Motivation" => joinpath("examples", "hndp", "motivation.md"),
+                "Instances" => joinpath("examples", "hndp", "instances.md"),
                 "Solver Models" => joinpath("examples", "hndp", "solvers.md"),
                 "A* Subsolver Tutorial" => joinpath("examples", "hndp", "astar.md"),
                 "Benchmark Pipeline" => joinpath("examples", "hndp", "benchmarks.md"),
