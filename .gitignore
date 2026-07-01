@@ -13,3 +13,4 @@ examples/data/smkp
 examples/BOBILib/instances
 .codex
 examples/HNDP/generated_instances_debug/
+tmp_compare/
