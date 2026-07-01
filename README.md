@@ -1,92 +1,148 @@
-# JuBiC
+# JuBiC: Paper Reproduction Branch
 
-**JuBiC** is an open-source software package written in Julia for testing and developing different kinds of **MIP-based decomposition algorithms**.  
+This branch is dedicated to the paper
+[*A Catalog of Formulations for the Multi-Follower Discrete Bilevel Network Design Problem*](https://optimization-online.org/?p=35437).
+Here, we provide the code for the formulations discussed in the paper. You can
+also reproduce the computations reported in the paper.
 
-The algorithms implemented in JuBiC are based on the dissertation of **Vladimir Stadnichuk**, with the main ideas summarized in our preprint:  
-> Stadnichuk and Koster (2024), *Solving Multi-Follower Mixed-Integer Bilevel Problems with Binary Linking Variables*, Optimization Online. [Link](https://optimization-online.org/?p=28877)
-
-We would like to thank **Cedrick Wieber** who significantly contributed to the implementation.  
-
-While JuBiC was originally developed for **bilevel optimization problems**, it can also be naturally applied to **two-stage optimization problems**.
-
----
-
-## Documentation
-
-The current documentation starts at [`docs/src/index.md`](./docs/src/index.md).
-From there, GitHub links lead to the Getting Started page, solver descriptions,
-subsolver documentation, HNDP example pages, and the core API overview.
+If you want to work with JuBiC beyond reproducing this paper, we recommend
+checking out the latest version of the `main` branch. The broader JuBiC
+documentation starts at [`docs/src/index.md`](./docs/src/index.md), and the
+HNDP example, i.e., the description of the existing algorithms including the
+instance generation used in the paper, is documented under
+[`docs/src/examples/hndp/motivation.md`](./docs/src/examples/hndp/motivation.md).
 
 To build the rendered HTML documentation locally, run:
 
-```julia
+```powershell
 julia --project=. docs/make.jl
 ```
-
-If a hosted documentation page is added later, this section should be updated to
-link directly to that rendered site.
-
----
-
-## Key Features
-
-- Flexible interface for implementing your own decomposition methods or using the already available ones.  
-- Solvers are structured around a **master solver** (for the leader/master problem) and **subsolvers** (for each follower/subproblem).  
-- Subproblems can be solved with different solvers, offering high flexibility.  
-- Currently includes **four solvers**:
-
-### Implemented Solvers
-
-1. **GBC-Solver**  
-   - Implements the hierarchical decomposition from our preprint.  
-   - Provides a wrapper for an MIP-based subproblem solver.  
-   - Alternatively, you may implement your own subsolver for the Pricing Problem.  
-
-2. **BLC-Solver**  
-   - A basic implementation of a Benders-like decomposition for bilevel optimization.  
-   - Requires the user to provide a function that generates the *big-M* values for Benders-like cuts.  
-
-3. **MIBS-Solver**  
-   - Wrapper for the bilevel solver **MIBS**.  
-
-4. **MIP-Solver**  
-   - Wrapper for solving standard **MIPs**.  
 
 ---
 
 ## Getting Started
 
-1. Check the [`test`](./test) folder for **basic examples** that demonstrate the core functionalities.  
-   - Run `runtest.jl` to verify that the installation was successful.  
+1. Install Julia and instantiate the project environment:
 
-2. Explore the [`examples`](./examples) folder for advanced applications:  
-   - **HNDP**: Two-stage and bilevel network design problems.  
-     - Demonstrates GBC-Solver and BLC-Solver. Also shows how MIP-Solver can be applied to solve the compact reformulations.  
-     - The function *testrun!* in the file *hndp_tests.jl* demonstrates how a large number of tests can be automated within the JuBiC framework.  
-   - **StochasticMultipleKnapsack**: Application of our solvers to the **two-stage stochastic multiple knapsack problem** from SIPLIB.  
+```powershell
+julia --project=. -e "using Pkg; Pkg.instantiate()"
+```
+
+2. Run the unit tests:
+
+```powershell
+julia --project=. test/runtests.jl
+```
+
+3. Read the HNDP documentation:
+
+- [HNDP Motivation](./docs/src/examples/hndp/motivation.md)
+- [HNDP Instances](./docs/src/examples/hndp/instances.md)
+- [HNDP Solver Models](./docs/src/examples/hndp/solvers.md)
+- [HNDP Benchmark Pipeline](./docs/src/examples/hndp/benchmarks.md)
+
+---
+
+## Reproducing Results
+
+Paper reproduction manifests are stored in
+[`examples/HNDP/paper_manifests`](./examples/HNDP/paper_manifests). Each
+experiment is defined by three JSON files:
+
+- `instances.json`: topology and instance-generation grid,
+- `models.json`: formulation or hybrid model choices,
+- `params.json`: runtime, threads, solver, and logging settings.
+
+The helper script
+[`examples/HNDP/run_hndp_manifest.jl`](./examples/HNDP/run_hndp_manifest.jl)
+loads such a manifest directory and calls the HNDP benchmark pipeline.
+
+Before launching a long run, validate that the manifest loads:
+
+```powershell
+julia --project=. examples/HNDP/run_hndp_manifest.jl `
+  examples/HNDP/paper_manifests/solvercomparison_layered_sioux_10min `
+  tmp_compare/runs/paper_solvercomparison_layered_sioux_10min `
+  --dry-run
+```
+
+To run the 10-minute Sioux Falls layered solver comparison:
+
+```powershell
+julia --project=. examples/HNDP/run_hndp_manifest.jl `
+  examples/HNDP/paper_manifests/solvercomparison_layered_sioux_10min `
+  tmp_compare/runs/paper_solvercomparison_layered_sioux_10min
+```
+
+This sweep compares path enumeration, strong-duality formulations, and
+Benders-like cut formulations on layered Sioux Falls instances with a
+10-minute time limit per solve.
+
+To validate the 30-minute path and hybrid-SD manifest:
+
+```powershell
+julia --project=. examples/HNDP/run_hndp_manifest.jl `
+  examples/HNDP/paper_manifests/path_hybrid_sd_layered_sioux_ema_30min `
+  tmp_compare/runs/paper_path_hybrid_sd_layered_sioux_ema_30min `
+  --dry-run
+```
+
+To run it:
+
+```powershell
+julia --project=. examples/HNDP/run_hndp_manifest.jl `
+  examples/HNDP/paper_manifests/path_hybrid_sd_layered_sioux_ema_30min `
+  tmp_compare/runs/paper_path_hybrid_sd_layered_sioux_ema_30min
+```
+
+This sweep compares complete path enumeration with the hybrid strong-duality
+model. The hybrid model enumerates paths first and falls back to the
+strong-duality formulation when enumeration fails or when the enumerated path
+model would exceed the size of the arc-flow formulation.
+
+The benchmark pipeline appends partial results to
+`results/batch_summary.csv` after each completed instance and supports
+restarting with the same output folder. Per-instance debug logs are disabled in
+the supplied manifests, but the CSV and copied manifests are still written.
+
+Hint: running all paper reproduction experiments can take roughly one week
+on a typical workstation. The exact runtime depends strongly on CPU count,
+Julia thread configuration, Gurobi version, and license settings.
+
+The HNDP instances are randomly generated from the manifest seeds. Reruns should
+therefore show trends comparable to the paper, but concrete runtimes can vary
+with the generated instance structure.
 
 ---
 
 ## Disclaimer
 
-JuBiC is still under active development.  
+JuBiC is still under active development. Results should be interpreted with
+care, and we recommend independently verifying computational results whenever
+possible.
 
-- A detailed documentation of the solvers and further examples are in progress.  
-- Results should be interpreted with care. While extensive experiments have been conducted to validate the solvers, we **strongly recommend cross-verifying results**.  
-
-If you encounter difficulties or have any questions, feel free to contact:  
-📧 **Vladimir.stadnichuk@om.rwth-aachen.de**  
+If you encounter difficulties or have questions, contact:
+Vladimir Stadnichuk, `vladimir.stadnichuk@uni-kassel.de`.
 
 ---
 
 ## Citation
 
-If you use **JuBiC** in your research, please cite:  
+If you use this branch for the HNDP formulation catalog, please cite:
 
-> Stadnichuk and Koster (2024), *Solving Multi-Follower Mixed-Integer Bilevel Problems with Binary Linking Variables*, Optimization Online. [Link](https://optimization-online.org/?p=28877)  
+> Stadnichuk and Koster, *A Catalog of Formulations for the Multi-Follower
+> Discrete Bilevel Network Design Problem*, Optimization Online.
+> [Link](https://optimization-online.org/?p=35437)
+
+For the general JuBiC decomposition framework, see:
+
+> Stadnichuk and Koster (2024), *Solving Multi-Follower Mixed-Integer Bilevel
+> Problems with Binary Linking Variables*, Optimization Online.
+> [Link](https://optimization-online.org/?p=28877)
 
 ---
 
 ## License
 
-JuBiC is released as an **open-source project**. See the [LICENSE](./LICENSE) file for details.  
+JuBiC is released as an open-source project. See the [LICENSE](./LICENSE) file
+for details.
