@@ -1,12 +1,17 @@
 # HNDP Network Generation Config
 
 This document describes the JSON structure used by
-[network_generation_example.json](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/run_settings/network_generation_example.json)
+[network_generation_example.json](run_settings/network_generation_example.json)
 and
-[hndp_network_generation.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/hndp_network_generation.jl).
+[hndp_network_generation.jl](hndp_network_generation.jl).
 
 The generator creates HNDP network instances only. Solver-specific JuBiC models
 are built later.
+
+The intended workflow is JSON-driven: define instance families and parameter
+grids in a network-generation JSON file, let the generator expand the list-valued
+fields into concrete HNDP instances, and then pass these generated instances to
+the model-generation and solver pipeline.
 
 ## Top-Level Structure
 
@@ -207,11 +212,27 @@ Each entry in `instances` supports the following common fields.
 - Type: array of numbers
 - Optional: yes
 - Default: `[1.0]`
-- Meaning: fraction of decision arcs that may be made available by the leader.
+- Meaning: fraction of decision arcs that may be made available by the leader,
+  measured relative to the number of decision arcs in the generated instance.
 - Current behavior:
-  - the generator stores both the fraction and the realized decision-arc count
-    implied by that fraction in the instance metadata
+  - for a generated decision-arc set `A`, the integer budget is
+    `floor(availability_budget_fraction * length(A))`
+  - the generator stores both the requested fraction and the realized integer
+    count in the instance metadata
   - if omitted, the effective budget is all decision arcs
+  - specify `availability_budget_count` instead if the integer count should be
+    fixed directly
+
+### `availability_budget_count`
+
+- Type: integer
+- Optional: yes
+- Meaning: explicit integer budget on the number of selectable decision arcs.
+- Current behavior:
+  - may not be specified together with `availability_budget_fraction`
+  - must lie between `0` and the number of decision arcs
+  - the corresponding fraction is recorded as
+    `availability_budget_count / length(A)` in the metadata
 
 ### `parameter_seeds`
 
@@ -221,6 +242,18 @@ Each entry in `instances` supports the following common fields.
   spec only.
 
 ## Fields for `constrained_shortest_path`
+
+### `alpha`
+
+- Type: array of numbers
+- Optional: yes
+- Meaning: newer alias for `length_slack`.
+- Current behavior:
+  - if `alpha` is present, it is used instead of `length_slack`
+  - values are written to metadata as both `alpha` and `length_slack` when
+    `length_constrained = true`
+  - if `length_constrained = false`, additional alpha values are ignored because
+    no path-length bound is generated
 
 ### `length_slack`
 
@@ -249,6 +282,19 @@ Each entry in `instances` supports the following common fields.
 
 ## Fields for `competition`
 
+### `alpha`
+
+- Type: array of numbers
+- Optional: yes
+- Meaning: newer alias for `length_slack`, supported for layered competition,
+  `single_layer_k_competition`, and `single_layer_k_decision_only`.
+- Current behavior:
+  - if `alpha` is present, it is used instead of `length_slack`
+  - values are written to metadata as both `alpha` and `length_slack` when
+    `length_constrained = true`
+  - if `length_constrained = false`, additional alpha values are ignored because
+    no path-length bound is generated
+
 ### `length_slack`
 
 - Type: array of numbers
@@ -258,15 +304,25 @@ Each entry in `instances` supports the following common fields.
   generated competition network.
 - Reasonable values: numbers in `[0, 1]`.
 
+### `beta`
+
+- Type: array of numbers
+- Optional: yes
+- Meaning: newer alias for `competitor_cost_factor`.
+- Current behavior:
+  - if `beta` is present, it is used instead of `competitor_cost_factor`
+  - values are written to metadata as both `beta` and `competitor_cost_factor`
+
 ### `competitor_cost_factor`
 
 - Type: array of numbers
 - Optional: yes
 - Default: `[0.8]`
-- Meaning: multiplicative scaling applied to the cost of decision arcs in the
-  competitor layer.
+- Meaning: multiplicative scaling applied to the user cost of decision arcs in
+  the operator-controlled layer for layered competition instances, and to the
+  sampled decision arcs in `single_layer_k_competition`.
 - Interpretation:
-  - values below `1.0` make competitor-layer decision arcs cheaper
+  - values below `1.0` make those decision arcs cheaper for users
   - value `1.0` leaves their cost unchanged
   - values above `1.0` make them more expensive
 - Reasonable values: positive numbers such as `0.5`, `0.8`, `1.0`, `1.2`
@@ -294,8 +350,11 @@ Each entry in `instances` supports the following common fields.
     - sampled arcs are only the controllable arcs,
     - and operator risk remains on all arcs
 - Important sign convention:
-  - `"competition"` keeps the older negative-risk / profit convention
-  - `"decision_only"` now uses positive risk coefficients
+  - layered competition instances use negative operator-side coefficients on
+    relevant operator arcs to represent profit earned by the operator
+  - single-layer `"competition"` keeps nonzero operator-side coefficients only
+    on sampled decision arcs
+  - single-layer `"decision_only"` uses positive risk coefficients on all arcs
 
 ### `decision_arc_count`
 
