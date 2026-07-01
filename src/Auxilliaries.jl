@@ -31,7 +31,11 @@ end
 
 Creates a new logger that writes to a file where the path is given by 'filepath'. If 'print_debug' is true, the logger also prints the @debug messages. 
 """
-function new_file_logger(filepath, print_debug)
+function new_file_logger(filepath, print_debug; enable_output_logs::Bool=true)
+    if !enable_output_logs
+        return current_logger(), IOBuffer()
+    end
+
     io = open(filepath, "w")
     if print_debug
         logger = MinLevelLogger(FileLogger(io), Logging.Debug)
@@ -41,6 +45,45 @@ function new_file_logger(filepath, print_debug)
         @info("Registered a new Logger but it will not print any debug messages as it was not set in the parameters of the solvers.")
     end
     return logger, io
+end
+
+"""
+    repo_root_path()
+
+Return the JuBiC repository root path.
+"""
+repo_root_path() = normpath(joinpath(@__DIR__, ".."))
+
+"""
+    scoped_local_tempdir(parent::AbstractString; prefix="tmp")
+
+Create a unique temporary directory under the explicitly provided `parent`
+directory. The directory is created immediately and returned as an absolute
+path.
+"""
+function scoped_local_tempdir(parent::AbstractString; prefix::AbstractString="tmp")
+    mkpath(parent)
+    while true
+        candidate = tempname(parent)
+        candidate_dir = dirname(candidate)
+        basename_prefix = string(prefix, "_", basename(candidate))
+        candidate = joinpath(candidate_dir, basename_prefix)
+        if !ispath(candidate)
+            mkdir(candidate)
+            return candidate
+        end
+    end
+end
+
+"""
+    repo_local_tempdir(parts...; prefix="tmp")
+
+Create a unique temporary directory under the repo-local temp root
+`<repo>/tmp/jubic_temp/...`.
+"""
+function repo_local_tempdir(parts::AbstractString...; prefix::AbstractString="tmp")
+    parent = joinpath(repo_root_path(), "tmp", "jubic_temp", parts...)
+    return scoped_local_tempdir(parent; prefix=prefix)
 end
 
 """
@@ -94,6 +137,7 @@ end
 Print the passed list of JuMP constraints 'sol_to_lazy' to file.
 """
 function print_collected_cuts(param::SolverParam, sol_to_lazy::Dict; filename="mastercuts_collection.txt")
+    should_write_output_logs(param) || return nothing
     filepath = joinpath(param.output_folder_path, filename)
     for lazylist in values(sol_to_lazy)
         append_constraintlist_to_file(lazylist, filepath)
@@ -106,6 +150,7 @@ end
 Print the passed solution value 'mobj' and a mapping of variables to value ('xvars') to file.
 """
 function print_solution_to_file(mobj, xvars, params::SolverParam)
+    should_write_output_logs(params) || return nothing
     outfilecut = params.output_folder_path * "/master_sol.txt"
     open(outfilecut, "w") do f
         println(f, "The objective value is $(mobj)")
@@ -129,19 +174,46 @@ function round_master_solution(msol::Dict)
     return nsol
 end
 
+function _base_optimization_status_label(status)
+    if status == MOI.OPTIMAL
+        return "Optimal"
+    elseif status == MOI.LOCALLY_SOLVED
+        return "Suboptimal"
+    elseif status == MOI.TIME_LIMIT
+        return "Timelimit"
+    elseif status == MOI.INFEASIBLE
+        return "Infeasible"
+    elseif status == MOI.INFEASIBLE_OR_UNBOUNDED
+        return "Infeasible_or_Unbounded"
+    elseif status == MOI.DUAL_INFEASIBLE
+        return "Dual_Infeasible"
+    elseif status == MOI.INTERRUPTED
+        return "Interrupted"
+    elseif status == MOI.MEMORY_LIMIT
+        return "Memory_Limit"
+    elseif status == MOI.NUMERICAL_ERROR
+        return "Numerical_Error"
+    end
+    return string(status)
+end
+
+function _numerical_status_label(base_status::AbstractString)
+    if base_status == "Optimal"
+        return "Opt_Numerics"
+    end
+    return base_status * "_Numerics"
+end
 
 function set_optimization_status_stats(status, param)
     if haskey(param.stats.data, "Opt_status_override")
-        new_stat!(param.stats, "Opt_status", param.stats.data["Opt_status_override"])
+        override = String(param.stats.data["Opt_status_override"])
+        if override == "Numerics"
+            base_status = _base_optimization_status_label(status)
+            new_stat!(param.stats, "Opt_status", _numerical_status_label(base_status))
+        else
+            new_stat!(param.stats, "Opt_status", override)
+        end
         return nothing
     end
-    if status == MOI.OPTIMAL
-        new_stat!(param.stats, "Opt_status", "Optimal")
-    elseif status == MOI.LOCALLY_SOLVED
-        new_stat!(param.stats, "Opt_status", "Suboptimal")
-    elseif status == MOI.TIME_LIMIT
-        new_stat!(param.stats, "Opt_status", "Timelimit")
-    else
-        new_stat!(param.stats, "Opt_status", "Infeasible")
-    end
+    new_stat!(param.stats, "Opt_status", _base_optimization_status_label(status))
 end

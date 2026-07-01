@@ -1,52 +1,63 @@
 # JuBiC Documentation
 
-## Introduction
+## Problem Class
 
-**JuBiC** is an open-source software package developed in Julia specifically designed for solving bilevel optimization problems and two-stage optimization problems that involve binary linking variables. These problems feature a hierarchical structure consisting of a first-level (leader) problem and one or more second-level (follower) problems. Such problems arise in various fields, including economics, engineering, and logistics, where decisions made at the first level influence the feasible region of the second-level problems.
-
-
-### Problem Formulation
-
-JuBiC focuses on solving bilevel optimization problems with the following general structure.
-Let $\mathcal{A}$ denote a set of shared resources. For each resource $a \in \mathcal{A}$, the first-level problem uses binary linking variables $x_a \in \{0, 1\}$, and we denote the vector of all $x$-variables as $\mathbf{x}$. Let $K$ be the total number of second-level problems. For each second-level problem $k \in \{1, \dots, K\}$ and resource $a \in \mathcal{A}$, let $C_a^k > 0$ denote the resource capacity available to the problem, and let $y_a^k \geq 0$ represent the variable in the second-level problem that is linked to the corresponding first-level variable $x_a$. Similarly, $\mathbf{y}^k$ denotes the vector of all $y$-variables of the $k$-th second-level problem. Furthermore, let $\mathbf{h}$ and $\mathbf{z}^k$ denote the (bounded) feasible regions for purely first-level and purely second-level variables. The functions $r(\cdot), r_1(\cdot), \dots, r_K(\cdot)$ and $c_1(\cdot), \dots, c_K(\cdot)$ represent the (linear) objective functions for the first-level and all second-level problems, respectively. Note that two-stage problems are special cases where $r_i = c_i$ for all $i \in \{1, \dots, K\}$.
-
-The first-level problem is defined as:
+JuBiC addresses mixed-integer bilevel optimization problems with binary linking variables. A generic problem in the supported class can be written as
 
 ```math
-\begin{align*}
-    \min \quad & r(\mathbf{h}, \mathbf{x}) + \sum_{k=1}^K r_k(\mathbf{y}^k, \mathbf{z}^k) & \\
-    s.t. \quad & \mathbf{h} \in \mathcal{H}(\mathbf{x}) & \\
-               & x_a \in \{0, 1\}   \quad &\forall a \in \mathcal{A} \\
-               & (\mathbf{y}^k, \mathbf{z}^k) \in \mathcal{S}_k(\mathbf{x}) &\forall k \in \{1, \dots, K\}
-\end{align*}
+\begin{aligned}
+\min_{x,\, y^1,\dots,y^K}\quad & F(x) + \sum_{k \in \mathcal{K}} G_k(x, y^k) \\
+\text{s.t.}\quad & x \in X, \\
+& y^k \in \arg\min_{\bar y \in Y_k(x)} f_k(x, \bar y) \qquad \forall k \in \mathcal{K},
+\end{aligned}
 ```
 
-Here, $\mathcal{S}_k(\mathbf{x})$ represents the set of optimal solutions to the $k$-th second-level problem defined as: 
+where:
+
+- `x` denotes the first-level decision variables,
+- `\mathcal{K}` is the set of second-level problems,
+- `Y_k(x)` is the feasible region of follower `k`, parameterized by the first-level linking decisions,
+- `F` and `G_k` define the first-level objective,
+- and `f_k` is the follower objective.
+
+JuBiC builds on top of [JuMP](https://jump.dev/JuMP.jl/stable/), so the first-level model `X` and the follower models `Y_k(x)` are ordinary JuMP models. The important structural restriction for the algorithms currently implemented in JuBiC is that the linking variables connecting both levels are binary. In a standard form, this is represented by
 
 ```math
-\begin{align*}
-    \min \quad & c_k(\mathbf{y}^k, \mathbf{z}^k) & \\
-    s.t. \quad & y_a^k \leq C_a^k x_a \quad &\forall a \in \mathcal{A} \\
-               & y_a^k \geq 0   \quad &\forall a \in \mathcal{A} \\
-               & \mathbf{z}^k \in \mathcal{Z}_k(\mathbf{y}^k) &
-\end{align*}
+x_a \in \{0,1\} \qquad \forall a \in A,
 ```
+
+and, for each follower `k`,
+
+```math
+y^k_a \in \{0,1\}, \qquad y^k_a \le x_a \qquad \forall a \in A.
+```
+
+This coupling means that the first level activates or blocks second-level binary decisions through the shared resource set `A`.
+
+The following are the settings that JuBiC has been tested on so far:
+
+- a minimization problem at both levels,
+- linear first-level and second-level constraints,
+- linear objective terms,
+- and binary linking variables that activate or restrict second-level decisions.
+
+JuBiC provides several solver interfaces for this problem class. The package is
+organized around a small number of common concepts:
+
+- **model wrappers**, which describe how the first-level model and follower problems are passed to JuBiC,
+- **solver parameter objects**, which define runtime behavior such as solver selection, output handling, logging, and runtime limits,
+- **solver methods**, which define the algorithmic route used to solve an `Instance`,
+- **subsolvers**, which implement follower-side oracle calls for decomposition methods,
+- **application examples**, which show how concrete problem families are generated, modeled, and benchmarked,
+- and **run statistics**, which report solver status, objective values, runtimes, and numerical fallback information.
+
+The documentation follows this structure. Start with a small runnable example,
+then read the JuBiC usage overview, and then move to the solver, subsolver, or
+application-example page that matches the task.
 
 ## Installation
 
-```@raw comment
-(currently not supported) Installation through Julia's package manager
-
-    You can install JuBiC via Julia's package manager as follows:
-
-    ```julia-repl
-    julia> import Pkg
-
-    julia> Pkg.add("JuBiC")
-    ```
-```
-
-The latest development version can be installed directly from GitHub:
+The current development version can be installed directly from GitHub:
 
 ```julia-repl
 julia> import Pkg
@@ -56,18 +67,35 @@ julia> Pkg.add(url="https://github.com/vstadnichuk/JuBiC")
 
 ## Verify Installation
 
-To ensure that everything is set up correctly after the installation, you can run the following command to execute the test provided within JuBiC:
+To run the package tests:
 
 ```julia-repl
 julia> Pkg.test("JuBiC")
 ```
 
-## License
+The current test suite uses `Gurobi`, so running the tests requires a working `Gurobi` installation and a valid license.
 
-JuBiC is released as an **open-source project**. For detailed licensing information, please refer to the [LICENSE](https://github.com/vstadnichuk/JuBiC/blob/main/LICENSE).
+## Documentation Map
 
-## Citing `JuBiC`
+- [Getting Started](getting_started.md)
+  A small bilevel model written in JuBiC syntax and solved with representative solver routes.
+- [Using JuBiC](model_objects.md)
+  The main conceptual overview: `Instance`, master wrappers, subsolver wrappers, solver parameter objects, solver families, and experiment output.
+- [Extending JuBiC](extending_jubic.md)
+  Practical guidance and current limitations for implementing custom solver or subsolver components.
+- [Solver Methods](solvers/gbc.md)
+  Algorithm-specific pages for `GBC`, `BlC`, `BlCLag`, the compact MIP wrapper, and the direct `MiBS` wrapper.
+- [SubSolvers](sub_solvers.md)
+  The follower-oracle interface and the currently implemented subsolver wrappers.
+- [Numerics and Status Codes](numerics_and_status.md)
+  Numerical safeguards, fallback logic, and the status values written to `RunStats`.
+- [HNDP Example](examples/hndp/motivation.md)
+  Application documentation split into motivation, instance generation, solver models, A* subsolver implementation, and benchmark pipeline.
+- [Core Solver API](solver_api.md)
+  A generated technical reference for exported JuBiC objects.
 
-If you use **JuBiC** in your research, please cite:
+## Citation
+
+If you use JuBiC in research, cite:
 
 > Stadnichuk and Koster (2024), *Solving Multi-Follower Mixed-Integer Bilevel Problems with Binary Linking Variables*, Optimization Online. [Link](https://optimization-online.org/?p=28877)

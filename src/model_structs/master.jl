@@ -1,5 +1,12 @@
 using JuMP
 
+"""
+Master wrapper for JuBiC decomposition solvers.
+
+`Master` stores the first-level JuMP model, the binary linking variables,
+resource keys, subproblem names, and optional partial-decomposition data used
+by solvers such as `GBC`.
+"""
 struct Master{T}
     model::JuMP.Model  # The master problem without second level
     A::Vector{T}  # Iterable of common resources

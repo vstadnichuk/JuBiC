@@ -1,4 +1,5 @@
 # Basic implementation of a Benders-like cuts solver. The big M must be provided by the user.
+using Base.Threads
 
 function solve_with_BLC!(inst::Instance, param::BLCparam)
     blcm::BlCMaster = inst.master
@@ -10,6 +11,7 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     new_stat!(param.stats, "NSub", length(inst.subproblems))
     new_stat!(param.stats, "BlCuts", 0)
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
+    new_stat!(param.stats, "parallel_separation", param.parallel_separation)
 
     # do some initial checks for master and sub solvers
     @debug "Doing some checks if master and sub were created correctly for Benders-like cuts solver."
@@ -19,21 +21,31 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     end
 
     # save HPR to lp file and set log file
-    try
-        write_to_file(blcm.hpr, param.output_folder_path * "/hpr.$(param.file_format_output)")
-        set_optimizer_attribute(blcm.hpr, "LogFile", param.output_folder_path *"/blc_mip_log.txt")
-    catch err 
-        @error "Could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+    if should_write_output_logs(param)
+        try
+            write_to_file(blcm.hpr, param.output_folder_path * "/hpr.$(param.file_format_output)")
+            set_optimizer_attribute(blcm.hpr, "LogFile", param.output_folder_path *"/blc_mip_log.txt")
+        catch err 
+            @error "Could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+        end
     end
 
     # set runtime and number of threads
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
+    if param.parallel_separation
+        parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
+        new_stat!(param.stats, "parallel_subsolver_workers_used", parallel_workers)
+    end
     set_time_limit_sec(blcm.hpr, param.runtime)
     set_attribute(blcm.hpr, MOI.NumberOfThreads(), master_threads)
     set_seed!(blcm.hpr, param.solver, get_seed(param))
     for sub in inst.subproblems
-        set_nthreads(sub, sub_threads)
+        if param.parallel_separation
+            set_singlethread(sub)
+        else
+            set_nthreads(sub, sub_threads)
+        end
     end
 
     # add callback to master and solve 
@@ -69,8 +81,10 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
                 new_stat!(param.stats, "Opt", mobj)
 
                 # print MIP solution to file
-                solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(blcm.hpr))
-                write(param.output_folder_path*"/solution.json", JSON.json(solution))
+                if should_write_output_logs(param)
+                    solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(blcm.hpr))
+                    write(param.output_folder_path*"/solution.json", JSON.json(solution))
+                end
             end
 
             # set status 
@@ -117,33 +131,52 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
             else
                 # solve each sub and add cut to list of cuts "lazy"
                 @debug "We found no saved lazy cuts for current solution and solve subproblems now."
-                for sub in inst.subproblems
-                    # retrive current objective function value of sub_problem
-                    subobjcurrent = callback_value(cb_data, blcm.sub_objectives[name(sub)])
+                results = Vector{Any}(undef, length(inst.subproblems))
+                if parameter.parallel_separation && length(inst.subproblems) > 1
+                    sem = Base.Semaphore(get(parameter.stats.data, "parallel_subsolver_workers_used", 1))
+                    @sync for (idx, sub) in enumerate(inst.subproblems)
+                        Threads.@spawn begin
+                            Base.acquire(sem)
+                            try
+                                feasible, subopt, _, y_vals = solve_sub_for_x(sub, x_vals, parameter, parameter.runtime)
+                                results[idx] = (
+                                    sub=sub,
+                                    feasible=feasible,
+                                    subopt=subopt,
+                                    y_vals=y_vals,
+                                )
+                            finally
+                                Base.release(sem)
+                            end
+                        end
+                    end
+                else
+                    for (idx, sub) in enumerate(inst.subproblems)
+                        feasible, subopt, _, y_vals = solve_sub_for_x(sub, x_vals, parameter, parameter.runtime)
+                        results[idx] = (
+                            sub=sub,
+                            feasible=feasible,
+                            subopt=subopt,
+                            y_vals=y_vals,
+                        )
+                    end
+                end
 
-                    # solve sub_problem 
-                    ## there does not seem to be an easy way to obtain the remaining runtime in solver-independent callbacks. So we stick with a worst case approximation for the time limit.
-                    feasible = false
-                    subopt = -1
-                    y_vals = Dict()
-                    feasible, subopt, risksubopt, y_vals = solve_sub_for_x(sub, x_vals, parameter, parameter.runtime)
-                    # in case of timeout within one subsolver, one of the Submodels run for timelimit time. We let this result in a timeout error 
-                    
-                    if !feasible
+                for result in results
+                    sub = result.sub
+                    if !result.feasible
                         error("Terminate BlC solver: The passed first-level solution was not feasible for subsolver $(name(sub)). x=$x_vals")
                     end
 
-                    # check if Benders-like cut is necessary and add it if this is the case
-                    ## Attention: this leads to strange bugs with multi-threads settings. Just add Benders-like cuts whenever you find one
                     bigMterms = 0
                     for a in blcm.A
                         bigMterms +=
                             blcm.big_m(a, name(sub)) *
-                            y_vals[a] *
+                            result.y_vals[a] *
                             (1 - blcm.link_vars[a])
                     end
                     cutopt = @build_constraint(
-                        blcm.sub_objectives[name(sub)] <= subopt + bigMterms
+                        blcm.sub_objectives[name(sub)] <= result.subopt + bigMterms
                     )
                     @debug "Adding Benders-like cut $(cutopt) to the master problem for sub $(name(sub))."
                     add_stat!(parameter.stats, "BlCuts", 1)

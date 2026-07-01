@@ -11,29 +11,52 @@ While JuBiC was originally developed for **bilevel optimization problems**, it c
 
 ---
 
-## Key Features
+## Documentation
 
-- Flexible interface for implementing your own decomposition methods or using the already available ones.  
-- Solvers are structured around a **master solver** (for the leader/master problem) and **subsolvers** (for each follower/subproblem).  
-- Subproblems can be solved with different solvers, offering high flexibility.  
-- Currently includes **four solvers**:
+The current documentation starts at [`docs/src/index.md`](./docs/src/index.md).
+
+To build the rendered HTML documentation locally, run:
+
+```julia
+julia --project=. docs/make.jl
+```
+
+
+---
+
+## Paper-Specific Branches
+
+Some papers have been written with JuBiC. For reproducibility, these papers may
+have dedicated branches that preserve the state of the code used when the paper
+was published.
+
+Currently, the available paper-specific branch is:
+
+- [`catalog-formulations-multi-follower-discrete-bilevel-network-design`](https://github.com/vstadnichuk/JuBiC/tree/catalog-formulations-multi-follower-discrete-bilevel-network-design):
+  branch for
+  [*A Catalog of Formulations for the Multi-Follower Discrete Bilevel Network Design Problem*](https://optimization-online.org/?p=35437).
+
+---
 
 ### Implemented Solvers
 
-1. **GBC-Solver**  
-   - Implements the hierarchical decomposition from our preprint.  
-   - Provides a wrapper for an MIP-based subproblem solver.  
-   - Alternatively, you may implement your own subsolver for the Pricing Problem.  
+1. **GBC-Solver**
+   - Implements generalized Benders cuts in the first-level variable space.
+   - Supports JuMP, MiBS, and custom subsolvers.
 
-2. **BLC-Solver**  
-   - A basic implementation of a Benders-like decomposition for bilevel optimization.  
-   - Requires the user to provide a function that generates the *big-M* values for Benders-like cuts.  
+2. **BlC-Solver**
+   - Implements Benders-like cuts for bilevel optimization.
+   - Requires user-provided big-M values for the Benders-like cuts.
 
-3. **MIBS-Solver**  
-   - Wrapper for the bilevel solver **MIBS**.  
+3. **BlCLag-Solver**
+   - Uses the BlC structure but generates cut coefficients from the problem structure.
+   - Requires bilevel-capable subsolvers.
 
-4. **MIP-Solver**  
-   - Wrapper for solving standard **MIPs**.  
+4. **MiBS-Solver**
+   - Direct wrapper for the external bilevel solver **MiBS** through BilevelJuMP.
+
+5. **MIP-Solver**
+   - Wrapper for solving compact JuMP MIP models through JuBiC's common interface.
 
 ---
 
@@ -43,10 +66,9 @@ While JuBiC was originally developed for **bilevel optimization problems**, it c
    - Run `runtest.jl` to verify that the installation was successful.  
 
 2. Explore the [`examples`](./examples) folder for advanced applications:  
-   - **HNDP**: Two-stage and bilevel network design problems.  
-     - Demonstrates GBC-Solver and BLC-Solver. Also shows how MIP-Solver can be applied to solve the compact reformulations.  
+   - **HNDP**: Bilevel network design problems.  
+     - Demonstrates GBC, BlC, BlCLag, MiBS, and compact MIP-based formulations.  
      - The function *testrun!* in the file *hndp_tests.jl* demonstrates how a large number of tests can be automated within the JuBiC framework.  
-   - **StochasticMultipleKnapsack**: Application of our solvers to the **two-stage stochastic multiple knapsack problem** from SIPLIB.  
 
 ---
 
@@ -54,7 +76,7 @@ While JuBiC was originally developed for **bilevel optimization problems**, it c
 
 JuBiC is still under active development.  
 
-- A detailed documentation of the solvers and further examples are in progress.  
+- Further examples are in progress.  
 - Results should be interpreted with care. While extensive experiments have been conducted to validate the solvers, we **strongly recommend cross-verifying results**.  
 
 If you encounter difficulties or have any questions, feel free to contact:  

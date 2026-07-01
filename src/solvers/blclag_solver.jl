@@ -1,4 +1,5 @@
 # The Solver for Automated Generation of Benders-Like Cuts within Benders-Like Decomposition Using Lagrangian Cuts
+using Base.Threads
 
 """
     solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
@@ -22,8 +23,13 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     new_stat!(param.stats, "BlCLagCuts", 0)
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "SepaTimeCut", 0)  # time spend in separator for generating cuts only
+    new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
+    if param.parallel_separation
+        parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
+        new_stat!(param.stats, "parallel_subsolver_workers_used", parallel_workers)
+    end
 
     # do some initail checks for master and sub solvers
     @debug "Doing some checks if master and sub were created correctly."
@@ -46,14 +52,16 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     end
 
     # debbug output
-    try
-        write_to_file(
-            master.model,
-            param.output_folder_path * "/master.$(param.file_format_output)",
-        )
-        set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/blclag_mip_log.txt")
-    catch err 
-        @error "In BlCLagSolver, could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+    if should_write_output_logs(param)
+        try
+            write_to_file(
+                master.model,
+                param.output_folder_path * "/master.$(param.file_format_output)",
+            )
+            set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/blclag_mip_log.txt")
+        catch err 
+            @error "In BlCLagSolver, could not write model to file or set log file for folder $(param.output_folder_path). Error is $err"
+        end
     end
 
     # build the sub LPs for Benders subroutine 
@@ -66,7 +74,11 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
     for sub in subs
-        set_nthreads(sub, sub_threads)
+        if param.parallel_separation
+            set_singlethread(sub)
+        else
+            set_nthreads(sub, sub_threads)
+        end
     end
 
     # add callback to master and solve 
@@ -78,8 +90,15 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
         optimize!(master.model)
     catch e
         if (e isa TimeoutException)
-            @warn "We run into a timeout when solving a Submodel with BlCLagSolver. Note that this implies that the Subproblem run for the time passed by timelimit and did not terminate. "
-            new_stat!(param.stats, "BlCLagStatus", "Timeout_Submodel")
+            @warn "We run into a timeout when solving a subsolver with BlCLagSolver."
+            new_stat!(param.stats, "BlCLagStatus", "Timeout_Subsolver")
+            new_stat!(param.stats, "Opt_status", "Timeout_Subsolver")
+            param.stats.data["Opt_status_override"] = "Timeout_Subsolver"
+        elseif (e isa MibSFailureException)
+            @error "BlCLagSolver terminated because a MiBS subsolver failed: $e"
+            new_stat!(param.stats, "BlCLagStatus", "Terminate_MibS")
+            new_stat!(param.stats, "Opt_status", "Terminate_MibS")
+            param.stats.data["Opt_status_override"] = "Terminate_MibS"
         else
             @error "BlCLagSolver suffered an error: $e"
             @error stacktrace(catch_backtrace())
@@ -100,7 +119,9 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
 
                 # print full MIP solution to file
                 solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(master.model))
-                write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                if should_write_output_logs(param)
+                    write(param.output_folder_path*"/full_master_solution.json", JSON.json(solution))
+                end
             end
 
             # set status 
@@ -173,26 +194,61 @@ function blclag_callback_function(cb_data, master::BlCLagMaster, sub_names, clps
             else
                 # solve each sub and add cut to list of cuts "lazy"
                 @debug "We found no saved lazy cuts for current solution and solve subproblems now."
-                for con in clps
-                    cuttime = @elapsed begin
-                        # solve corresponding connectorLP
-                        ## there does not seem to be an easy way to obtain the remaining runtime in solver-independent callbacks. So we stick with a worst case approximation for the time limit.
-                        cut=nothing
-                        pobj=-1
-                        cut, pobj, _ = genBenderslike_cut!(con, x_vals, parameter, parameter.runtime)
-                        # in case of timeout within one subsolver, one of the Submodels run for timelimit time. We let this result in a timeout error 
-
-                        # generate cut from found solution and add it to master if it cuts of current solution
-                        if subObj_val[name(con)] - 1e-6 > pobj  # TODO: again, hard coded numeric
-                            cutopt = @build_constraint( subObj[name(con)] <= cut)
-                            @debug "Adding BlC cut $(cutopt) generated from Lagrangian dual to the master problem for sub $(name(con.sub_solver))."
-                            add_stat!(parameter.stats, "BlCLagCuts", 1)
-                            push!(lazy, cutopt)
-                        else
-                            @debug "No cut generated from Lagrangian dual to the master problem for sub $(name(con.sub_solver)) as current L2obj=$(subObj_val[name(con)]) and cut value=$pobj."
+                results = Vector{Any}(undef, length(clps))
+                if parameter.parallel_separation && length(clps) > 1
+                    sem = Base.Semaphore(get(parameter.stats.data, "parallel_subsolver_workers_used", 1))
+                    @sync for (idx, con) in enumerate(clps)
+                        Threads.@spawn begin
+                            Base.acquire(sem)
+                            try
+                                local_param = _local_blclag_param(parameter)
+                                result_ref = Ref{Any}(nothing)
+                                cuttime = @elapsed begin
+                                    cut, pobj, _ = genBenderslike_cut!(con, x_vals, local_param, local_param.runtime)
+                                    result_ref[] = (
+                                        con=con,
+                                        cut=cut,
+                                        pobj=pobj,
+                                        stats=local_param.stats,
+                                    )
+                                end
+                                results[idx] = (; result_ref[]..., cuttime=cuttime)
+                            finally
+                                Base.release(sem)
+                            end
                         end
                     end
-                    add_stat!(parameter.stats, "SepaTimeCut", cuttime)
+                else
+                    for (idx, con) in enumerate(clps)
+                        local_param = parameter.parallel_separation ? _local_blclag_param(parameter) : parameter
+                        result_ref = Ref{Any}(nothing)
+                        cuttime = @elapsed begin
+                            cut, pobj, _ = genBenderslike_cut!(con, x_vals, local_param, local_param.runtime)
+                            result_ref[] = (
+                                con=con,
+                                cut=cut,
+                                pobj=pobj,
+                                stats=(parameter.parallel_separation ? local_param.stats : nothing),
+                            )
+                        end
+                        results[idx] = (; result_ref[]..., cuttime=cuttime)
+                    end
+                end
+
+                for result in results
+                    if !isnothing(result.stats)
+                        _merge_parallel_blclag_stats!(parameter.stats, result.stats)
+                    end
+                    add_stat!(parameter.stats, "SepaTimeCut", result.cuttime)
+
+                    if subObj_val[name(result.con)] - 1e-6 > result.pobj
+                        cutopt = @build_constraint(subObj[name(result.con)] <= result.cut)
+                        @debug "Adding BlC cut $(cutopt) generated from Lagrangian dual to the master problem for sub $(name(result.con.sub_solver))."
+                        add_stat!(parameter.stats, "BlCLagCuts", 1)
+                        push!(lazy, cutopt)
+                    else
+                        @debug "No cut generated from Lagrangian dual to the master problem for sub $(name(result.con.sub_solver)) as current L2obj=$(subObj_val[name(result.con)]) and cut value=$(result.pobj)."
+                    end
                 end
 
                 # save that we found lazy const. for this sol
@@ -213,4 +269,34 @@ function blclag_callback_function(cb_data, master::BlCLagMaster, sub_names, clps
         @assert status == MOI.CALLBACK_NODE_STATUS_UNKNOWN
         return
     end
+end
+
+function _local_blclag_param(params::BlCLagparam)
+    local_stats = RunStats()
+    new_stat!(local_stats, "threads_master_used", get(params.stats.data, "threads_master_used", 1))
+    new_stat!(local_stats, "threads_sub_con_used", get(params.stats.data, "threads_sub_con_used", 1))
+    return BlCLagparam(
+        params.solver,
+        params.debbug_out,
+        params.output_folder_path,
+        params.file_format_output,
+        local_stats,
+        params.runtime,
+        params.seed,
+        params.threads_master,
+        params.threads_sub_con,
+        params.parallel_separation,
+        params.pareto,
+        params.warmstart,
+        params.infinity_num,
+        params.blc_pareto_band_tolerance,
+    )
+end
+
+function _merge_parallel_blclag_stats!(target::RunStats, local_stats::RunStats)
+    if get(local_stats.data, "Opt_status_override", nothing) == "Numerics"
+        target.data["Opt_status_override"] = "Numerics"
+        target.data["BlCLagStatus"] = "Numerics"
+    end
+    return nothing
 end

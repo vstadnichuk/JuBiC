@@ -14,6 +14,7 @@ import JuBiC: cost_subs
 import JuBiC: prepare
 import JuBiC: reconstract_path
 import JuBiC: dominate_w
+import JuBiC: validate_nonnegative_arc_costs
 
 """
     HNDPAStarLabel
@@ -199,6 +200,37 @@ function _hndp_calculate_shortest_matrix(structure::HNDPAStarStructure, cs::Cost
 
     apsp = floyd_warshall_shortest_paths(structure.graph, adaptive_costs)
     return apsp.dists
+end
+
+function validate_nonnegative_arc_costs(sol::AStarSolver, xmapping, cs::CostStructure, params::SolverParam)
+    structure = sol.structure
+    graph = structure.graph
+
+    for u in vertices(graph)
+        for v in outneighbors(graph, u)
+            arc = (u, v)
+            if !_hndp_edge_allowed(xmapping, arc)
+                continue
+            end
+
+            arc_cost = if cs.cost_state == MASTER_LEVEL
+                structure.mrisk[arc...]
+            elseif cs.cost_state == SUB_PROBLEM_LEVEL
+                structure.mcost[arc...]
+            else
+                @assert cs.cost_state == CONNECTOR_BASED
+                structure.mcost[arc...] * cs.gval + structure.mrisk[arc...] + get(cs.kvals, arc, 0.0)
+            end
+
+            if arc_cost < 0
+                throw(ArgumentError(
+                    "The A*-based HNDP subsolver does not support negative arc costs for the active objective. " *
+                    "Found arc $(arc) with cost $(arc_cost) in cost state $(cs.cost_state) for subproblem $(sol.name).",
+                ))
+            end
+        end
+    end
+    return nothing
 end
 
 function _hndp_edge_allowed(xsol, arc::Tuple{Int,Int})

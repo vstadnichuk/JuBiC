@@ -45,6 +45,11 @@ These modes are used by:
 - `build_hndp_hybrid_blc_instance` for fallback users
 - `build_hndp_gbc_instance` only when `subproblem_method == HNDP_SUBPROBLEM_BLC_JUMP`
 
+For layered competition instances, `HNDP_BIGM_FIXED_NETWORK_PATH` now uses the
+two-layer competitor graph. For single-layer `k`-arc instances it uses the
+fixed-arc subgraph and falls back to the `n - 1` heuristic when no feasible
+fixed-network path exists.
+
 ### Subproblem Methods
 
 These constants control how follower problems are solved inside decomposition-type models:
@@ -68,6 +73,15 @@ Currently implemented:
 
 This is currently the only supported fallback mode in the generic hybrid path builder.
 
+The hybrid builders also support a second fallback trigger:
+
+- users may be pushed to fallback even after successful enumeration when the
+  number of enumerated paths exceeds the number of arc-flow variables in the
+  fallback formulation
+
+These path-count-triggered fallbacks are tracked separately from timeout
+fallbacks in the benchmark metadata.
+
 ## Common JuBiC Solve Parameters
 
 The JuBiC parameter structs are independent of HNDP and live in
@@ -85,6 +99,11 @@ These fields appear in most JuBiC solver parameter structs:
 
 - `output_folder_path`
   Folder for logs, exported models, and solution files.
+
+- `enable_output_logs`
+  Internal flag propagated through the HNDP runner. When disabled, streamed CSV
+  output still remains active, but solver-side per-instance debug logs and
+  model exports are skipped.
 
 - `file_format_output`
   Usually `"lp"` or `"mps"` for JuMP model exports.
@@ -389,6 +408,7 @@ build_hndp_path_instance(
     solver;
     enumeration_time_limit,
     parallelize=false,
+    use_decision_arc_dominance=true,
 )
 ```
 
@@ -400,6 +420,8 @@ Options:
   Global time budget for path-bound computation and path enumeration.
 - `parallelize`
   If `true`, uses the parallel precomputation variant.
+- `use_decision_arc_dominance`
+  Enables the decision-arc dominance pruning rule during path enumeration.
 
 Important behavior:
 - if no feasible fixed-network path exists, JuBiC falls back to the `n - 1` bound and logs a warning
@@ -421,6 +443,7 @@ build_hndp_hybrid_instance(
     big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
     indicator_constraints=false,
     bound_duals=true,
+    fallback_if_paths_exceed_flow_vars=false,
 )
 ```
 
@@ -440,6 +463,9 @@ Options:
   Passed to the SD fallback model.
 - `bound_duals`
   Passed to the SD fallback model.
+- `fallback_if_paths_exceed_flow_vars`
+  If `true`, users can also fall back after successful enumeration when the
+  path set is larger than the fallback arc-flow variable count.
 
 Use with:
 - `MIPparam`
@@ -455,6 +481,7 @@ build_hndp_hybrid_blc_instance(
     enumeration_time_limit,
     big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
     subproblem_method=HNDP_SUBPROBLEM_MIP,
+    fallback_if_paths_exceed_flow_vars=false,
 )
 ```
 
@@ -471,6 +498,10 @@ Options:
 - `subproblem_method`
   - `HNDP_SUBPROBLEM_MIP`
   - `HNDP_SUBPROBLEM_ASTAR`
+- `fallback_if_paths_exceed_flow_vars`
+  If `true`, users can also remain as BlC subproblems after successful
+  enumeration when the path set is larger than the fallback arc-flow variable
+  count.
 
 Use with:
 - `BLCparam`
@@ -510,3 +541,12 @@ Common model / parameter combinations:
 - AStar-based subproblem methods are available only where explicitly listed above.
 
 - Strong-duality-based formulations are only valid for users without weight bounds unless explicitly modeled through another route.
+
+- For single-layer competition generation, the current arc-mode split is:
+  - `single_layer_k_competition`
+    - `beta` scaling on sampled decision arcs
+    - only sampled decision arcs contribute operator-side risk
+  - `single_layer_k_decision_only`
+    - no `beta` scaling
+    - sampled arcs are only the controllable arcs
+    - risk remains on all arcs and is positive in this mode

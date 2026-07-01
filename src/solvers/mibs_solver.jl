@@ -51,7 +51,9 @@ end
 
 function _solve_with_MibS_param_file_runner(model::BilevelJuMP.BilevelModel, param::MibSparam)
     orig_path = pwd()
-    mktempdir() do path
+    scratch_root = joinpath(output_file_path(param), "_tmp_mibs_runner")
+    path = scoped_local_tempdir(scratch_root; prefix="mibs_runner")
+    try
         mps_filename = joinpath(path, "model.mps")
         aux_filename = joinpath(path, "model.aux")
         par_filename = joinpath(path, "mibs.par")
@@ -105,6 +107,8 @@ function _solve_with_MibS_param_file_runner(model::BilevelJuMP.BilevelModel, par
             log_output = output,
             working_directory = orig_path,
         )
+    finally
+        rm(path; force=true, recursive=true)
     end
 end
 

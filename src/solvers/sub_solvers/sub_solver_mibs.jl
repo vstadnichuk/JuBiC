@@ -15,6 +15,8 @@ struct SubSolverMiBS{T} <: SubSolver
     y_vars::Any
     r_objterm::GenericAffExpr
     c_objterm::GenericAffExpr
+    lower_name_map::Dict{String,String}
+    upper_name_map::Dict{String,String}
 end
 
 function _create_link_varsC(bi_model::BilevelModel, sub_name, A, y_vars)
@@ -32,7 +34,39 @@ function SubSolverMiBS(
     c_objterm,
 ) where T
     link_varsC = _create_link_varsC(bi_model, name, A, y_vars)
-    return SubSolverMiBS{T}(name, bi_model, A, link_varsC, y_vars, r_objterm, c_objterm)
+    return SubSolverMiBS{T}(
+        name,
+        bi_model,
+        A,
+        link_varsC,
+        y_vars,
+        r_objterm,
+        c_objterm,
+        Dict{String,String}(),
+        Dict{String,String}(),
+    )
+end
+
+function SubSolverMiBS(
+    name,
+    bi_model,
+    A::Vector{T},
+    link_varsC,
+    y_vars,
+    r_objterm,
+    c_objterm,
+) where T
+    return SubSolverMiBS{T}(
+        name,
+        bi_model,
+        A,
+        link_varsC,
+        y_vars,
+        r_objterm,
+        c_objterm,
+        Dict{String,String}(),
+        Dict{String,String}(),
+    )
 end
 
 function SubSolverMiBS(
@@ -51,6 +85,26 @@ end
 
 function capacity_linking(sol::SubSolverMiBS, a, params::SolverParam)
     return 1
+end
+
+_mibs_safe_name(name::AbstractString) = replace(String(name), ' ' => '_')
+
+function _initialize_name_maps!(sol::SubSolverMiBS)
+    if !isempty(sol.lower_name_map) && !isempty(sol.upper_name_map)
+        return nothing
+    end
+
+    empty!(sol.lower_name_map)
+    empty!(sol.upper_name_map)
+    for v in all_variables(Lower(sol.bi_model))
+        original_name = JuMP.name(v)
+        sol.lower_name_map[_mibs_safe_name(original_name)] = original_name
+    end
+    for v in all_variables(Upper(sol.bi_model))
+        original_name = JuMP.name(v)
+        sol.upper_name_map[_mibs_safe_name(original_name)] = original_name
+    end
+    return nothing
 end
 
 function check(sol::SubSolverMiBS, params::SolverParam)
@@ -87,9 +141,12 @@ function compute_lower_bound_master_contribution(sol::SubSolverMiBS, params::Sol
         @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
     end
 
-    solution = _solve_mip(sol, params.debbug_out)
+    solution = _solve_mip(sol, params.debbug_out, time_limit)
     if !solution.status
-        error("Submodel $(sol.name) could not be solved to optimality with MiBS when computing lower bound.")
+        if solution.timeout
+            throw(TimeoutException("We hit the time limit while solving MiBS subsolver $(sol.name)."))
+        end
+        throw(MibSFailureException("MiBS failed to solve submodel $(sol.name) to optimality when computing the lower bound."))
     end
 
     @debug "The found lower bound solution for $(sol.name) is $(solution.objective)."
@@ -117,10 +174,13 @@ function separation!(sol::SubSolverMiBS, sval, gvals, kvals::Dict, params::Solve
     catch err
         @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
     end
-    solution = _solve_mip(sol, params.debbug_out)
+    solution = _solve_mip(sol, params.debbug_out, time_limit)
 
     if !solution.status
-        error("When solving subproblem $(sol.name) for separating GBC cuts, MiBS reported the bilevel subproblem to be infeasible.")
+        if solution.timeout
+            throw(TimeoutException("We hit the time limit while solving MiBS subsolver $(sol.name) in GBC separation."))
+        end
+        throw(MibSFailureException("MiBS failed while solving subproblem $(sol.name) for separating GBC cuts."))
     end
 
     opt_obj = solution.objective
@@ -152,10 +212,13 @@ function separation_BlC!(sub_solver::SubSolverMiBS, sval, kvals::Dict, params::S
     catch err
         @error "Could not print Submodel MIP $(sub_solver.name) to file. error message $err"
     end
-    solution = _solve_mip(sub_solver, params.debbug_out)
+    solution = _solve_mip(sub_solver, params.debbug_out, time_limit)
 
     if !solution.status
-        error("When solving subproblem $(sub_solver.name) for separating BlC cuts, MiBS reported the bilevel subproblem to be infeasible.")
+        if solution.timeout
+            throw(TimeoutException("We hit the time limit while solving MiBS subsolver $(sub_solver.name) for separating BlC cuts."))
+        end
+        throw(MibSFailureException("MiBS failed while solving subproblem $(sub_solver.name) for separating BlC cuts."))
     end
 
     opt_obj = eval_affexpr_by_name(
@@ -199,12 +262,14 @@ function solve_sub_for_x(sol::SubSolverMiBS, xvals, params::SolverParam, time_li
     end
 
     @debug "Subproblem $(sol.name) MIP was adjusted. Start MibS solver to solve it."
-    solution = _solve_mip(sol, params.debbug_out)
+    solution = _solve_mip(sol, params.debbug_out, time_limit)
 
     try
         if !solution.status
-            @debug "The Subproblem $(sol.name) was infeasible"
-            return false, 0, 0, Dict()
+            if solution.timeout
+                throw(TimeoutException("We hit the time limit while solving MiBS subsolver $(sol.name) for fixed first-level values."))
+            end
+            throw(MibSFailureException("MiBS failed while solving subproblem $(sol.name) for fixed first-level values."))
         end
 
         y_vals = index_value_map(sol.y_vars, solution.all_lower)
@@ -312,28 +377,38 @@ function index_value_map(B, values::AbstractDict{String,<:Real})
     return result
 end
 
-function _call_mibs_local(mps_filename::AbstractString, aux_filename::AbstractString)
+function _call_mibs_local(
+    mps_filename::AbstractString,
+    aux_filename::AbstractString,
+    runtime_limit::Real,
+)
     output_path = joinpath(dirname(mps_filename), "mibs_output.txt")
     error_path = joinpath(dirname(mps_filename), "mibs_errors.txt")
-    MibS_jll.mibs() do exe
-        run(
-            pipeline(
-                `$(exe) -Alps_instance $(mps_filename) -MibS_auxiliaryInfoFile $(aux_filename)`;
-                stdout=output_path,
-                stderr=error_path,
-            ),
-        )
-    end
-    return read(output_path, String), read(error_path, String)
+    par_path = joinpath(dirname(mps_filename), "mibs.par")
+    _write_mibs_parameter_file!(
+        par_path,
+        mps_filename,
+        aux_filename,
+        MibSparam(false, dirname(mps_filename), runtime_limit),
+    )
+    return _call_mibs_with_param_file(
+        par_path,
+        output_path,
+        error_path,
+        runtime_limit,
+    )
 end
 
 function _parse_mibs_output_local(
     output::AbstractString,
     new_model::MOI.FileFormats.MPS.Model,
     lower_variables::Vector{MOI.VariableIndex},
+    lower_name_map::AbstractDict{String,String}=Dict{String,String}(),
+    upper_name_map::AbstractDict{String,String}=Dict{String,String}(),
 )
     lines = split(output, '\n')
     found_status = false
+    found_timeout = false
     objective_value = NaN
 
     upper = Dict{Int,Float64}()
@@ -356,12 +431,12 @@ function _parse_mibs_output_local(
         nameofvar = MOI.get(new_model, MOI.VariableName(), y)
         if y in lower_variables
             dict_lower_name[cntd] = nameofvar
-            dict_lower_value[nameofvar] = 0.0
+            dict_lower_value[get(lower_name_map, nameofvar, nameofvar)] = 0.0
             dict_lower_index_to_model[cntd] = y
             cntd += 1
         else
             dict_upper_name[cntu] = nameofvar
-            dict_upper_value[nameofvar] = 0.0
+            dict_upper_value[get(upper_name_map, nameofvar, nameofvar)] = 0.0
             dict_upper_index_to_model[cntu] = y
             cntu += 1
         end
@@ -372,8 +447,12 @@ function _parse_mibs_output_local(
         if !found_status
             if occursin("Optimal solution", line)
                 found_status = true
+            elseif occursin("Reached time limit", line)
+                found_timeout = true
             end
-            continue
+            if !found_status
+                continue
+            end
         end
 
         m = match(r"(.+)\[([0-9]+)\] \= (.+)", line)
@@ -391,25 +470,25 @@ function _parse_mibs_output_local(
 
         if haskey(dict_upper_name, column) && dict_upper_name[column] == "$(var_prefix)[$column]"
             upper[column] = value
-            nameofvar = dict_upper_name[column]
+            nameofvar = get(upper_name_map, dict_upper_name[column], dict_upper_name[column])
             dict_upper_value[nameofvar] = value
             indexofvar = dict_upper_index_to_model[column]
             dict_all[indexofvar] = value
         elseif haskey(dict_lower_name, column) && dict_lower_name[column] == "$(var_prefix)[$column]"
             lower[column] = value
-            nameofvar = dict_lower_name[column]
+            nameofvar = get(lower_name_map, dict_lower_name[column], dict_lower_name[column])
             dict_lower_value[nameofvar] = value
             indexofvar = dict_lower_index_to_model[column]
             dict_all[indexofvar] = value
         elseif haskey(dict_upper_name, column)
             upper[column] = value
-            nameofvar = dict_upper_name[column]
+            nameofvar = get(upper_name_map, dict_upper_name[column], dict_upper_name[column])
             dict_upper_value[nameofvar] = value
             indexofvar = dict_upper_index_to_model[column]
             dict_all[indexofvar] = value
         elseif haskey(dict_lower_name, column)
             lower[column] = value
-            nameofvar = dict_lower_name[column]
+            nameofvar = get(lower_name_map, dict_lower_name[column], dict_lower_name[column])
             dict_lower_value[nameofvar] = value
             indexofvar = dict_lower_index_to_model[column]
             dict_all[indexofvar] = value
@@ -420,22 +499,26 @@ function _parse_mibs_output_local(
 
     return (
         status=found_status,
+        timeout=found_timeout,
         objective=objective_value,
         nonzero_upper=upper,
         nonzero_lower=lower,
         all_upper=dict_upper_value,
         all_lower=dict_lower_value,
         all_var=dict_all,
+        log_output=output,
     )
 end
 
-function _solve_mip(sol::SubSolverMiBS, printlog::Bool)
+function _solve_mip(sol::SubSolverMiBS, printlog::Bool, time_limit::Real)
     @debug "Starting MiBS subsolver $(sol.name)"
-    return mktempdir() do path
+    path = repo_local_tempdir("mibs_subsolver", _mibs_safe_name(sol.name); prefix="mibs_sub")
+    try
         mps_filename = joinpath(path, "model.mps")
         aux_filename = joinpath(path, "model.aux")
         new_model, variables, objective, constraints, sense =
             BilevelJuMP._build_single_model(sol.bi_model, true)
+        _initialize_name_maps!(sol)
         MOI.write_to_file(new_model, mps_filename)
         BilevelJuMP._write_auxillary_file(
             new_model,
@@ -446,21 +529,34 @@ function _solve_mip(sol::SubSolverMiBS, printlog::Bool)
             aux_filename,
         )
 
-        output, err = _call_mibs_local(mps_filename, aux_filename)
+        output, err = _call_mibs_local(mps_filename, aux_filename, time_limit)
         if !isempty(err)
-            error("MibS returned:\n\n$(err)")
+            if occursin("MiBS exceeded the JuBiC wall-clock limit", err)
+                throw(TimeoutException("We hit the time limit while solving MiBS subsolver $(sol.name)."))
+            end
+            throw(MibSFailureException("MibS returned:\n\n$(err)"))
         end
         if isempty(output)
             error("MibS failed to return output.")
         end
         if printlog
             print(output)
-            cp(mps_filename, "model.mps"; force=true)
-            cp(aux_filename, "model.aux"; force=true)
-            write("mibs_output.txt", output)
-            write("mibs_errors.txt", err)
+            debug_dir = repo_local_tempdir("mibs_subsolver_logs", _mibs_safe_name(sol.name); prefix="mibs_log")
+            cp(mps_filename, joinpath(debug_dir, "model.mps"); force=true)
+            cp(aux_filename, joinpath(debug_dir, "model.aux"); force=true)
+            write(joinpath(debug_dir, "mibs_output.txt"), output)
+            write(joinpath(debug_dir, "mibs_errors.txt"), err)
+            @info "Stored MiBS subsolver debug files for $(sol.name) in $(debug_dir)."
         end
 
-        return _parse_mibs_output_local(output, new_model, variables)
+        return _parse_mibs_output_local(
+            output,
+            new_model,
+            variables,
+            sol.lower_name_map,
+            sol.upper_name_map,
+        )
+    finally
+        rm(path; force=true, recursive=true)
     end
 end

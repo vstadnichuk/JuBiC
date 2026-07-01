@@ -35,8 +35,15 @@ configuration dictionary.
 
 The current implementation supports two logical instance types:
 - `"constrained_shortest_path"`: a single-layer HNDP network
-- `"competition"`: a layered HNDP network where only the competitor layer is
-  interdicted or constructed
+- `"competition"`: either
+  - a two-layer competitive HNDP network when the topology id starts with
+    `"layered_"`, or
+  - a single-layer network with a sampled set of decision arcs otherwise.
+    The single-layer variant currently supports two arc modes:
+    - `"competition"`: sampled decision arcs receive the `beta` cost scaling and
+      only those arcs contribute operator risk
+    - `"decision_only"`: sampled decision arcs are only the controllable arcs;
+      no `beta` scaling is applied and operator risk remains on all arcs
 
 For each entry in `instances`, the generator builds the Cartesian product of the
 declared parameter values and the selected parameter seeds. Different topology
@@ -92,6 +99,11 @@ function visit_hndp_networks(config::Dict{String,Any}, visitor::Function)
     return nothing
 end
 
+function _get_optional_float_vector(cfg::Dict{String,Any}, key::String)
+    haskey(cfg, key) || return nothing
+    return _float_vector(cfg[key], key)
+end
+
 function _visit_hndp_generation_spec!(
     spec::Dict{String,Any},
     default_parameter_seeds::Vector{Int},
@@ -117,11 +129,14 @@ function _expand_hndp_generation_spec!(
     topology_ids = _string_vector(get(spec, "topologies", [get(spec, "topology_family", _default_topology_family(instance_type))]), "topologies")
     user_counts = _int_vector(get(spec, "nusers", [1]), "nusers")
     length_modes = _bool_vector(get(spec, "length_constrained", [true]), "length_constrained")
+    availability_budget_fraction_values = _get_optional_float_vector(spec, "availability_budget_fraction")
+    availability_budget_fraction_values = isnothing(availability_budget_fraction_values) ? [1.0] : availability_budget_fraction_values
 
     generated_here = HNDPGeneratedNetwork[]
 
     if instance_type == "constrained_shortest_path"
-        length_slack_values = _float_vector(get(spec, "length_slack", [1.0]), "length_slack")
+        alpha_values = _get_optional_float_vector(spec, "alpha")
+        length_slack_values = isnothing(alpha_values) ? _float_vector(get(spec, "length_slack", [1.0]), "length_slack") : alpha_values
         two_stage_modes = _bool_vector(get(spec, "two_stage", [false]), "two_stage")
         user_parameter_modes = _string_vector(get(spec, "user_parameter_mode", ["shared"]), "user_parameter_mode")
 
@@ -131,20 +146,24 @@ function _expand_hndp_generation_spec!(
                     for constrained in length_modes
                         for length_slack in length_slack_values
                             for two_stage in two_stage_modes
-                                for user_parameter_mode in user_parameter_modes
-                                    !constrained && length_slack != first(length_slack_values) && continue
-                                    generated = _build_csp_generated_network(
-                                        base_name,
-                                        topology_id,
-                                        nusers,
-                                        parameter_seed,
-                                        constrained,
-                                        length_slack,
-                                        two_stage,
-                                        user_parameter_mode,
-                                        spec,
-                                    )
-                                    push!(generated_here, generated)
+                                for availability_budget_fraction in availability_budget_fraction_values
+                                    for user_parameter_mode in user_parameter_modes
+                                        !constrained && length_slack != first(length_slack_values) && continue
+                                        local_spec = copy(spec)
+                                        local_spec["availability_budget_fraction"] = availability_budget_fraction
+                                        generated = _build_csp_generated_network(
+                                            base_name,
+                                            topology_id,
+                                            nusers,
+                                            parameter_seed,
+                                            constrained,
+                                            length_slack,
+                                            two_stage,
+                                            user_parameter_mode,
+                                            local_spec,
+                                        )
+                                        push!(generated_here, generated)
+                                    end
                                 end
                             end
                         end
@@ -153,9 +172,12 @@ function _expand_hndp_generation_spec!(
             end
         end
     elseif instance_type == "competition"
-        length_slack_values = _float_vector(get(spec, "length_slack", [1.0]), "length_slack")
-        competitor_cost_factor_values = _float_vector(get(spec, "competitor_cost_factor", [0.8]), "competitor_cost_factor")
+        alpha_values = _get_optional_float_vector(spec, "alpha")
+        beta_values = _get_optional_float_vector(spec, "beta")
+        length_slack_values = isnothing(alpha_values) ? _float_vector(get(spec, "length_slack", [1.0]), "length_slack") : alpha_values
+        competitor_cost_factor_values = isnothing(beta_values) ? _float_vector(get(spec, "competitor_cost_factor", [0.8]), "competitor_cost_factor") : beta_values
         user_parameter_modes = _string_vector(get(spec, "user_parameter_mode", ["shared"]), "user_parameter_mode")
+        decision_arc_counts = _int_vector(get(spec, "decision_arc_count", [-1]), "decision_arc_count")
 
         for topology_id in topology_ids
             for nusers in user_counts
@@ -163,20 +185,27 @@ function _expand_hndp_generation_spec!(
                     for constrained in length_modes
                         for length_slack in length_slack_values
                             for competitor_cost_factor in competitor_cost_factor_values
-                                for user_parameter_mode in user_parameter_modes
-                                    !constrained && length_slack != first(length_slack_values) && continue
-                                    generated = _build_competition_generated_network(
-                                        base_name,
-                                        topology_id,
-                                        nusers,
-                                        parameter_seed,
-                                        constrained,
-                                        length_slack,
-                                        competitor_cost_factor,
-                                        user_parameter_mode,
-                                        spec,
-                                    )
-                                    push!(generated_here, generated)
+                                for decision_arc_count in decision_arc_counts
+                                    for availability_budget_fraction in availability_budget_fraction_values
+                                        for user_parameter_mode in user_parameter_modes
+                                            !constrained && length_slack != first(length_slack_values) && continue
+                                            local_spec = copy(spec)
+                                            local_spec["availability_budget_fraction"] = availability_budget_fraction
+                                            generated = _build_competition_generated_network(
+                                                base_name,
+                                                topology_id,
+                                                nusers,
+                                                parameter_seed,
+                                                constrained,
+                                                length_slack,
+                                                competitor_cost_factor,
+                                                user_parameter_mode,
+                                                local_spec;
+                                                decision_arc_count=decision_arc_count,
+                                            )
+                                            push!(generated_here, generated)
+                                        end
+                                    end
                                 end
                             end
                         end
@@ -202,10 +231,9 @@ function _build_csp_generated_network(
     user_parameter_mode::String,
     spec::Dict{String,Any},
 )
-    topology_id == "sioux_falls" || throw(ArgumentError("Topology '$topology_id' is not supported for constrained_shortest_path instances."))
     _validate_user_parameter_mode(user_parameter_mode)
 
-    graph = _load_sioux_falls_graph()
+    graph = _load_named_base_graph(topology_id)
     max_cost = Int(get(spec, "max_cost", 100))
     max_risk = Int(get(spec, "max_risk", 100))
     max_weight = Int(get(spec, "max_weight", 100))
@@ -224,20 +252,31 @@ function _build_csp_generated_network(
         user_parameter_mode,
     )
     edgeA = [(src(e), dst(e)) for e in edges(graph)]
-    edge_price = Dict((src(e), dst(e)) => rand(MersenneTwister(parameter_seed + 10_000), 0:construction_cost) for e in edges(graph))
+    construction_cost_min = Int(get(spec, "construction_cost_min", 0))
+    construction_cost_max = Int(get(spec, "construction_cost_max", construction_cost))
+    construction_cost_min <= construction_cost_max ||
+        throw(ArgumentError("construction_cost_min must be <= construction_cost_max."))
+    availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(edgeA), spec)
+    edge_price = _sample_edge_prices(graph, parameter_seed + 10_000, construction_cost_min, construction_cost_max)
     instance = HNDPwC(graph, users, edgeA, edge_price, minweights)
 
     metadata = Dict{String,Any}(
-        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, two_stage=two_stage, user_parameter_mode=user_parameter_mode),
+        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, two_stage=two_stage, user_parameter_mode=user_parameter_mode, availability_budget_fraction=availability_budget_fraction),
         "instance_type" => "constrained_shortest_path",
+        "objective_style" => "weighted",
         "topology_family" => topology_id,
         "nusers" => nusers,
         "parameter_seed" => parameter_seed,
         "length_constrained" => constrained,
+        "alpha" => constrained ? length_slack : nothing,
         "length_slack" => constrained ? length_slack : nothing,
         "two_stage" => two_stage,
         "user_parameter_mode" => user_parameter_mode,
         "construction_cost" => construction_cost,
+        "construction_cost_min" => construction_cost_min,
+        "construction_cost_max" => construction_cost_max,
+        "availability_budget_fraction" => availability_budget_fraction,
+        "availability_budget_count" => availability_budget_count,
         "max_cost" => max_cost,
         "max_risk" => max_risk,
         "max_weight" => max_weight,
@@ -295,48 +334,132 @@ function _build_competition_generated_network(
     competitor_cost_factor::Float64,
     user_parameter_mode::String,
     spec::Dict{String,Any},
+    ;
+    decision_arc_count::Int=-1,
 )
-    topology_id == "layered_sioux_falls" || throw(ArgumentError("Topology '$topology_id' is not supported for competition instances."))
     _validate_user_parameter_mode(user_parameter_mode)
+    single_layer_arc_mode = _parse_single_layer_arc_mode(get(spec, "single_layer_arc_mode", "competition"))
 
     max_cost = Int(get(spec, "max_cost", 100))
     max_risk = Int(get(spec, "max_risk", 100))
     max_weight = Int(get(spec, "max_weight", 100))
     construction_cost = Int(get(spec, "construction_cost", 0))
+    construction_cost_min = Int(get(spec, "construction_cost_min", 0))
+    construction_cost_max = Int(get(spec, "construction_cost_max", construction_cost))
+    construction_cost_min <= construction_cost_max ||
+        throw(ArgumentError("construction_cost_min must be <= construction_cost_max."))
+    if startswith(topology_id, "layered_")
+        base_topology_id = topology_id[(findfirst('_', topology_id) + 1):end]
+        base_graph = _load_named_base_graph(base_topology_id)
+        graph, base_nodes, competitor_nodes, decision_arcs = _build_two_layer_competition_graph(base_graph)
 
-    base_graph = _load_sioux_falls_graph()
-    graph, base_nodes, competitor_nodes, decision_arcs = _build_layered_competition_graph(base_graph)
+        users, minweights = _build_layered_users(
+            graph,
+            base_nodes,
+            nusers,
+            parameter_seed,
+            constrained,
+            length_slack,
+            max_cost,
+            max_risk,
+            max_weight,
+            base_graph,
+            competitor_nodes,
+            decision_arcs,
+            competitor_cost_factor,
+            user_parameter_mode,
+        )
+        availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(decision_arcs), spec)
+        edge_price = _sample_edge_prices(graph, parameter_seed + 20_000, construction_cost_min, construction_cost_max)
+        instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
-    users, minweights = _build_layered_users(
-        graph,
-        base_nodes,
-        nusers,
-        parameter_seed,
-        constrained,
-        length_slack,
-        max_cost,
-        max_risk,
-        max_weight,
-        base_graph,
-        competitor_nodes,
-        decision_arcs,
-        competitor_cost_factor,
-        user_parameter_mode,
-    )
-    edge_price = Dict((src(e), dst(e)) => rand(MersenneTwister(parameter_seed + 20_000), 0:construction_cost) for e in edges(graph))
+        metadata = Dict{String,Any}(
+            "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, availability_budget_fraction=availability_budget_fraction),
+            "instance_type" => "competition",
+            "topology_family" => topology_id,
+            "base_topology_family" => base_topology_id,
+            "competition_graph_style" => "two_layer",
+            "layered_instance" => true,
+            "nusers" => nusers,
+            "parameter_seed" => parameter_seed,
+            "length_constrained" => constrained,
+            "alpha" => constrained ? length_slack : nothing,
+            "length_slack" => constrained ? length_slack : nothing,
+            "beta" => competitor_cost_factor,
+            "competitor_cost_factor" => competitor_cost_factor,
+            "user_parameter_mode" => user_parameter_mode,
+            "construction_cost" => construction_cost,
+            "construction_cost_min" => construction_cost_min,
+            "construction_cost_max" => construction_cost_max,
+            "availability_budget_fraction" => availability_budget_fraction,
+            "availability_budget_count" => availability_budget_count,
+            "max_cost" => max_cost,
+            "max_risk" => max_risk,
+            "max_weight" => max_weight,
+            "nnodes" => nv(graph),
+            "narcs" => ne(graph),
+            "decision_arcs" => length(decision_arcs),
+        )
+
+        return HNDPGeneratedNetwork(metadata["name"], instance, metadata)
+    end
+
+    base_graph = _load_named_base_graph(topology_id)
+    graph = base_graph
+    decision_arcs = _sample_decision_arcs(graph, parameter_seed, decision_arc_count)
+
+    users, minweights = if single_layer_arc_mode == "competition"
+        _build_single_layer_competition_users(
+            graph,
+            nusers,
+            parameter_seed,
+            constrained,
+            length_slack,
+            max_cost,
+            max_risk,
+            max_weight,
+            decision_arcs,
+            competitor_cost_factor,
+            user_parameter_mode,
+        )
+    else
+        _build_single_layer_decision_only_users(
+            graph,
+            nusers,
+            parameter_seed,
+            constrained,
+            length_slack,
+            max_cost,
+            max_risk,
+            max_weight,
+            user_parameter_mode,
+        )
+    end
+    availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(decision_arcs), spec)
+    edge_price = _sample_edge_prices(graph, parameter_seed + 20_000, construction_cost_min, construction_cost_max)
     instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
     metadata = Dict{String,Any}(
-        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode),
+        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction, single_layer_arc_mode=single_layer_arc_mode),
         "instance_type" => "competition",
         "topology_family" => topology_id,
+        "base_topology_family" => topology_id,
+        "competition_graph_style" => "single_layer_k_" * single_layer_arc_mode,
+        "single_layer_arc_mode" => single_layer_arc_mode,
+        "layered_instance" => false,
         "nusers" => nusers,
         "parameter_seed" => parameter_seed,
         "length_constrained" => constrained,
+        "alpha" => constrained ? length_slack : nothing,
         "length_slack" => constrained ? length_slack : nothing,
+        "beta" => competitor_cost_factor,
         "competitor_cost_factor" => competitor_cost_factor,
         "user_parameter_mode" => user_parameter_mode,
         "construction_cost" => construction_cost,
+        "construction_cost_min" => construction_cost_min,
+        "construction_cost_max" => construction_cost_max,
+        "availability_budget_fraction" => availability_budget_fraction,
+        "availability_budget_count" => availability_budget_count,
         "max_cost" => max_cost,
         "max_risk" => max_risk,
         "max_weight" => max_weight,
@@ -353,6 +476,14 @@ function _required_string(cfg::Dict{String,Any}, key::String)
     value = cfg[key]
     value isa String || throw(ArgumentError("Config entry '$key' must be a string."))
     return value
+end
+
+function _parse_single_layer_arc_mode(value)
+    mode = lowercase(String(value))
+    if mode == "competition" || mode == "decision_only"
+        return mode
+    end
+    throw(ArgumentError("Unsupported single_layer_arc_mode '$value'. Supported values are 'competition' and 'decision_only'."))
 end
 
 function _int_vector(value, key::String)
@@ -379,7 +510,7 @@ function _default_topology_family(instance_type::String)
     if instance_type == "constrained_shortest_path"
         return "sioux_falls"
     elseif instance_type == "competition"
-        return "layered_sioux_falls"
+        return "sioux_falls"
     end
     throw(ArgumentError("Unsupported HNDP instance_type '$instance_type'."))
 end
@@ -388,6 +519,85 @@ function _load_sioux_falls_graph()
     file_path = "examples/data/SF_DNDP_10_base.txt"
     edge_list = parse_Sioux_Falls_csv(file_path)
     return create_graph_from_edges_SiouxFalls(edge_list)
+end
+
+function _load_named_base_graph(topology_id::String)
+    if topology_id == "sioux_falls"
+        return _load_sioux_falls_graph()
+    elseif topology_id == "anaheim"
+        return _load_tntp_graph("examples/data/Anaheim_net.tntp")
+    elseif topology_id == "friedrichshain_center"
+        return _load_tntp_graph("examples/data/friedrichshain-center_net.tntp")
+    elseif topology_id == "berlin_mitte_center"
+        return _load_tntp_graph("examples/data/berlin-mitte-center_net.tntp")
+    elseif topology_id == "ema"
+        return _load_tntp_graph("examples/data/EMA_net.tntp")
+    end
+    throw(ArgumentError("Unsupported HNDP topology '$topology_id'."))
+end
+
+function _load_tntp_graph(file_path::String)
+    edge_list, nnodes = parse_tntp_edges(file_path)
+    graph = DiGraph(nnodes)
+    for (i, j) in edge_list
+        add_edge!(graph, i, j)
+    end
+    return graph
+end
+
+function _sample_edge_prices(
+    graph::DiGraph,
+    seed::Int,
+    construction_cost_min::Int,
+    construction_cost_max::Int,
+)
+    rng = MersenneTwister(seed)
+    return Dict(
+        (src(e), dst(e)) => rand(rng, construction_cost_min:construction_cost_max) for e in edges(graph)
+    )
+end
+
+function _resolve_availability_budget(decision_arc_count::Int, spec::Dict{String,Any})
+    if haskey(spec, "availability_budget_fraction") && haskey(spec, "availability_budget_count")
+        throw(ArgumentError("Specify at most one of availability_budget_fraction and availability_budget_count in the instance spec."))
+    end
+
+    if haskey(spec, "availability_budget_count")
+        count = Int(spec["availability_budget_count"])
+        0 <= count <= decision_arc_count ||
+            throw(ArgumentError("availability_budget_count must lie between 0 and $(decision_arc_count)."))
+        fraction = decision_arc_count == 0 ? 0.0 : count / decision_arc_count
+        return fraction, count
+    end
+
+    fraction = Float64(get(spec, "availability_budget_fraction", 1.0))
+    0.0 <= fraction <= 1.0 ||
+        throw(ArgumentError("availability_budget_fraction must lie in [0, 1]."))
+    count = max(0, floor(Int, fraction * decision_arc_count))
+    return fraction, count
+end
+
+function parse_tntp_edges(file_path::String)
+    lines = readlines(file_path)
+    node_line = findfirst(x -> occursin("<NUMBER OF NODES>", x), lines)
+    isnothing(node_line) && throw(ArgumentError("Could not find <NUMBER OF NODES> in TNTP file $file_path"))
+    nnodes = parse(Int, split(strip(lines[node_line]))[end])
+
+    start_idx = findfirst(x -> occursin("<END OF METADATA>", x), lines)
+    isnothing(start_idx) && throw(ArgumentError("Could not find <END OF METADATA> in TNTP file $file_path"))
+
+    edges = Tuple{Int,Int}[]
+    for line in lines[(start_idx + 1):end]
+        stripped = strip(line)
+        isempty(stripped) && continue
+        startswith(stripped, "~") && continue
+        tokens = split(stripped, r"\s+")
+        length(tokens) < 2 && continue
+        if occursin(r"^\d+$", tokens[1]) && occursin(r"^\d+$", tokens[2])
+            push!(edges, (parse(Int, tokens[1]), parse(Int, tokens[2])))
+        end
+    end
+    return edges, nnodes
 end
 
 function _validate_user_parameter_mode(user_parameter_mode::String)
@@ -445,6 +655,7 @@ function _build_single_layer_users(
 )
     rng = MersenneTwister(seed)
     users = User[]
+    feasible_targets = _feasible_od_targets(graph)
 
     if user_parameter_mode == "shared"
         rcost, rrisk, rweight = _random_arc_matrices(
@@ -461,14 +672,11 @@ function _build_single_layer_users(
         user_weight = constrained ? rweight : nothing
         minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
         for user_id in 1:nusers
-            origin = rand(rng, 1:nv(graph))
-            destination = origin
-            while destination == origin
-                destination = rand(rng, 1:nv(graph))
-            end
+            origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
             bound = _compute_weight_bound(minweights, origin, destination, length_slack, nv(graph) * max_weight)
             push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
         end
+        _validate_users_reachable!(graph, users)
         return users, minweights
     end
 
@@ -487,15 +695,201 @@ function _build_single_layer_users(
         end
         user_weight = constrained ? rweight : nothing
         user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
-        origin = rand(rng, 1:nv(graph))
-        destination = origin
-        while destination == origin
-            destination = rand(rng, 1:nv(graph))
-        end
+        origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
         bound = _compute_weight_bound(user_minweights, origin, destination, length_slack, nv(graph) * max_weight)
         push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
     end
+    _validate_users_reachable!(graph, users)
     return users, nothing
+end
+
+function _sample_decision_arcs(graph::DiGraph, seed::Int, decision_arc_count::Int)
+    all_arcs = Tuple{Int,Int}[(src(e), dst(e)) for e in edges(graph)]
+    if decision_arc_count < 0 || decision_arc_count >= length(all_arcs)
+        return all_arcs
+    elseif decision_arc_count == 0
+        return Tuple{Int,Int}[]
+    end
+    rng = MersenneTwister(seed + 50_000)
+    perm = randperm(rng, length(all_arcs))
+    return all_arcs[perm[1:decision_arc_count]]
+end
+
+function _reachable_destinations(graph::DiGraph, origin::Int)
+    visited = falses(nv(graph))
+    queue = [origin]
+    visited[origin] = true
+    head = 1
+    while head <= length(queue)
+        node = queue[head]
+        head += 1
+        for neigh in outneighbors(graph, node)
+            if !visited[neigh]
+                visited[neigh] = true
+                push!(queue, neigh)
+            end
+        end
+    end
+    return [node for node in 1:nv(graph) if node != origin && visited[node]]
+end
+
+function _feasible_od_targets(graph::DiGraph)
+    feasible = Dict{Int,Vector{Int}}()
+    for origin in 1:nv(graph)
+        dests = _reachable_destinations(graph, origin)
+        isempty(dests) || (feasible[origin] = dests)
+    end
+    isempty(feasible) && throw(ArgumentError("The passed directed graph contains no feasible origin-destination pair with a directed path."))
+    return feasible
+end
+
+function _sample_feasible_od_pair(rng, feasible_targets::Dict{Int,Vector{Int}})
+    origins = collect(keys(feasible_targets))
+    origin = rand(rng, origins)
+    destination = rand(rng, feasible_targets[origin])
+    return origin, destination
+end
+
+function _validate_users_reachable!(graph::DiGraph, users::Vector{User})
+    feasible_targets = _feasible_od_targets(graph)
+    for user in users
+        if !haskey(feasible_targets, user.origin) || !(user.destination in feasible_targets[user.origin])
+            throw(ArgumentError("Generated invalid OD pair for $(user.uname): no directed path from $(user.origin) to $(user.destination)."))
+        end
+    end
+end
+
+function _build_single_layer_competition_users(
+    graph::DiGraph,
+    nusers::Int,
+    seed::Int,
+    constrained::Bool,
+    length_slack,
+    max_cost::Int,
+    max_risk::Int,
+    max_weight::Int,
+    decision_arcs,
+    competitor_cost_factor::Float64,
+    user_parameter_mode::String,
+)
+    rng = MersenneTwister(seed)
+    users = User[]
+    decision_arc_set = Set(decision_arcs)
+    feasible_targets = _feasible_od_targets(graph)
+
+    if user_parameter_mode == "shared"
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=false,
+        )
+        _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
+        user_weight = constrained ? rweight : nothing
+        minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        for user_id in 1:nusers
+            origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+            bound = _compute_weight_bound(minweights, origin, destination, length_slack, nv(graph) * max_weight)
+            push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
+        end
+        _validate_users_reachable!(graph, users)
+        return users, minweights
+    end
+
+    for user_id in 1:nusers
+        user_seed = seed + 1000 * user_id
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            user_seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=false,
+        )
+        _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
+        user_weight = constrained ? rweight : nothing
+        user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+        bound = _compute_weight_bound(user_minweights, origin, destination, length_slack, nv(graph) * max_weight)
+        push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
+    end
+    _validate_users_reachable!(graph, users)
+    return users, nothing
+end
+
+function _build_single_layer_decision_only_users(
+    graph::DiGraph,
+    nusers::Int,
+    seed::Int,
+    constrained::Bool,
+    length_slack,
+    max_cost::Int,
+    max_risk::Int,
+    max_weight::Int,
+    user_parameter_mode::String,
+)
+    rng = MersenneTwister(seed)
+    users = User[]
+    feasible_targets = _feasible_od_targets(graph)
+
+    if user_parameter_mode == "shared"
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=false,
+        )
+        user_weight = constrained ? rweight : nothing
+        minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        for user_id in 1:nusers
+            origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+            bound = _compute_weight_bound(minweights, origin, destination, length_slack, nv(graph) * max_weight)
+            push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
+        end
+        _validate_users_reachable!(graph, users)
+        return users, minweights
+    end
+
+    for user_id in 1:nusers
+        user_seed = seed + 1000 * user_id
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            user_seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=false,
+        )
+        user_weight = constrained ? rweight : nothing
+        user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+        bound = _compute_weight_bound(user_minweights, origin, destination, length_slack, nv(graph) * max_weight)
+        push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
+    end
+    _validate_users_reachable!(graph, users)
+    return users, nothing
+end
+
+function _apply_single_layer_competition_arc_rules!(
+    graph::DiGraph,
+    rcost,
+    rrisk,
+    rweight,
+    decision_arc_set,
+    competitor_cost_factor::Float64,
+)
+    for (i, j) in Iterators.product(1:nv(graph), 1:nv(graph))
+        has_edge(graph, i, j) || continue
+        if (i, j) in decision_arc_set
+            rcost[i, j] = round(Int, competitor_cost_factor * rcost[i, j])
+        else
+            rrisk[i, j] = 0
+        end
+    end
 end
 
 function _build_layered_users(
@@ -517,6 +911,7 @@ function _build_layered_users(
     rng = MersenneTwister(seed)
     users = User[]
     max_possible_weight = 4 * length(base_nodes) * max_weight
+    feasible_targets = _feasible_od_targets(base_graph)
 
     if user_parameter_mode == "shared"
         rcost, rrisk, rweight = _random_arc_matrices(
@@ -541,11 +936,9 @@ function _build_layered_users(
         user_weight = constrained ? rweight : nothing
         minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
         for user_id in 1:nusers
-            origin = rand(rng, base_nodes)
-            destination = origin
-            while destination == origin
-                destination = rand(rng, base_nodes)
-            end
+            base_origin, base_destination = _sample_feasible_od_pair(rng, feasible_targets)
+            origin = base_nodes[base_origin]
+            destination = base_nodes[base_destination]
             bound = _compute_weight_bound(minweights, origin, destination, length_slack, max_possible_weight)
             push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
         end
@@ -575,11 +968,92 @@ function _build_layered_users(
         )
         user_weight = constrained ? rweight : nothing
         user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
-        origin = rand(rng, base_nodes)
-        destination = origin
-        while destination == origin
-            destination = rand(rng, base_nodes)
+        base_origin, base_destination = _sample_feasible_od_pair(rng, feasible_targets)
+        origin = base_nodes[base_origin]
+        destination = base_nodes[base_destination]
+        bound = _compute_weight_bound(user_minweights, origin, destination, length_slack, max_possible_weight)
+        push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
+    end
+    return users, nothing
+end
+
+function _build_two_layer_users(
+    graph::DiGraph,
+    base_nodes,
+    nusers::Int,
+    seed::Int,
+    constrained::Bool,
+    length_slack,
+    max_cost::Int,
+    max_risk::Int,
+    max_weight::Int,
+    base_graph::DiGraph,
+    competitor_nodes,
+    decision_arcs,
+    competitor_cost_factor::Float64,
+    user_parameter_mode::String,
+)
+    rng = MersenneTwister(seed)
+    users = User[]
+    max_possible_weight = 3 * length(base_nodes) * max_weight
+    feasible_targets = _feasible_od_targets(base_graph)
+
+    if user_parameter_mode == "shared"
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=true,
+        )
+        _apply_two_layer_competition_arc_rules!(
+            graph,
+            base_graph,
+            competitor_nodes,
+            decision_arcs,
+            rcost,
+            rrisk,
+            rweight,
+            competitor_cost_factor,
+        )
+        user_weight = constrained ? rweight : nothing
+        minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        for user_id in 1:nusers
+            base_origin, base_destination = _sample_feasible_od_pair(rng, feasible_targets)
+            origin = competitor_nodes[base_origin]
+            destination = competitor_nodes[base_destination]
+            bound = _compute_weight_bound(minweights, origin, destination, length_slack, max_possible_weight)
+            push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
         end
+        return users, minweights
+    end
+
+    for user_id in 1:nusers
+        user_seed = seed + 1000 * user_id
+        rcost, rrisk, rweight = _random_arc_matrices(
+            graph,
+            user_seed;
+            max_cost=max_cost,
+            max_risk=max_risk,
+            max_weight=max_weight,
+            negative_risk=true,
+        )
+        _apply_two_layer_competition_arc_rules!(
+            graph,
+            base_graph,
+            competitor_nodes,
+            decision_arcs,
+            rcost,
+            rrisk,
+            rweight,
+            competitor_cost_factor,
+        )
+        user_weight = constrained ? rweight : nothing
+        user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        base_origin, base_destination = _sample_feasible_od_pair(rng, feasible_targets)
+        origin = competitor_nodes[base_origin]
+        destination = competitor_nodes[base_destination]
         bound = _compute_weight_bound(user_minweights, origin, destination, length_slack, max_possible_weight)
         push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
     end
@@ -620,6 +1094,26 @@ function _build_layered_competition_graph(base_graph::DiGraph)
     return graph, base_nodes, layer2_nodes, decision_arcs
 end
 
+function _build_two_layer_competition_graph(base_graph::DiGraph)
+    n = nv(base_graph)
+    graph = DiGraph(2 * n)
+    layer1_nodes = collect(1:n)
+    layer2_nodes = collect((n + 1):(2 * n))
+
+    for node in 1:n
+        add_edge!(graph, node, node + n)
+        add_edge!(graph, node + n, node)
+    end
+
+    for edge in edges(base_graph)
+        add_edge!(graph, src(edge), dst(edge))
+        add_edge!(graph, src(edge) + n, dst(edge) + n)
+    end
+
+    decision_arcs = Tuple{Int,Int}[(src(e), dst(e)) for e in edges(graph) if src(e) in layer2_nodes && dst(e) in layer2_nodes]
+    return graph, layer1_nodes, layer1_nodes, decision_arcs
+end
+
 function _apply_competition_arc_rules!(
     graph::DiGraph,
     base_graph::DiGraph,
@@ -658,6 +1152,37 @@ function _apply_competition_arc_rules!(
     end
 end
 
+function _apply_two_layer_competition_arc_rules!(
+    graph::DiGraph,
+    base_graph::DiGraph,
+    competitor_nodes,
+    decision_arcs,
+    rcost,
+    rrisk,
+    rweight,
+    competitor_cost_factor::Float64,
+)
+    nbase = nv(base_graph)
+    decision_nodes = (nbase + 1):(2 * nbase)
+    decision_arc_set = Set(decision_arcs)
+
+    for (i, j) in Iterators.product(1:nv(graph), 1:nv(graph))
+        has_edge(graph, i, j) || continue
+
+        if (i, j) in decision_arc_set
+            rcost[i, j] = round(Int, competitor_cost_factor * rcost[i, j])
+            continue
+        end
+
+        rrisk[i, j] = 0
+
+        if (i in competitor_nodes && j in decision_nodes) || (i in decision_nodes && j in competitor_nodes)
+            rcost[i, j] = 0
+            rweight[i, j] = 0
+        end
+    end
+end
+
 function _generated_name(
     base_name::String,
     topology_id::String,
@@ -668,6 +1193,9 @@ function _generated_name(
     competitor_cost_factor=nothing,
     two_stage=nothing,
     user_parameter_mode=nothing,
+    decision_arc_count=nothing,
+    availability_budget_fraction=nothing,
+    single_layer_arc_mode=nothing,
 )
     parts = [
         base_name,
@@ -678,6 +1206,11 @@ function _generated_name(
     ]
     length_slack !== nothing && push!(parts, "LS$(length_slack)")
     competitor_cost_factor !== nothing && push!(parts, "CCF$(competitor_cost_factor)")
+    decision_arc_count !== nothing && push!(parts, "K$(decision_arc_count)")
+    if decision_arc_count !== nothing && single_layer_arc_mode !== nothing
+        push!(parts, single_layer_arc_mode == "competition" ? "KCOMP" : "KDEC")
+    end
+    availability_budget_fraction !== nothing && push!(parts, "B$(availability_budget_fraction)")
     two_stage !== nothing && push!(parts, two_stage ? "coop" : "bilevel")
     user_parameter_mode !== nothing && push!(parts, user_parameter_mode == "shared" ? "shared" : "peruser")
     return join(parts, "_")

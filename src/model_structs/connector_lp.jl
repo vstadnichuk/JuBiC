@@ -246,6 +246,76 @@ function _round_cut_component(value::Real, params::GBCparam)
     return Float64(value)
 end
 
+function _sanitize_nonnegative_opt_cut_coefficient(
+    value::Real,
+    coeff_name::AbstractString,
+    subLP::ConnectorLP;
+    tol::Float64=1e-3,
+)
+    numeric_value = Float64(value)
+    if numeric_value >= 0.0
+        return numeric_value
+    end
+    if numeric_value >= -tol
+        @debug "ConnectorLP $(name(subLP.sub_solver)) rounds the $(coeff_name) coefficient $(numeric_value) up to 0.0 within numerical tolerance $(tol)."
+        return 0.0
+    end
+    throw(ArgumentError("The $(coeff_name) coefficient $(numeric_value) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
+end
+
+function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gval, kvals, x_vals)
+    bound_value = sval - optL2 * gval - subLP.lower_bound_obj_contribution
+    for a in subLP.A
+        if Float64(kvals[a]) > 0.0 && Float64(x_vals[a]) > 0.0
+            @debug "ConnectorLP $(name(subLP.sub_solver)) detected k[$(a)]=$(kvals[a]) with x[$(a)]=$(x_vals[a]) > 0 while computing xi=$(bound_value). This indicates an edge case where the cut could potentially be strengthened further by exploiting the simultaneous activity of k and x on arc $(a)."
+        end
+    end
+    @debug "ConnectorLP $(name(subLP.sub_solver)) uses bound coefficient xi=$(bound_value) with s=$(sval), optL2=$(optL2), g=$(gval), and lower_bound=$(subLP.lower_bound_obj_contribution)."
+    return _sanitize_nonnegative_opt_cut_coefficient(bound_value, "bound / xi", subLP)
+end
+
+function _compute_opt_cut_k_coefficients(
+    subLP::ConnectorLP,
+    kvals,
+    bound_value::Real,
+    params::GBCparam,
+)
+    coeffs = Dict{Any,Float64}()
+    for a in subLP.A
+        raw_value = Float64(kvals[a])
+        if params.trim_coeff
+            raw_value = min(raw_value, Float64(bound_value))
+        end
+        coeffs[a] = _round_cut_component(
+            _sanitize_nonnegative_opt_cut_coefficient(raw_value, "k[$(a)]", subLP),
+            params,
+        )
+    end
+    return coeffs
+end
+
+function _compute_opt_cut_blc_g_coefficients(
+    subLP::ConnectorLP,
+    cutcoeff_BlC,
+    gval,
+    bound_value::Real,
+    params::GBCparam,
+)
+    coeffs = Dict{Any,Float64}()
+    adjusted_g = _adjust_g(subLP, gval)
+    for a in keys(cutcoeff_BlC)
+        raw_value = adjusted_g * Float64(cutcoeff_BlC[a])
+        if params.trim_coeff
+            raw_value = min(raw_value, Float64(bound_value))
+        end
+        coeffs[a] = _round_cut_component(
+            _sanitize_nonnegative_opt_cut_coefficient(raw_value, "g[$(a)]", subLP),
+            params,
+        )
+    end
+    return coeffs
+end
+
 function _rounded_binary_y_values(subLP::ConnectorLP, y_vals)
     rounded = Dict{Any,Float64}()
     warned = false
@@ -356,14 +426,18 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
             time_limit_pareto = time_limit - time_iterate
             pareto_snapshot = _connector_solution_snapshot(subLP)
             try
+                if !haskey(params.stats.data, "ConnectorLPTimePareto")
+                    new_stat!(params.stats, "ConnectorLPTimePareto", 0.0)
+                end
                 @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-                pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+                pareto_time = @elapsed pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+                add_stat!(params.stats, "ConnectorLPTimePareto", pareto_time)
                 time_limit_build_cut = time_limit_pareto
                 pobj = value(new_obj)
             catch err
                 @warn "Pareto-optimal cut generation failed for connector $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
-                params.stats.data["Opt_status_override"] = "Opt_Numerics"
-                params.stats.data["GBCStatus"] = "Opt_Numerics"
+                params.stats.data["Opt_status_override"] = "Numerics"
+                params.stats.data["GBCStatus"] = "Numerics"
                 subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
             end
         end
@@ -424,28 +498,15 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     incumbent_cut_value = Float64(cut)
     incumbent_reference_value = Float64(cut_rhs)
 
-    ## build bound (called bigM-term)
-    bigMterm = sval - optL2 * gval - subLP.lower_bound_obj_contribution  # TODO: currently not rounding the gval in big M term computation. Good choice?
-    @debug "We use big_m=$(bigMterm) for this optimality cut"
-    if bigMterm < 0
-        if bigMterm > -10e-4  # TODO: Again, hard coded numerics
-            bigMterm = 0
-        else
-            throw(ArgumentError("The big M $(bigMterm) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
-        end
-    end
-
-    # k term of the cut
     kvals = _snapshot_k(subLP)
-    if params.trim_coeff
-        cut -= sum(_round_cut_component(min(kvals[a], bigMterm), params) * master_vars[a] for a in subLP.A)
-        incumbent_cut_value -= sum(_round_cut_component(min(kvals[a], bigMterm), params) * rounded_x_vals[a] for a in subLP.A)
-        incumbent_reference_value -= sum(_round_cut_component(min(kvals[a], bigMterm), params) * rounded_x_vals[a] for a in subLP.A)
-    else
-        cut -= sum(_round_cut_component(kvals[a], params) * master_vars[a] for a in subLP.A)
-        incumbent_cut_value -= sum(_round_cut_component(kvals[a], params) * rounded_x_vals[a] for a in subLP.A)
-        incumbent_reference_value -= sum(_round_cut_component(kvals[a], params) * rounded_x_vals[a] for a in subLP.A)
-    end
+    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, optL2, gval, kvals, x_vals)
+    k_coeffs = _compute_opt_cut_k_coefficients(subLP, kvals, bound_value, params)
+
+    cut -= sum(k_coeffs[a] * master_vars[a] for a in subLP.A)
+    incumbent_cut_value -= sum(k_coeffs[a] * rounded_x_vals[a] for a in subLP.A)
+    incumbent_reference_value -= sum(k_coeffs[a] * rounded_x_vals[a] for a in subLP.A)
+
+    @debug "ConnectorLP $(name(subLP.sub_solver)) uses k-coefficients $(k_coeffs) and base g-coefficient xi=$(bound_value) for this optimality cut."
 
     ## generate cut from bound or by solving Lagrangian dual for BlC
     blc_subroutine = params.bigMwithLC && gval > 0 
@@ -458,26 +519,21 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         
         # build GBC cut, i.e., Bilevel Lagrangian cut, coefficients for theta terms
         @debug "The big M values computed from Lagrangian dual now used in BlC are: $cutcoeff_BlC and optL2 * gval=$(ceil(Int, optL2 * gval))"
-        for a in keys(cutcoeff_BlC) 
-            coefa = cutcoeff_BlC[a] # TODO: we assume here that big M were already rounded  
+        blc_g_coeffs = _compute_opt_cut_blc_g_coefficients(subLP, cutcoeff_BlC, gval, bound_value, params)
+        for a in keys(blc_g_coeffs) 
+            rounded_coef = blc_g_coeffs[a]
             # we do not multiply the big M with yvals as there can exist multiple equivalent solutions of L2 with same objective, leeding to different BlC 
-            if params.trim_coeff
-                rounded_coef = _round_cut_component(min(coefa * _adjust_g(subLP, gval), bigMterm), params)
-                cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
-                incumbent_cut_value -= rounded_coef * (1 - rounded_x_vals[a])
-            else
-                rounded_coef = _round_cut_component(coefa * _adjust_g(subLP, gval), params)
-                cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
-                incumbent_cut_value -= rounded_coef * (1 - rounded_x_vals[a])
-            end
+            cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
+            incumbent_cut_value -= rounded_coef * (1 - rounded_x_vals[a])
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
 
         # Overlap between k and BlC-based big-M coefficients can occur on
         # numerically delicate instances. We continue, but flag the run.
         for a in subLP.A
-            if kvals[a] > 0 && cutcoeff_BlC[a] > 0
-                _warn_cut_overlap!(subLP, params, a, "blc_coef", cutcoeff_BlC[a], kvals[a])
+            blc_coef = get(cutcoeff_BlC, a, 0.0)
+            if kvals[a] > 0 && blc_coef > 0
+                _warn_cut_overlap!(subLP, params, a, "blc_coef", blc_coef, kvals[a])
             end
         end
 
@@ -485,12 +541,10 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         bigMcut = blc_cut
     else
         if gval > 0
-            # if gval = 0, we do not have any impact from theta coef
-            rounded_bigM = _round_cut_component(bigMterm, params)
             rounded_y_vals = _rounded_binary_y_values(subLP, y_vals)
-            theta_xXg = sum(rounded_bigM * (1 - master_vars[a]) * rounded_y_vals[a] for a in subLP.A)
+            theta_xXg = sum(bound_value * (1 - master_vars[a]) * rounded_y_vals[a] for a in subLP.A)
             cut -= theta_xXg
-            incumbent_cut_value -= sum(rounded_bigM * (1 - rounded_x_vals[a]) * rounded_y_vals[a] for a in subLP.A)
+            incumbent_cut_value -= sum(bound_value * (1 - rounded_x_vals[a]) * rounded_y_vals[a] for a in subLP.A)
 
             # Overlap between k and the y-pattern can occur on numerically
             # delicate instances. We continue, but flag the run.
@@ -499,6 +553,8 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
                     _warn_cut_overlap!(subLP, params, a, "y", rounded_y_vals[a], kvals[a])
                 end
             end
+        else
+            @debug "ConnectorLP $(name(subLP.sub_solver)) omits g-based optimality-cut coefficients because g=0."
         end
     end
 
@@ -601,8 +657,19 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
     ## we stop the separation process in case we reach the timelimit set in the parameters (what still can take long, but at least the user is expected to wait this long) 
     current_time = time()
 
+    if !haskey(params.stats.data, "ConnectorLPIterations")
+        new_stat!(params.stats, "ConnectorLPIterations", 0)
+    end
+    if !haskey(params.stats.data, "ConnectorLPTimeLP")
+        new_stat!(params.stats, "ConnectorLPTimeLP", 0.0)
+    end
+    if !haskey(params.stats.data, "ConnectorLPTimePricing")
+        new_stat!(params.stats, "ConnectorLPTimePricing", 0.0)
+    end
+
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
+        add_stat!(params.stats, "ConnectorLPIterations", 1)
         # solve the sub_problem iteratively (but first debbug output)
         if params.debbug_out
             write_to_file(
@@ -613,20 +680,27 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # first, solve the LP
         #@debug subLP.lp # this debug output is not helpfull
-        optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
+        lp_time = @elapsed optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
+        add_stat!(params.stats, "ConnectorLPTimeLP", lp_time)
         check_solution_status_LP(subLP)  
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
         @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
-        sub_solver = separation!(
-            subLP.sub_solver,
-            value(subLP.lp[:s]),
-            value(subLP.lp[:g]),
-            kvals,
-            params,
-            time_limit
-        )
+        pricing_time = @elapsed begin
+            sub_solver = separation!(
+                subLP.sub_solver,
+                value(subLP.lp[:s]),
+                value(subLP.lp[:g]),
+                kvals,
+                params,
+                time_limit
+            )
+            subLP.numeric_state[:last_sub_solver_solution] = sub_solver
+        end
+        add_stat!(params.stats, "ConnectorLPTimePricing", pricing_time)
+        sub_solver = subLP.numeric_state[:last_sub_solver_solution]
+        delete!(subLP.numeric_state, :last_sub_solver_solution)
 
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
@@ -657,8 +731,8 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
                     @warn warning_msg
                     subLP.numeric_state[:accepted_numerically] = true
                     subLP.numeric_state[:g_override] = g_rounded
-                    params.stats.data["Opt_status_override"] = "Opt_Numerics"
-                    params.stats.data["GBCStatus"] = "Opt_Numerics"
+                    params.stats.data["Opt_status_override"] = "Numerics"
+                    params.stats.data["GBCStatus"] = "Numerics"
                     violated_cut = false
                     continue
                 else

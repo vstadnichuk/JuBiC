@@ -13,6 +13,7 @@ const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive
 const HNDP_SUBPROBLEM_MIP = :mip
 const HNDP_SUBPROBLEM_ASTAR = :astar
 const HNDP_SUBPROBLEM_BLC_JUMP = :blc_jump
+const HNDP_SUBPROBLEM_MIBS = :mibs
 const HNDP_HYBRID_FALLBACK_SD = :sd
 
 """
@@ -29,6 +30,40 @@ function _fix_non_decision_arcs!(model::JuMP.Model, xvars, decision_arcs)
             @constraint(model, xvars[arc] == 1, base_name = "fix_$(arc)")
         end
     end
+end
+
+function _apply_hndp_availability_budget!(
+    model::JuMP.Model,
+    xvars,
+    decision_arcs;
+    availability_budget_fraction=nothing,
+    availability_budget_count=nothing,
+)
+    if !isnothing(availability_budget_fraction) && !isnothing(availability_budget_count)
+        throw(ArgumentError("Specify at most one of availability_budget_fraction and availability_budget_count."))
+    end
+    if isnothing(availability_budget_fraction) && isnothing(availability_budget_count)
+        return nothing
+    end
+
+    effective_count = if !isnothing(availability_budget_count)
+        Int(availability_budget_count)
+    else
+        fraction = Float64(availability_budget_fraction)
+        0.0 <= fraction <= 1.0 ||
+            throw(ArgumentError("availability_budget_fraction must lie in [0, 1]."))
+        max(0, floor(Int, fraction * length(decision_arcs)))
+    end
+
+    0 <= effective_count <= length(decision_arcs) ||
+        throw(ArgumentError("The effective availability budget $(effective_count) must lie between 0 and the number of decision arcs $(length(decision_arcs))."))
+
+    @constraint(
+        model,
+        sum(xvars[a] for a in decision_arcs) <= effective_count,
+        base_name = "availability_budget",
+    )
+    return effective_count
 end
 
 """
@@ -90,7 +125,79 @@ function build_hndp_blc_instance(
         push!(subs, _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, subproblem_method))
     end
 
-    return Instance(master, subs)
+    instance = Instance(master, subs)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
+end
+
+"""
+    build_hndp_blclag_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
+
+Build a JuBiC `BlCLagMaster` instance for the passed HNDP network. In contrast
+to the classical `BlCMaster`, the separation subproblems are modeled as
+`SubSolverBlCJuMP` instances so the BlCLag solver can solve the follower oracle
+internally when generating Lagrangian Benders-like cuts.
+"""
+function build_hndp_blclag_instance(
+    hndp::HNDPwC,
+    solver::SolverWrapper;
+    big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
+    subproblem_method::Symbol=HNDP_SUBPROBLEM_BLC_JUMP,
+)
+    subproblem_method in (HNDP_SUBPROBLEM_BLC_JUMP, HNDP_SUBPROBLEM_MIBS) ||
+        throw(ArgumentError("Unknown HNDP BlCLag subproblem method $(subproblem_method)."))
+
+    all_arcs = _hndp_all_arcs(hndp)
+    user_names = [string(user.uname) for user in hndp.users]
+
+    hpr = Model(() -> get_next_optimizer(solver))
+    @variable(hpr, x[all_arcs], Bin)
+    _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+
+    master_terms = Dict{String,JuMP.AbstractJuMPScalar}()
+    sub_terms = Dict{String,JuMP.AbstractJuMPScalar}()
+    for user in hndp.users
+        leader_obj, follower_obj, _ = _add_user_flow_constraints!(
+            hpr,
+            user,
+            hndp,
+            all_arcs;
+            xvars=x,
+            binary_flow=true,
+            add_strong_duality=false,
+        )
+        user_name = string(user.uname)
+        opt_l1 = @variable(hpr, base_name = "optL1_blclag_$(user_name)")
+        opt_l2 = @variable(hpr, base_name = "optL2_blclag_$(user_name)")
+        @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_blclag_$(user_name)")
+        @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_blclag_$(user_name)")
+        master_terms[user_name] = opt_l1
+        sub_terms[user_name] = opt_l2
+    end
+
+    constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
+    @variable(hpr, construction_cost_var)
+    @constraint(hpr, construction_cost_var == constructioncost, base_name = "construction_cost")
+    @objective(hpr, Min, construction_cost_var + sum(values(master_terms)))
+
+    xdec = Dict(a => x[a] for a in hndp.edgeA)
+    master = BlCLagMaster(hpr, hndp.edgeA, xdec, user_names, sub_terms)
+
+    subs = Any[]
+    if subproblem_method == HNDP_SUBPROBLEM_BLC_JUMP
+        big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
+        for user in hndp.users
+            push!(subs, _build_hndp_blclag_subsolver(user, hndp, all_arcs, solver, big_m_by_user))
+        end
+    else
+        for user in hndp.users
+            push!(subs, _build_hndp_blclag_mibs_subsolver(user, hndp, all_arcs, solver))
+        end
+    end
+
+    instance = Instance(master, subs)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
 end
 
 """
@@ -185,7 +292,9 @@ function build_hndp_gbc_instance(
         push!(subs, _build_hndp_gbc_subsolver(user, hndp, all_arcs, solver, subproblem_method, big_m_by_user))
     end
 
-    return Instance(master, subs)
+    instance = Instance(master, subs)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
 end
 
 """
@@ -210,7 +319,9 @@ function build_hndp_mibs_instance(
         subproblem_method=HNDP_SUBPROBLEM_MIP,
         enforce_integer_construction_cost=true,
     )
-    return transform_GBC_to_MibS(gbc_instance, solver)
+    instance = transform_GBC_to_MibS(gbc_instance, solver)
+    _attach_hndp_model_size_metadata!(instance)
+    return instance
 end
 
 function _build_hndp_blc_subsolver(
@@ -290,6 +401,166 @@ function _build_hndp_gbc_subsolver(
     throw(ArgumentError("Unknown HNDP GBC subproblem method $(subproblem_method)."))
 end
 
+function _build_hndp_blclag_subsolver(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+    big_m_by_user::Dict{String,Float64},
+)
+    sub_model = Model(() -> get_next_optimizer(solver))
+    leader_obj, follower_obj, flow = _add_user_flow_constraints!(
+        sub_model,
+        user,
+        hndp,
+        all_arcs;
+        xvars=nothing,
+        binary_flow=true,
+        add_strong_duality=false,
+    )
+    @objective(sub_model, Min, follower_obj)
+    set_silent(sub_model)
+    y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+    user_big_m = big_m_by_user[string(user.uname)]
+    return SubSolverBlCJuMP(
+        string(user.uname),
+        sub_model,
+        hndp.edgeA,
+        y_vars,
+        leader_obj,
+        follower_obj,
+        a -> user_big_m,
+    )
+end
+
+function _build_hndp_blclag_mibs_subsolver(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+)
+    sub_model = BilevelModel(() -> get_next_optimizer(solver))
+    flow = @variable(Lower(sub_model), [a in all_arcs], Bin, base_name = "f_$(user.uname)")
+
+    if !isnothing(user.weighlimit)
+        @constraint(
+            Lower(sub_model),
+            sum(user.mweight[a...] * flow[a] for a in all_arcs) <= user.weighlimit,
+            base_name = "weight_$(user.uname)",
+        )
+    end
+
+    for node in vertices(hndp.mygraph)
+        rhs = node == user.origin ? 1 : (node == user.destination ? -1 : 0)
+        outgoing = sum((flow[(node, neigh)] for neigh in outneighbors(hndp.mygraph, node)); init=0.0)
+        incoming = sum((flow[(neigh, node)] for neigh in inneighbors(hndp.mygraph, node)); init=0.0)
+        @constraint(Lower(sub_model), outgoing - incoming == rhs, base_name = "flow_$(user.uname)_$(node)")
+    end
+
+    leader_obj = @expression(sub_model, sum(user.mrisk[a...] * flow[a] for a in all_arcs))
+    follower_obj = @expression(sub_model, sum(user.mcost[a...] * flow[a] for a in all_arcs))
+
+    @objective(Upper(sub_model), Min, leader_obj)
+    @objective(Lower(sub_model), Min, follower_obj)
+    set_silent(sub_model)
+
+    y_vars = Dict(a => flow[a] for a in hndp.edgeA)
+    return SubSolverMiBS(
+        string(user.uname),
+        sub_model,
+        hndp.edgeA,
+        y_vars,
+        leader_obj,
+        follower_obj,
+    )
+end
+
+function _hndp_master_model(instance::Instance)
+    if instance.master isa Master
+        return instance.master.model
+    elseif instance.master isa BlCMaster
+        return instance.master.hpr
+    elseif instance.master isa BlCLagMaster
+        return instance.master.model
+    elseif instance.master isa MIPMaster
+        return instance.master.mymip
+    elseif instance.master isa MibSMaster
+        return instance.master.model
+    end
+    return nothing
+end
+
+function _hndp_subsolver_size(sub::SubSolverJuMP)
+    link_count = length(sub.link_varsC)
+    total_count = length(all_variables(sub.mip_model))
+    return (first_level=link_count, second_level=total_count - link_count, linking=link_count)
+end
+
+function _hndp_subsolver_size(sub::SubSolverBlCJuMP)
+    link_count = length(sub.link_varsC)
+    total_count = length(all_variables(sub.mip_model))
+    return (first_level=link_count, second_level=total_count - link_count, linking=link_count)
+end
+
+function _hndp_subsolver_size(sub::SubSolverMiBS)
+    upper_count = length(all_variables(Upper(sub.bi_model)))
+    lower_count = length(all_variables(Lower(sub.bi_model)))
+    link_count = length(sub.link_varsC)
+    return (first_level=upper_count, second_level=lower_count, linking=link_count)
+end
+
+function _hndp_subsolver_size(sub::AStarSolver)
+    return (first_level=0, second_level=missing, linking=0)
+end
+
+function hndp_model_size_metadata(instance::Instance)
+    metadata = Dict{String,Any}()
+    master_model = _hndp_master_model(instance)
+    if !isnothing(master_model)
+        metadata["master_variable_count"] = length(all_variables(master_model))
+    end
+
+    subs = instance.subproblems
+    if isnothing(subs)
+        metadata["subproblem_first_level_variable_count_total"] = 0
+        metadata["subproblem_second_level_variable_count_total"] = 0
+        metadata["subproblem_binary_linking_variable_count_total"] = 0
+        return metadata
+    end
+
+    first_level_total = 0
+    second_level_total = 0
+    linking_total = 0
+    second_level_known = true
+    for sub in subs
+        size_data = _hndp_subsolver_size(sub)
+        first_level_total += Int(size_data.first_level)
+        linking_total += Int(size_data.linking)
+        if ismissing(size_data.second_level)
+            second_level_known = false
+        else
+            second_level_total += Int(size_data.second_level)
+        end
+    end
+
+    metadata["subproblem_first_level_variable_count_total"] = first_level_total
+    metadata["subproblem_second_level_variable_count_total"] = second_level_known ? second_level_total : missing
+    metadata["subproblem_binary_linking_variable_count_total"] = linking_total
+    return metadata
+end
+
+function _attach_hndp_model_size_metadata!(instance::Instance)
+    master_model = _hndp_master_model(instance)
+    if !isnothing(master_model)
+        master_model.ext[:hndp_model_size_metadata] = hndp_model_size_metadata(instance)
+    end
+    return instance
+end
+
+function _hndp_hybrid_path_count_exceeds_flow_vars(path_count::Integer, all_arcs)::Bool
+    return path_count > length(all_arcs)
+end
+
 """
     build_hndp_hybrid_blc_instance(
         hndp,
@@ -312,6 +583,8 @@ Returns:
 - `enum_runtime`: wall-clock time spent in the parallel precomputation stage
 - `path_counts`: number of enumerated paths for each path-mode user
 - `fallback_users`: names of users that were added as BlC subproblems
+- `path_count_fallback_users`: names of users that fell back because their
+  path count exceeded the size of the arc-based fallback formulation
 """
 function build_hndp_hybrid_blc_instance(
     hndp::HNDPwC,
@@ -319,6 +592,10 @@ function build_hndp_hybrid_blc_instance(
     enumeration_time_limit::Float64,
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
+    use_decision_arc_dominance::Bool=true,
+    fallback_if_paths_exceed_flow_vars::Bool=false,
+    availability_budget_fraction=nothing,
+    availability_budget_count=nothing,
 )
     subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_ASTAR) ||
         throw(ArgumentError("Unknown HNDP BlC subproblem method $(subproblem_method)."))
@@ -330,7 +607,14 @@ function build_hndp_hybrid_blc_instance(
     tasks = Dict{String,Task}()
     for user in hndp.users
         local_user = user
-        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(
+            local_user,
+            hndp,
+            all_arcs,
+            solver,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
 
     user_results = Dict{String,Any}()
@@ -342,12 +626,20 @@ function build_hndp_hybrid_blc_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_availability_budget!(
+        hpr,
+        x,
+        hndp.edgeA;
+        availability_budget_fraction=availability_budget_fraction,
+        availability_budget_count=availability_budget_count,
+    )
 
     master_terms = Dict{String,Any}()
     sub_terms = Dict{String,Any}()
     subs = Any[]
     path_counts = Dict{String,Int}()
     fallback_users = String[]
+    path_count_fallback_users = String[]
 
     for user in hndp.users
         uname = string(user.uname)
@@ -359,23 +651,32 @@ function build_hndp_hybrid_blc_instance(
             end
 
             path_counts[uname] = length(result.paths)
-            leader_obj, follower_obj = _add_user_path_constraints!(
-                hpr,
-                user,
-                result.paths,
-                x;
-                add_strong_duality=true,
-            )
-            opt_l1 = @variable(hpr, base_name = "optL1_hybrid_blc_path_$(uname)")
-            opt_l2 = @variable(hpr, base_name = "optL2_hybrid_blc_path_$(uname)")
-            @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_hybrid_blc_path_$(uname)")
-            @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_blc_path_$(uname)")
-            master_terms[uname] = opt_l1
-            continue
+            if fallback_if_paths_exceed_flow_vars &&
+               _hndp_hybrid_path_count_exceeds_flow_vars(path_counts[uname], all_arcs)
+                push!(fallback_users, uname)
+                push!(path_count_fallback_users, uname)
+                @info "User $(user.uname) switches to the BlC fallback because $(path_counts[uname]) enumerated paths exceed the $(length(all_arcs)) arc-flow variables of the fallback formulation."
+            else
+                leader_obj, follower_obj = _add_user_path_constraints!(
+                    hpr,
+                    user,
+                    result.paths,
+                    x;
+                    add_strong_duality=true,
+                )
+                opt_l1 = @variable(hpr, base_name = "optL1_hybrid_blc_path_$(uname)")
+                opt_l2 = @variable(hpr, base_name = "optL2_hybrid_blc_path_$(uname)")
+                @constraint(hpr, opt_l1 == leader_obj, base_name = "leader_obj_hybrid_blc_path_$(uname)")
+                @constraint(hpr, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_blc_path_$(uname)")
+                master_terms[uname] = opt_l1
+                continue
+            end
         end
 
-        push!(fallback_users, uname)
-        @warn "Path enumeration reached the global deadline for user $(user.uname). Keeping this user as a BlC subproblem."
+        if !(uname in fallback_users)
+            push!(fallback_users, uname)
+            @warn "Path enumeration reached the global deadline for user $(user.uname). Keeping this user as a BlC subproblem."
+        end
 
         leader_obj, follower_obj, _ = _add_user_flow_constraints!(
             hpr,
@@ -414,7 +715,7 @@ function build_hndp_hybrid_blc_instance(
 
     enum_runtime = min(enumeration_time_limit, maximum((result.runtime for result in values(user_results)); init=0.0))
     @info "Finished generation of the hybrid BlC HNDP reformulation."
-    return Instance(master, subs), enum_runtime, path_counts, fallback_users
+    return Instance(master, subs), enum_runtime, path_counts, fallback_users, path_count_fallback_users
 end
 
 """
@@ -541,11 +842,22 @@ function build_hndp_path_instance(
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
     parallelize::Bool=false,
+    use_decision_arc_dominance::Bool=true,
 )
     if parallelize
-        return build_hndp_path_instance_parallel(hndp, solver; enumeration_time_limit=enumeration_time_limit)
+        return build_hndp_path_instance_parallel(
+            hndp,
+            solver;
+            enumeration_time_limit=enumeration_time_limit,
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
-    return build_hndp_path_instance_sequential(hndp, solver; enumeration_time_limit=enumeration_time_limit)
+    return build_hndp_path_instance_sequential(
+        hndp,
+        solver;
+        enumeration_time_limit=enumeration_time_limit,
+        use_decision_arc_dominance=use_decision_arc_dominance,
+    )
 end
 
 """
@@ -574,6 +886,7 @@ function build_hndp_path_instance_sequential(
     hndp::HNDPwC,
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
+    use_decision_arc_dominance::Bool=true,
 )
     @info "Starting generation of the path-based HNDP reformulation."
     all_arcs = _hndp_all_arcs(hndp)
@@ -605,7 +918,13 @@ function build_hndp_path_instance_sequential(
             @warn "No feasible path was found in the fixed-arc network for user $(user.uname). Falling back to the n-1 edges heuristic bound $(bound)."
         end
 
-        paths, enum_runtime, timed_out = _enumerate_user_paths_v2(user, hndp, bound, deadline)
+        paths, enum_runtime, timed_out = _enumerate_user_paths_v2(
+            user,
+            hndp,
+            bound,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
         total_enum_runtime += enum_runtime
         total_enum_runtime = min(total_enum_runtime, enumeration_time_limit)
         path_counts[string(user.uname)] = length(paths)
@@ -660,6 +979,7 @@ function build_hndp_path_instance_parallel(
     hndp::HNDPwC,
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
+    use_decision_arc_dominance::Bool=true,
 )
     @info "Starting generation of the parallel path-based HNDP reformulation."
     all_arcs = _hndp_all_arcs(hndp)
@@ -668,7 +988,14 @@ function build_hndp_path_instance_parallel(
     tasks = Dict{String,Task}()
     for user in hndp.users
         local_user = user
-        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(
+            local_user,
+            hndp,
+            all_arcs,
+            solver,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
 
     user_results = Dict{String,Any}()
@@ -741,6 +1068,8 @@ Returns:
 - `enum_runtime`: wall-clock time spent in the parallel precomputation stage
 - `path_counts`: number of enumerated paths for each path-mode user
 - `fallback_users`: names of users that were modeled with the fallback
+- `path_count_fallback_users`: names of users that fell back because their
+  path count exceeded the size of the arc-based fallback formulation
 """
 function build_hndp_hybrid_instance(
     hndp::HNDPwC,
@@ -750,6 +1079,8 @@ function build_hndp_hybrid_instance(
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     indicator_constraints::Bool=false,
     bound_duals::Bool=true,
+    use_decision_arc_dominance::Bool=true,
+    fallback_if_paths_exceed_flow_vars::Bool=false,
 )
     _validate_hybrid_fallback_mode(fallback_mode)
     @info "Starting generation of the parallel hybrid HNDP reformulation."
@@ -760,7 +1091,14 @@ function build_hndp_hybrid_instance(
     tasks = Dict{String,Task}()
     for user in hndp.users
         local_user = user
-        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(local_user, hndp, all_arcs, solver, deadline)
+        tasks[string(user.uname)] = Threads.@spawn _compute_user_path_data(
+            local_user,
+            hndp,
+            all_arcs,
+            solver,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
     end
 
     user_results = Dict{String,Any}()
@@ -775,6 +1113,7 @@ function build_hndp_hybrid_instance(
     leader_terms = Dict{String,Any}()
     path_counts = Dict{String,Int}()
     fallback_users = String[]
+    path_count_fallback_users = String[]
     big_m_values = nothing
 
     for user in hndp.users
@@ -787,21 +1126,30 @@ function build_hndp_hybrid_instance(
             end
 
             path_counts[uname] = length(result.paths)
-            leader_obj, follower_obj = _add_user_path_constraints!(
-                mip,
-                user,
-                result.paths,
-                x;
-                add_strong_duality=true,
-            )
-            opt_l2 = @variable(mip, base_name = "optL2_hybrid_path_$(uname)")
-            @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_path_$(uname)")
-            leader_terms[uname] = leader_obj
-            continue
+            if fallback_if_paths_exceed_flow_vars &&
+               _hndp_hybrid_path_count_exceeds_flow_vars(path_counts[uname], all_arcs)
+                push!(fallback_users, uname)
+                push!(path_count_fallback_users, uname)
+                @info "User $(user.uname) switches to the fallback formulation because $(path_counts[uname]) enumerated paths exceed the $(length(all_arcs)) arc-flow variables of the fallback formulation."
+            else
+                leader_obj, follower_obj = _add_user_path_constraints!(
+                    mip,
+                    user,
+                    result.paths,
+                    x;
+                    add_strong_duality=true,
+                )
+                opt_l2 = @variable(mip, base_name = "optL2_hybrid_path_$(uname)")
+                @constraint(mip, opt_l2 == follower_obj, base_name = "follower_obj_hybrid_path_$(uname)")
+                leader_terms[uname] = leader_obj
+                continue
+            end
         end
 
-        push!(fallback_users, uname)
-        @warn "Path enumeration reached the global deadline for user $(user.uname). Using fallback formulation $(fallback_mode) for this user."
+        if !(uname in fallback_users)
+            push!(fallback_users, uname)
+            @warn "Path enumeration reached the global deadline for user $(user.uname). Using fallback formulation $(fallback_mode) for this user."
+        end
 
         if isnothing(big_m_values)
             big_m_values = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
@@ -832,7 +1180,7 @@ function build_hndp_hybrid_instance(
 
     enum_runtime = min(enumeration_time_limit, maximum((result.runtime for result in values(user_results)); init=0.0))
     @info "Finished generation of the parallel hybrid HNDP reformulation."
-    return Instance(MIPMaster(mip), nothing), enum_runtime, path_counts, fallback_users
+    return Instance(MIPMaster(mip), nothing), enum_runtime, path_counts, fallback_users, path_count_fallback_users
 end
 
 function _hndp_all_arcs(hndp::HNDPwC)
@@ -1117,7 +1465,7 @@ function _fixed_arc_path_bound(user::User, hndp::HNDPwC, all_arcs, solver::Solve
     runtime = time() - start_time
     if status == MOI.OPTIMAL || status == MOI.LOCALLY_SOLVED
         return objective_value(model), runtime, false, false
-    elseif status == MOI.INFEASIBLE
+    elseif status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
         return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, false
     elseif status == MOI.TIME_LIMIT
         return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, true
@@ -1132,6 +1480,26 @@ struct HNDPPath
     weight::Float64
 end
 
+struct HNDPPartialLabel
+    decision_arcs::Set{Tuple{Int,Int}}
+    cost::Float64
+    risk::Float64
+    weight::Float64
+end
+
+function _dominates_decision_label(
+    a::HNDPPartialLabel,
+    b::HNDPPartialLabel;
+    use_weight::Bool,
+)
+    cost_better = a.cost < b.cost
+    same_cost_better_risk = a.cost == b.cost && a.risk <= b.risk
+    (cost_better || same_cost_better_risk) || return false
+    use_weight && !(a.weight <= b.weight) && return false
+    issubset(a.decision_arcs, b.decision_arcs) || return false
+    return true
+end
+
 """
     _enumerate_user_paths_v2(user, hndp, length_bound, deadline)
 
@@ -1142,14 +1510,44 @@ simple follower paths even if the graph itself contains cycles. The search
 stops once the shared global deadline is reached and then returns the paths
 found so far together with a timeout flag.
 """
-function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float64, deadline::Float64)
+function _enumerate_user_paths_v2(
+    user::User,
+    hndp::HNDPwC,
+    length_bound::Float64,
+    deadline::Float64;
+    use_decision_arc_dominance::Bool=true,
+)
     start_time = time()
     mincostpairs = floyd_warshall_shortest_paths(hndp.mygraph, user.mcost)
     paths = HNDPPath[]
     visited = Set{Int}([user.origin])
     timed_out = false
+    decision_arc_set = Set(hndp.edgeA)
+    labels_by_node = Dict{Int,Vector{HNDPPartialLabel}}()
+    labels_by_node[user.origin] = [HNDPPartialLabel(Set{Tuple{Int,Int}}(), 0.0, 0.0, 0.0)]
 
-    function dfs(node::Int, arcs::Vector{Tuple{Int,Int}}, cost::Float64, risk::Float64, weight::Float64)
+    function _prune_or_register_label(node::Int, label::HNDPPartialLabel)
+        use_decision_arc_dominance || return false
+        bucket = get!(labels_by_node, node, HNDPPartialLabel[])
+        use_weight = !isnothing(user.weighlimit)
+        for existing in bucket
+            if _dominates_decision_label(existing, label; use_weight=use_weight)
+                return true
+            end
+        end
+        filter!(existing -> !_dominates_decision_label(label, existing; use_weight=use_weight), bucket)
+        push!(bucket, label)
+        return false
+    end
+
+    function dfs(
+        node::Int,
+        arcs::Vector{Tuple{Int,Int}},
+        cost::Float64,
+        risk::Float64,
+        weight::Float64,
+        traversed_decision_arcs::Set{Tuple{Int,Int}},
+    )
         if time() >= deadline
             timed_out = true
             return
@@ -1181,6 +1579,15 @@ function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float6
                 continue
             end
 
+            next_decision_arcs = traversed_decision_arcs
+            if use_decision_arc_dominance && edge in decision_arc_set
+                next_decision_arcs = copy(traversed_decision_arcs)
+                push!(next_decision_arcs, edge)
+            end
+
+            next_label = HNDPPartialLabel(next_decision_arcs, new_cost, risk + user.mrisk[edge...], new_weight)
+            _prune_or_register_label(next_node, next_label) && continue
+
             push!(arcs, edge)
             push!(visited, next_node)
             dfs(
@@ -1189,6 +1596,7 @@ function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float6
                 new_cost,
                 risk + user.mrisk[edge...],
                 new_weight,
+                next_decision_arcs,
             )
             pop!(arcs)
             delete!(visited, next_node)
@@ -1196,7 +1604,7 @@ function _enumerate_user_paths_v2(user::User, hndp::HNDPwC, length_bound::Float6
         end
     end
 
-    dfs(user.origin, Tuple{Int,Int}[], 0.0, 0.0, 0.0)
+    dfs(user.origin, Tuple{Int,Int}[], 0.0, 0.0, 0.0, Set{Tuple{Int,Int}}())
     if isempty(paths) && !timed_out
         throw(ArgumentError("No feasible path was enumerated for user $(user.uname) within the path bound $(length_bound)."))
     end
@@ -1213,7 +1621,14 @@ function _path_precompute_solver(solver::GurobiSolver)
     return GurobiSolver()
 end
 
-function _compute_user_path_data(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper, deadline::Float64)
+function _compute_user_path_data(
+    user::User,
+    hndp::HNDPwC,
+    all_arcs,
+    solver::SolverWrapper,
+    deadline::Float64;
+    use_decision_arc_dominance::Bool=true,
+)
     local_solver = _path_precompute_solver(solver)
     start_time = time()
     bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, local_solver, deadline)
@@ -1227,7 +1642,13 @@ function _compute_user_path_data(user::User, hndp::HNDPwC, all_arcs, solver::Sol
         )
     end
 
-    paths, enum_runtime, timed_out = _enumerate_user_paths_v2(user, hndp, bound, deadline)
+    paths, enum_runtime, timed_out = _enumerate_user_paths_v2(
+        user,
+        hndp,
+        bound,
+        deadline;
+        use_decision_arc_dominance=use_decision_arc_dominance,
+    )
     total_runtime = min(bound_runtime + enum_runtime, max(0.0, deadline - start_time))
     return (
         bound=bound,

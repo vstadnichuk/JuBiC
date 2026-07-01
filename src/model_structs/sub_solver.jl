@@ -22,6 +22,11 @@ struct NumericalIssueException <: Exception
 end
 Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)
 
+struct MibSFailureException <: Exception
+    message::String
+end
+Base.showerror(io::IO, err::MibSFailureException) = print(io, err.message)
+
 ############ Functions you have to implement yourself for your subsolver ############
 """
     capacity_linking(sub_solver::SubSolver, a, params::SolverParam)
@@ -133,6 +138,16 @@ function set_nthreads(sub_solver::SubSolver, n)
         "Ignored the threads setting for subsolver $(name(sol)) because not supported";
         color=:orange,
     )
+end
+
+"""
+    set_singlethread(sub_solver::SubSolver)
+
+Force the subsolver to use a single thread. Solvers that do not support
+multi-threading can implement this as a no-op.
+"""
+function set_singlethread(sub_solver::SubSolver)
+    set_nthreads(sub_solver, 1)
 end
 
 """
