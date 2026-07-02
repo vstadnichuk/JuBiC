@@ -34,6 +34,7 @@ function _read_mps(file_path::String)
     bounds = Dict{String,VariableBound}()
 
     current_section = ""
+    integer_marker_active = false
     open(file_path, "r") do file
         for line in eachline(file)
             line = strip(line)
@@ -72,10 +73,20 @@ function _read_mps(file_path::String)
                         end
                     end
                 elseif current_section == "COLUMNS"
-                    if parts[1] in ("MARK0000", "MARK0001")
+                    if length(parts) >= 3 && parts[2] == "'MARKER'"
+                        if parts[3] == "'INTORG'"
+                            integer_marker_active = true
+                        elseif parts[3] == "'INTEND'"
+                            integer_marker_active = false
+                        end
                         continue
                     end
                     var_name = parts[1]
+                    if integer_marker_active && !haskey(bounds, var_name)
+                        bounds[var_name] = VariableBound(false, true, nothing, nothing)
+                    elseif integer_marker_active
+                        bounds[var_name].is_integer = true
+                    end
                     row_name = parts[2]
                     coeff = parse(Float64, parts[3])
                     if !haskey(columns, row_name)
