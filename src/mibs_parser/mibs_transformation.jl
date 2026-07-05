@@ -40,34 +40,44 @@ function transform_GBC_to_MibS(instance::Instance, solver::SolverWrapper)
 
     # define upper level objective
     upper_obj = objective_function(instance.master.model)
-    l1term =
-        if upper_obj isa GenericVariableRef
-            upper_vars_ref[upper_obj]
-        else
-            sum(coef * upper_vars_ref[var] for (var, coef) in upper_obj.terms) + constant(upper_obj)
+    l1term = 0.0
+    if upper_obj isa GenericVariableRef
+        l1term += upper_vars_ref[upper_obj]
+    else
+        l1term += constant(upper_obj)
+        for (var, coef) in upper_obj.terms
+            l1term += coef * upper_vars_ref[var]
         end
+    end
+    lower_contribution = 0.0
+    for sub_problem in instance.subproblems
+        lower_contribution += constant(sub_problem.r_objterm)
+        for (var, coef) in sub_problem.r_objterm.terms
+            lower_contribution += coef * lower_vars_ref[var]
+        end
+    end
     @objective(
         Upper(bilevel_model),
         Min,
-        l1term +
-        sum(
-            constant(sub_problem.r_objterm) +
-            sum(coef * lower_vars_ref[var] for (var, coef) in sub_problem.r_objterm.terms)
-            for sub_problem in instance.subproblems
-        )  # TODO: Currently only supports the SubSolverJuMP subproblem type
+        l1term + lower_contribution  # TODO: Currently only supports the SubSolverJuMP subproblem type
     )
     # TODO: "fun fact" MiBS ignores constants in objective function O_O
 
     # define lower level objective
     lower_obj = objective_function(instance.subproblems[1].mip_model)
+    lower_obj_expr = 0.0
+    if lower_obj isa GenericVariableRef
+        lower_obj_expr += lower_vars_ref[lower_obj]
+    else
+        lower_obj_expr += constant(lower_obj)
+        for (var, coef) in lower_obj.terms
+            lower_obj_expr += coef * lower_vars_ref[var]
+        end
+    end
     @objective(
         Lower(bilevel_model),
         Min,
-        if lower_obj isa GenericVariableRef
-            lower_vars_ref[lower_obj]
-        else
-            sum(coef * lower_vars_ref[var] for (var, coef) in lower_obj.terms) + constant(lower_obj)
-        end
+        lower_obj_expr
     )
 
     # add upper level constraints
@@ -129,8 +139,8 @@ function merge_subproblems(instance::Instance, solver::SolverWrapper)
         _add_constraints!(mainsub, sub.mip_model, newvars_ref)
 
         # generate r and c objective terms with new variables
-        r_obj_mainsub_ref[name(sub)] = constant(sub.r_objterm) + sum(coef * newvars_ref[var] for (var, coef) in sub.r_objterm.terms)
-        c_obj_mainsub_ref[name(sub)] = constant(sub.c_objterm) + sum(coef * newvars_ref[var] for (var, coef) in sub.c_objterm.terms)
+        r_obj_mainsub_ref[name(sub)] = constant(sub.r_objterm) + sum(coef * newvars_ref[var] for (var, coef) in sub.r_objterm.terms; init=AffExpr(0))
+        c_obj_mainsub_ref[name(sub)] = constant(sub.c_objterm) + sum(coef * newvars_ref[var] for (var, coef) in sub.c_objterm.terms; init=AffExpr(0))
     end
 
     # add objective
@@ -178,7 +188,11 @@ function _create_variable!(model, var)
 
         for (con_type, get_rhs, op) in constraint_types
             for con in all_constraints(src_model, AffExpr, con_type)
-                expr = sum(coef * vars_ref[var] for (var, coef) in constraint_object(con).func.terms)
+                expr = 0.0
+                for (var, coef) in constraint_object(con).func.terms
+                    expr += coef * vars_ref[var]
+                end
+                expr += constant(constraint_object(con).func)
                 rhs = get_rhs(con)
 
                 if op == 'E'  # handle equality constraints by adding two inequalities

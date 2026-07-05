@@ -7,9 +7,40 @@ const VARIABLE_PARTIAL_SUFFIX = "_JuBiC-partial"
 
 Builds an instance from the given MPS and AUX files.
 """
+function _upper_level_coupling_constraint_terms(mps_data, aux_data)
+    follower_vars = Set(aux_data.variables)
+    coupled_rows = Dict{String,Vector{Tuple{String,Float64}}}()
+    constraint_rows = Iterators.flatten((mps_data.rows_less_than, mps_data.rows_greater_than, mps_data.rows_equal))
+    for row in constraint_rows
+        row in aux_data.constraints && continue
+        terms = get(mps_data.columns, row, Tuple{String,Float64}[])
+        lower_terms = [(name, coef) for (name, coef) in terms if name in follower_vars]
+        isempty(lower_terms) || (coupled_rows[row] = lower_terms)
+    end
+    return coupled_rows
+end
+
+function _assert_no_upper_level_coupling_constraints(mps_data, aux_data; importer::String="GBC MPS importer")
+    coupled_rows = _upper_level_coupling_constraint_terms(mps_data, aux_data)
+    isempty(coupled_rows) && return nothing
+    row = first(sort!(collect(keys(coupled_rows))))
+    lower_terms = coupled_rows[row]
+    preview = join(("$(name)=$(coef)" for (name, coef) in first(lower_terms, min(length(lower_terms), 5))), ", ")
+    throw(ArgumentError(
+        "$(importer) does not support coupling constraints, i.e., upper-level constraints containing lower-level variables. " *
+        "Row $(row) contains $(length(lower_terms)) lower-level term(s): $(preview). " *
+        "Skip this instance or use an importer/formulation that explicitly supports these coupling constraints."
+    ))
+end
+
+function _has_upper_level_coupling_constraints(mps_data, aux_data)
+    return !isempty(_upper_level_coupling_constraint_terms(mps_data, aux_data))
+end
+
 function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer; partial_decomposition::Bool=true, preprocessing::Bool=true, stats::Union{Nothing,RunStats}=nothing)
     mps_data = _read_mps(mps_file_path)
     aux_data = _read_aux(aux_file_path)
+    _assert_no_upper_level_coupling_constraints(mps_data, aux_data)
 
     obj_bias = preprocessing ? _preprocess_model(mps_data, aux_data) : 0.0
 
@@ -111,11 +142,11 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
             sub_model = (row in aux_data.constraints) ? model_lower : model_upper
 
             lhs = if sub_model === model_upper
-                sum(upper_vars[name] * n for (name, n) in mps_data.columns[row])
+                sum(upper_vars[name] * n for (name, n) in mps_data.columns[row] if haskey(upper_vars, name); init=0)
             else
-                sum(lower_vars[name] * n for (name, n) in mps_data.columns[row] if name in keys(lower_vars); init=0) +
-                sum(link_lower[name] * n for (name, n) in mps_data.columns[row] if name in keys(upper_vars) && !(name in regular_linking); init=0) +
-                sum(upper_copy[name] * n for (name, n) in mps_data.columns[row] if name in keys(upper_vars) && name in regular_linking; init=0)
+                sum(lower_vars[name] * n for (name, n) in mps_data.columns[row] if haskey(lower_vars, name); init=0) +
+                sum(link_lower[name] * n for (name, n) in mps_data.columns[row] if haskey(upper_vars, name) && !(name in regular_linking); init=0) +
+                sum(upper_copy[name] * n for (name, n) in mps_data.columns[row] if haskey(upper_vars, name) && name in regular_linking; init=0)
             end
 
             rhs = mps_data.rhs[row]
@@ -129,7 +160,7 @@ function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimize
             end
 
             if partial_decomposition && sub_model === model_lower
-                lhs_partial = sum(upper_vars_partial[name] * n for (name, n) in mps_data.columns[row])
+                lhs_partial = sum(upper_vars_partial[name] * n for (name, n) in mps_data.columns[row] if haskey(upper_vars_partial, name); init=0)
                 if sense == 'L'
                     @constraint(model_upper, lhs_partial <= rhs)
                 elseif sense == 'G'

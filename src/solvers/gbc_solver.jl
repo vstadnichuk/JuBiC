@@ -114,7 +114,8 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     msol_subobj_mapping = Dict()  # for each master solution, store per subproblem which subObj values were already separated
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
-        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param))
+        solve_start_time = time()
+        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param, solve_start_time, true_runtime))
     else
         @debug "We do not add any callbacks to GBCSolver as we run into a time out during the preprocessing."
         new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
@@ -410,7 +411,11 @@ function _has_cached_subobj_value(mapping::Dict, msolkey, subname, value)
     return _normalize_subobj_cache_value(value) in per_sub[subname]
 end
 
-function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam)
+function _remaining_gbc_callback_time(solve_start_time::Real, true_runtime::Real)
+    return true_runtime - (time() - solve_start_time)
+end
+
+function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam, solve_start_time::Real, true_runtime::Real)
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
 
@@ -472,7 +477,11 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             local_param = _local_gbc_param(parameter)
                             result_ref = Ref{Any}(nothing)
                             cuttime = @elapsed begin
-                                feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                                remaining_time = _remaining_gbc_callback_time(solve_start_time, true_runtime)
+                                if remaining_time <= 0
+                                    throw(TimeoutException("GBC callback reached the global time limit before separating subproblem $(subname)."))
+                                end
+                                feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, remaining_time)
                                 result_ref[] = (
                                     subname=subname,
                                     current_subobj=current_subobj,
@@ -510,7 +519,11 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                     local_param = parameter.parallel_separation ? _local_gbc_param(parameter) : parameter
                     result_ref = Ref{Any}(nothing)
                     cuttime = @elapsed begin
-                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                        remaining_time = _remaining_gbc_callback_time(solve_start_time, true_runtime)
+                        if remaining_time <= 0
+                            throw(TimeoutException("GBC callback reached the global time limit before separating subproblem $(subname)."))
+                        end
+                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, remaining_time)
                         result_ref[] = (
                             subname=subname,
                             current_subobj=current_subobj,

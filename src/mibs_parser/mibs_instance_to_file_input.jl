@@ -240,10 +240,10 @@ end
 
 Outputs the given GBC instance to the MibS input file format (MPS and AUX files).
 """
-function output_GBC_instance(instance::Instance, name::String, output_directory::String; anonymous_names::Bool=true)
+function output_GBC_instance(instance::Instance, name::String, output_directory::String, solver::SolverWrapper=GurobiSolver(); anonymous_names::Bool=true)
     @assert !isnothing(instance.master) "The instance must have a master problem defined."
     @assert instance.master isa Master "The master problem must be of type Master."
 
-    mibs_instance = transform_GBC_to_MibS(instance)
+    mibs_instance = transform_GBC_to_MibS(instance, solver)
     output_MibS_instance(mibs_instance, name, output_directory; anonymous_names=anonymous_names)
 end

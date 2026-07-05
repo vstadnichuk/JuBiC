@@ -253,6 +253,11 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
 
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
+        remaining_time = time_limit - (time() - current_time)
+        if remaining_time <= 0
+            @error "We reached the time limit before resolving ConnectorLP_BlC $(name(subLP.sub_solver)). Terminating cut generation process."
+            throw(TimeoutException("We reached the time limit before resolving ConnectorLP_BlC $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
+        end
         # solve the sub_problem iteratively (but first debbug output)
         if params.debbug_out
             write_to_file(
@@ -263,10 +268,16 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
 
         # first, solve the LP
         #@debug subLP.lp # this debug output is not helpfull
+        set_time_limit_sec(subLP.lp, remaining_time)
         optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
         check_solution_status_LP(subLP)  
 
         # solve sub_problem for found solution
+        remaining_time = time_limit - (time() - current_time)
+        if remaining_time <= 0
+            @error "We reached the time limit before pricing ConnectorLP_BlC $(name(subLP.sub_solver)). Terminating cut generation process."
+            throw(TimeoutException("We reached the time limit before pricing ConnectorLP_BlC $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
+        end
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A) 
         @debug "The found sub_problem ConnectorLP_BlC solution is s=$(value(subLP.lp[:s])) and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0))"
         sub_solver = separation_BlC!(
@@ -274,7 +285,7 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
             value(subLP.lp[:s]),
             kvals,
             params,
-            time_limit
+            remaining_time
         )
 
         # if we found a violated constraint, add it and resolve
@@ -286,7 +297,7 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
             add_cut_from_scs_blc(subLP, csc)
 
             # check for time limit
-            if current_time + params.runtime < time() 
+            if current_time + time_limit < time() 
                 @error "We reached the time limit when solving ConnectorLP_BlC $(name(subLP.sub_solver)). Terminating cut generation process."
                 throw(TimeoutException("We reached the time limit when solving ConnectorLP_BlC $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
             end

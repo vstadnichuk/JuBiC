@@ -371,10 +371,20 @@ Generate an general Benders (feasibility or optimality) cut.
 """
 function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
     _reset_numeric_state!(subLP)
+    start_time = time()
+    remaining_time() = time_limit - (time() - start_time)
+    function require_remaining_time!(stage)
+        rem = remaining_time()
+        if rem <= 0
+            throw(TimeoutException("ConnectorLP $(name(subLP.sub_solver)) reached the time limit before $(stage)."))
+        end
+        return rem
+    end
+
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP $(name(subLP.sub_solver))."
 
-    foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, time_limit)
+    foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, require_remaining_time!("solving the follower for fixed master values"))
     new_obj = subLP.lp[:s] - optL2 * subLP.lp[:g]
     new_obj +=
         -sum([
@@ -398,12 +408,12 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         fix_g_constraint = @constraint(subLP.lp, subLP.lp[:g] == 0)
 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for feasibility cut generation."
-        time_iterate = iterate_subsolver(subLP, params, time_limit)  # solve with new constraint
+        iterate_subsolver(subLP, params, require_remaining_time!("iterating the feasibility ConnectorLP"))  # solve with new constraint
 
         
         # pareto optimality step for feasibility cuts
         if params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY
-            time_limit_pareto = time_limit - time_iterate
+            time_limit_pareto = require_remaining_time!("generating the feasibility Pareto cut")
             @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for feasibility cut construction with remaining time limit $time_limit_pareto."
             pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
         end
@@ -415,15 +425,15 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
     else
         # solve sub_problem 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for optimality cut generation."
-        time_iterate = iterate_subsolver(subLP, params, time_limit)
-        time_limit_build_cut = time_limit - time_iterate
+        iterate_subsolver(subLP, params, require_remaining_time!("iterating the optimality ConnectorLP"))
+        time_limit_build_cut = require_remaining_time!("building the optimality cut")
         pobj = value(new_obj)
 
         if get(subLP.numeric_state, :accepted_numerically, false)
             @debug "ConnectorLP $(name(subLP.sub_solver)) was accepted numerically after detecting a repeated cut. We skip adding the duplicate cut to the ConnectorLP itself and now build the usual optimality cut using the numerically stabilized g-value."
         elseif params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
             # pareto optimality step for optimality cuts
-            time_limit_pareto = time_limit - time_iterate
+            time_limit_pareto = require_remaining_time!("generating the optimality Pareto cut")
             pareto_snapshot = _connector_solution_snapshot(subLP)
             try
                 if !haskey(params.stats.data, "ConnectorLPTimePareto")
@@ -435,10 +445,14 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
                 time_limit_build_cut = time_limit_pareto
                 pobj = value(new_obj)
             catch err
+                if err isa TimeoutException
+                    rethrow(err)
+                end
                 @warn "Pareto-optimal cut generation failed for connector $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
                 params.stats.data["Opt_status_override"] = "Numerics"
                 params.stats.data["GBCStatus"] = "Numerics"
                 subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
+                time_limit_build_cut = require_remaining_time!("building the fallback optimality cut")
             end
         end
 
@@ -669,6 +683,11 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
+        remaining_time = time_limit - (time() - current_time)
+        if remaining_time <= 0
+            @error "We reached the time limit before resolving ConnectorLP $(name(subLP.sub_solver)). Terminating cut generation process."
+            throw(TimeoutException("We reached the time limit before resolving ConnectorLP $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
+        end
         add_stat!(params.stats, "ConnectorLPIterations", 1)
         # solve the sub_problem iteratively (but first debbug output)
         if params.debbug_out
@@ -680,11 +699,17 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # first, solve the LP
         #@debug subLP.lp # this debug output is not helpfull
+        set_time_limit_sec(subLP.lp, remaining_time)
         lp_time = @elapsed optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
         add_stat!(params.stats, "ConnectorLPTimeLP", lp_time)
         check_solution_status_LP(subLP)  
 
         # solve sub_problem for found solution
+        remaining_time = time_limit - (time() - current_time)
+        if remaining_time <= 0
+            @error "We reached the time limit before pricing ConnectorLP $(name(subLP.sub_solver)). Terminating cut generation process."
+            throw(TimeoutException("We reached the time limit before pricing ConnectorLP $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
+        end
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
         @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
         pricing_time = @elapsed begin
@@ -694,7 +719,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
                 value(subLP.lp[:g]),
                 kvals,
                 params,
-                time_limit
+                remaining_time
             )
             subLP.numeric_state[:last_sub_solver_solution] = sub_solver
         end
@@ -752,7 +777,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
             push!(subLP.my_subsolutions, csc)
 
             # check for time limit
-            if current_time + params.runtime < time() 
+            if current_time + time_limit < time() 
                 @error "We reached the time limit when solving ConnectorLP $(name(subLP.sub_solver)). Terminating cut generation process."
                 throw(TimeoutException("We reached the time limit when solving ConnectorLP $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
             end
