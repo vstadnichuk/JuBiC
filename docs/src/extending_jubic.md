@@ -63,25 +63,6 @@ list as new use cases appear.
 We also welcome applications or solvers that use JuBiC externally. If desired,
 we can link such projects from this page.
 
-## Working With the Code
-
-Our experience is that concrete questions are the fastest way to understand the
-current implementation. We have also tested AI coding agents on the JuBiC code
-base, and our impression is that asking an agent targeted questions while it can
-inspect the repository is often the quickest way to get oriented and implement
-small extensions.
-
-Useful questions tend to be specific, for example:
-
-- Which wrapper type is used by a given solver?
-- Which functions must a custom subsolver implement?
-- How does an HNDP instance become a JuBiC `Instance`?
-- Where are solver parameters constructed?
-- Which statistics are written to the benchmark CSV?
-
-For subsolvers, also see the [SubSolver Interface](sub_solvers.md) and the
-existing subsolver pages.
-
 ## Contact
 
 If you have concrete questions, bug reports, or suggestions for improving the

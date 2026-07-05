@@ -43,6 +43,12 @@ Deprecated constructors with explicit linking-copy variables still exist for
 backward compatibility, but JuBiC now ignores the passed copies and creates its
 own internal copies with unit linking capacities.
 
+## Numerical Preprocessing in `GBC`
+
+`SubSolverJuMP` supports the `GBC` numerical preprocessing option for extreme
+connector coefficients. The behavior is documented in
+[Numerics and Status Codes](../numerics_and_status.md).
+
 ## Related Pages
 
 - [`GBC`](../solvers/gbc.md)

@@ -14,6 +14,18 @@ JuBiC addresses these issues with explicit rounding, coefficient validation,
 fallbacks, duplicate-cut handling, and status propagation. The main mechanisms
 are summarized below.
 
+## Connector Row Seeding
+
+In `GBC`, the connector LP is separated after the current first-level solution
+has already been evaluated by the follower oracle. If
+`GBCparam.connector_add_current_solution_cut=true`, JuBiC reuses this known
+follower solution and adds the corresponding connector row before the connector
+separation loop starts, unless that row is already present.
+
+This can provide useful information earlier in the connector solve. It can also
+increase the number of connector rows, because the current follower solution is
+not necessarily a maximal or otherwise strongest row for the connector LP.
+
 ## Binary Rounding and Cut Validation
 
 Some cut-generation routines need binary master or follower patterns even though
@@ -33,6 +45,23 @@ Generated cut coefficients are expected to satisfy sign conditions. JuBiC checks
 these assumptions before accepting a cut. Very small sign violations caused by
 numerical noise may be snapped to zero, while material violations terminate the
 current solve path.
+
+## Subsolver Numerical Preprocessing
+
+Some connector LP solutions contain coefficients at the artificial numerical
+upper bound `GBCparam.infinity_num`. Passing these coefficients directly into a
+subsolver objective can dominate the intended objective structure and produce
+unstable pricing behavior.
+
+If `GBCparam.subsolver_numerical_preprocessing=true`, compatible subsolvers may
+handle such cases explicitly. For `SubSolverJuMP`, this means:
+
+- if the connector value `g` is at the numerical upper bound, solve with the original follower objective and evaluate the full connector objective afterward;
+- otherwise, if some `k_a` values are at the numerical upper bound, temporarily forbid the corresponding follower-side linking variables;
+- if the temporary forbidding step makes the subproblem infeasible, remove it and solve the original connector pricing problem.
+
+The option is a numerical safeguard for difficult separation calls. It does not
+change the mathematical instance.
 
 ## Duplicate-Cut Handling
 

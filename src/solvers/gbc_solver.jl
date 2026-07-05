@@ -357,6 +357,8 @@ function _local_gbc_param(params::GBCparam)
         params.integer_obj,
         params.pareto_band_tolerance,
         params.blc_pareto_band_tolerance,
+        params.connector_add_current_solution_cut,
+        params.subsolver_numerical_preprocessing,
     )
 end
 

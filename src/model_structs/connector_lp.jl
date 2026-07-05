@@ -41,6 +41,34 @@ struct ConnectorLP{T}
     numeric_state::Dict{Symbol,Any}  # stores temporary numerical diagnostics/overrides for the current connector solve
 end
 
+function _add_connector_solution_cut_if_new!(subLP::ConnectorLP, csc::ConSubsolCut)
+    if csc in subLP.my_subsolutions
+        return false
+    end
+    new_const_left =
+        subLP.lp[:s] - sum(subLP.lp[:k][a] for a in csc.res; init=0) -
+        csc.objL2 * subLP.lp[:g]
+    c = @constraint(subLP.lp, new_const_left <= csc.objL1)
+    push!(subLP.my_subsolutions, csc)
+    @debug "Seeded ConnectorLP $(name(subLP.sub_solver)) with known follower solution row $(c)."
+    return true
+end
+
+function _used_resources_from_yvals(subLP::ConnectorLP, y_vals; tolerance=10e-4)
+    used = eltype(subLP.A)[]
+    for a in subLP.A
+        yval = try
+            y_vals[a]
+        catch
+            nothing
+        end
+        if !isnothing(yval) && yval > tolerance
+            push!(used, a)
+        end
+    end
+    return used
+end
+
 function name(clp::ConnectorLP)
     return name(clp.sub_solver)
 end
@@ -385,6 +413,10 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
     @debug "We now solve for the found optimal master solution the ConnectorLP $(name(subLP.sub_solver))."
 
     foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, require_remaining_time!("solving the follower for fixed master values"))
+    if params.connector_add_current_solution_cut && foundfeas
+        current_resources = _used_resources_from_yvals(subLP, y_vals)
+        _add_connector_solution_cut_if_new!(subLP, ConSubsolCut(current_resources, optL2, optL2_risk))
+    end
     new_obj = subLP.lp[:s] - optL2 * subLP.lp[:g]
     new_obj +=
         -sum([

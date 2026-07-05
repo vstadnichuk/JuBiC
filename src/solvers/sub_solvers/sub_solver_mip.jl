@@ -263,6 +263,18 @@ function name(ss::SubSolverJuMP)
     return ss.name
 end
 
+function _numeric_preprocessing_enabled(params::SolverParam)
+    return hasproperty(params, :subsolver_numerical_preprocessing) && params.subsolver_numerical_preprocessing
+end
+
+function _near_numeric_upper_bound(value, params::SolverParam; rel_tol=1e-4)
+    hasproperty(params, :infinity_num) || return false
+    bound = params.infinity_num
+    bound isa Real || return false
+    bound > 0 || return false
+    return value >= bound * (1 - rel_tol)
+end
+
 function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::SolverParam, time_limit)
     # TODO: we use hard coded numeric tolerances here...
     obj_tolerance = 4 # 10e-4
@@ -270,8 +282,24 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
 
     # set new objective function
     k_term = sum([kvals[a] * sol.link_varsC[a] for a in sol.A])  # TODO: This is only correct if linking variables on sub_problem side are binary? I think, it should be correct like this, but it is at least not very intuitive. 
-    new_obj = sol.c_objterm * gvals + sol.r_objterm + k_term
-    @objective(sol.mip_model, Min, new_obj)
+    full_obj = sol.c_objterm * gvals + sol.r_objterm + k_term
+    preprocessing = _numeric_preprocessing_enabled(params)
+    g_at_bound = preprocessing && _near_numeric_upper_bound(gvals, params)
+    k_at_bound = preprocessing ? [a for a in sol.A if _near_numeric_upper_bound(get(kvals, a, 0.0), params)] : eltype(sol.A)[]
+    fix_numprep = Dict{Any,ConstraintRef}()
+
+    if g_at_bound
+        @debug "SubSolverJuMP $(sol.name) numerical preprocessing: g=$(gvals) is at the numerical upper bound. Solving with the original second-level objective and evaluating the full connector objective afterwards."
+        @objective(sol.mip_model, Min, sol.c_objterm)
+    else
+        if !isempty(k_at_bound)
+            @debug "SubSolverJuMP $(sol.name) numerical preprocessing: fixing $(length(k_at_bound)) resources with k at the numerical upper bound to zero: $(k_at_bound)."
+            for a in k_at_bound
+                fix_numprep[a] = @constraint(sol.mip_model, sol.link_varsC[a] == 0)
+            end
+        end
+        @objective(sol.mip_model, Min, full_obj)
+    end
 
     # Solve sub_problem (and print it in debbug mode)
     try 
@@ -284,22 +312,43 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
     catch err
         @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
     end
-    solve_mip(sol, params, time_limit)
+    try
+        solve_mip(sol, params, time_limit)
 
-    # check if optimal solution found and otherwise handle exceptions
-    check_solution_status(sol)
+        if preprocessing && !isempty(fix_numprep)
+            status = termination_status(sol.mip_model)
+            if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
+                @debug "SubSolverJuMP $(sol.name) numerical preprocessing with fixed upper-bound-k resources was infeasible. Retrying with the original connector objective."
+                for cref in values(fix_numprep)
+                    delete(sol.mip_model, cref)
+                end
+                empty!(fix_numprep)
+                @objective(sol.mip_model, Min, full_obj)
+                solve_mip(sol, params, time_limit)
+            end
+        end
 
-    # construct return value 
-    opt_obj = objective_value(sol.mip_model)
-    @debug "Optimal solution of sub " * sol.name * " is " * string(opt_obj)
+        # check if optimal solution found and otherwise handle exceptions
+        check_solution_status(sol)
 
-    is_violate = Bool(!(sval < opt_obj + var_non_zero_tolerance))
-    @debug "The violated status of sub $(sol.name) is $(is_violate) as sval=$(sval) and found obj=$(opt_obj)."
-    # TODO: this rounding can be dangerous (but without code also breaks)...
-    r = round(value(sol.r_objterm); digits=obj_tolerance)
-    c = round(value(sol.c_objterm); digits=obj_tolerance)
-    as = [a for a in sol.A if value(sol.y_vars[a]) > var_non_zero_tolerance]  # TODO: Not that it should make a difference here, but why do we use y and not copies of x variables here?
-    return SubSolution(is_violate, r, c, opt_obj, as)
+        # construct return value 
+        opt_obj = value(full_obj)
+        @debug "Optimal solution of sub " * sol.name * " is " * string(opt_obj)
+
+        is_violate = Bool(!(sval < opt_obj + var_non_zero_tolerance))
+        @debug "The violated status of sub $(sol.name) is $(is_violate) as sval=$(sval) and found obj=$(opt_obj)."
+        # TODO: this rounding can be dangerous (but without code also breaks)...
+        r = round(value(sol.r_objterm); digits=obj_tolerance)
+        c = round(value(sol.c_objterm); digits=obj_tolerance)
+        as = [a for a in sol.A if value(sol.y_vars[a]) > var_non_zero_tolerance]  # TODO: Not that it should make a difference here, but why do we use y and not copies of x variables here?
+        return SubSolution(is_violate, r, c, opt_obj, as)
+    finally
+        for cref in values(fix_numprep)
+            if is_valid(sol.mip_model, cref)
+                delete(sol.mip_model, cref)
+            end
+        end
+    end
 end
 
 

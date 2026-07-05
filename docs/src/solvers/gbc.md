@@ -100,9 +100,17 @@ implemented supported subsolvers are:
 - `warmstart`: whether connector state is reused across callback solves.
 - `bigMwithLC`: whether BlC-style subroutines are used to strengthen some GBC coefficients.
 - `trim_coeff`: whether generated coefficients are trimmed by available bounds.
+- `connector_add_current_solution_cut`: if enabled, the follower solution computed for the current first-level point is inserted into the corresponding `ConnectorLP` before the connector separation loop starts, unless the same row already exists.
+- `subsolver_numerical_preprocessing`: if enabled, compatible subsolvers may simplify numerically extreme connector objectives before solving the pricing problem.
 
 Additional constructor variants expose seed, thread, and numerical-tolerance
 settings; see [Core API Reference](../solver_api.md).
+
+The last two options are intended for numerically difficult `GBC` runs. They
+can change the internal sequence of generated connector rows, but not the
+mathematical problem being solved. The first option can give the connector LP
+more information early. The second option is currently implemented for
+[`SubSolverJuMP`](../subsolvers/subsolver_jump.md).
 
 ## Minimal Working Example
 
