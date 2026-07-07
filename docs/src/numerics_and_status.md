@@ -201,7 +201,7 @@ The most relevant reported statuses are:
 Other values indicate that the run terminated through a specific solver-side
 condition or exception. Current values include:
 
-- `Timeout_Submodel`: a submodel or follower evaluation timed out.
+- `Timeout_Submodel`: a submodel or follower evaluation timed out after receiving essentially the full available solve budget. If the timeout happens because the global runtime is already nearly exhausted and only a small remaining budget was passed to the submodel, JuBiC reports `Timelimit` instead.
 - `Timeout_Subsolver`: a bilevel-capable subsolver timed out.
 - `Terminate`: the solver terminated after an unexpected internal error.
 - `Terminate_MibS`: MiBS failed inside a subsolver call.

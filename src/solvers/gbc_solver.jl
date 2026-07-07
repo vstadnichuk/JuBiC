@@ -112,22 +112,27 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
     msol_cuts_mapping_blc = Dict()  # a mapping of master solution to found lazy blc constraints. They are only generated if BlC coef. are automatically computed in subroutine
     msol_subobj_mapping = Dict()  # for each master solution, store per subproblem which subObj values were already separated
+    solve_start_time = time()
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
-        solve_start_time = time()
         set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param, solve_start_time, true_runtime))
     else
-        @debug "We do not add any callbacks to GBCSolver as we run into a time out during the preprocessing."
-        new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
+        @debug "We do not add any callbacks to GBCSolver because preprocessing consumed the available runtime."
+        new_stat!(param.stats, "GBCStatus", "Timelimit")
     end
 
     try 
         optimize!(master.model)
     catch e
         if (e isa TimeoutException)
-            @warn "We run into a timeout when solving a Submodel with GBCSolver. Note that this implies that the Subproblem run for the time passed by timelimit and did not terminate. "
-            param.stats.data["GBCStatus"] = "Timeout_Submodel"
-            param.stats.data["Opt_status_override"] = "Timeout_Submodel"
+            status = _gbc_timeout_status(param, true_runtime)
+            if status == "Timeout_Submodel"
+                @warn "GBC stopped because a submodel/connector timed out after receiving essentially the full remaining solve budget."
+            else
+                @warn "GBC reached the global runtime limit during submodel/connector separation. Reporting this as a normal timelimit."
+            end
+            param.stats.data["GBCStatus"] = status
+            param.stats.data["Opt_status_override"] = status
         elseif (e isa NumericalIssueException)
             @error "GBCSolver stopped due to a detected numerical issue: $(e.message)"
             param.stats.data["GBCStatus"] = e.status
@@ -417,6 +422,21 @@ function _remaining_gbc_callback_time(solve_start_time::Real, true_runtime::Real
     return true_runtime - (time() - solve_start_time)
 end
 
+function _record_gbc_submodel_time_budget!(stats::RunStats, remaining_time::Real, true_runtime::Real)
+    budget = max(0.0, Float64(remaining_time))
+    total = max(Float64(true_runtime), eps(Float64))
+    stats.data["GBCLastSubmodelTimeLimit"] = budget
+    stats.data["GBCLastSubmodelTimeLimitShare"] = budget / total
+    return nothing
+end
+
+function _gbc_timeout_status(param::GBCparam, true_runtime::Real)
+    budget = get(param.stats.data, "GBCLastSubmodelTimeLimit", param.runtime)
+    total = max(Float64(true_runtime), eps(Float64))
+    full_budget_threshold = 0.9 * total
+    return budget >= full_budget_threshold ? "Timeout_Submodel" : "Timelimit"
+end
+
 function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam, solve_start_time::Real, true_runtime::Real)
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
@@ -480,6 +500,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             result_ref = Ref{Any}(nothing)
                             cuttime = @elapsed begin
                                 remaining_time = _remaining_gbc_callback_time(solve_start_time, true_runtime)
+                                _record_gbc_submodel_time_budget!(parameter.stats, remaining_time, true_runtime)
                                 if remaining_time <= 0
                                     throw(TimeoutException("GBC callback reached the global time limit before separating subproblem $(subname)."))
                                 end
@@ -522,6 +543,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                     result_ref = Ref{Any}(nothing)
                     cuttime = @elapsed begin
                         remaining_time = _remaining_gbc_callback_time(solve_start_time, true_runtime)
+                        _record_gbc_submodel_time_budget!(parameter.stats, remaining_time, true_runtime)
                         if remaining_time <= 0
                             throw(TimeoutException("GBC callback reached the global time limit before separating subproblem $(subname)."))
                         end
