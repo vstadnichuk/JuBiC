@@ -159,8 +159,8 @@ function GBCparam(
         integer_obj,
         1e-4,
         1e-4,
-        false,
-        false,
+        true,
+        true,
     )
 end
 
@@ -202,8 +202,8 @@ function GBCparam(
         integer_obj,
         1e-4,
         1e-4,
-        false,
-        false,
+        true,
+        true,
     )
 end
 
@@ -247,17 +247,17 @@ function GBCparam(
         integer_obj,
         pareto_band_tolerance,
         blc_pareto_band_tolerance,
-        false,
-        false,
+        true,
+        true,
     )
 end
 
-GBCparam(solver, debbug_out, output_folder_path, file_format_output) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, PARETO_OPTIMALITY_ONLY, true, false, true, 1e9, 0, false, 1e-4, 1e-4, false, false)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4, false, false)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4, false, false)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, 0, integer_obj, 1e-4, 1e-4, false, false)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, 0, false, 1e-4, 1e-4, false, false)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, 0, integer_obj, 1e-4, 1e-4, false, false)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, PARETO_OPTIMALITY_ONLY, true, false, true, 1e9, 0, false, 1e-4, 1e-4, true, true)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4, true, true)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4, true, true)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, 0, integer_obj, 1e-4, 1e-4, true, true)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, 0, false, 1e-4, 1e-4, true, true)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, 0, integer_obj, 1e-4, 1e-4, true, true)
 
 function get_stats(param::GBCparam)
     return param.stats
