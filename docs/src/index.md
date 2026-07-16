@@ -83,6 +83,8 @@ The current test suite uses `Gurobi`, so running the tests requires a working `G
   The main conceptual overview: `Instance`, master wrappers, subsolver wrappers, solver parameter objects, solver families, and experiment output.
 - [Extending JuBiC](extending_jubic.md)
   Practical guidance and current limitations for implementing custom solver or subsolver components.
+- [Parallel Computing](parallel_computing.md)
+  How JuBiC handles in-solver parallelism, Gurobi-backed worker solves, and subprocess-based benchmark execution.
 - [Solver Methods](solvers/gbc.md)
   Algorithm-specific pages for `GBC`, `BlC`, `BlCLag`, the compact MIP wrapper, and the direct `MiBS` wrapper.
 - [SubSolvers](sub_solvers.md)

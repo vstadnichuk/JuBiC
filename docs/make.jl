@@ -13,6 +13,7 @@ makedocs(
         "Getting Started" => "getting_started.md",
         "Using JuBiC" => "model_objects.md",
         "Extending JuBiC" => "extending_jubic.md",
+        "Parallel Computing" => "parallel_computing.md",
         "Solver Methods" => [
             "Generalized Benders Cuts (GBC)" => joinpath("solvers", "gbc.md"),
             "Benders-like Cuts (BlC)" => joinpath("solvers", "blc.md"),

@@ -2,6 +2,8 @@ using JuBiC
 using JSON
 using Dates
 using SHA
+using CSV
+using DataFrames
 
 include("hndp_model_generation.jl")
 
@@ -35,6 +37,44 @@ function run_hndp_experiments!(
     model_cfg = JSON.parsefile(String(model_config_path))
     param_cfg = JSON.parsefile(String(param_config_path))
 
+    execution_mode = String(get(param_cfg, "execution_mode", "subprocess_per_experiment"))
+    if execution_mode == "subprocess_per_experiment"
+        return _run_hndp_experiments_subprocess!(
+            instance_cfg,
+            model_cfg,
+            param_cfg,
+            String(instance_config_path),
+            String(model_config_path),
+            String(param_config_path);
+            output_root=String(output_root),
+            resume=resume,
+        )
+    elseif execution_mode != "in_process"
+        throw(ArgumentError("Unsupported HNDP execution_mode '$(execution_mode)'. Supported values are 'subprocess_per_experiment' and 'in_process'."))
+    end
+
+    return _run_hndp_experiments_in_process!(
+        instance_cfg,
+        model_cfg,
+        param_cfg,
+        String(instance_config_path),
+        String(model_config_path),
+        String(param_config_path);
+        output_root=String(output_root),
+        resume=resume,
+    )
+end
+
+function _run_hndp_experiments_in_process!(
+    instance_cfg::Dict{String,Any},
+    model_cfg::Dict{String,Any},
+    param_cfg::Dict{String,Any},
+    instance_config_path::String,
+    model_config_path::String,
+    param_config_path::String;
+    output_root::String,
+    resume::Bool=true,
+)
     models = _load_hndp_model_specs(model_cfg)
     params = _load_hndp_param_specs(param_cfg)
     write_run_logs = get(param_cfg, "write_run_logs", true)
@@ -82,7 +122,8 @@ function run_hndp_experiments!(
                         model_spec,
                         param_spec,
                         run_output_path,
-                        write_run_logs,
+                        write_run_logs;
+                        force_post_cleanup=true,
                     )
                     results[experiment_id] = stats
                 catch err
@@ -112,6 +153,86 @@ function run_hndp_experiments!(
     end)
 
     return results
+end
+
+function _run_hndp_experiments_subprocess!(
+    instance_cfg::Dict{String,Any},
+    model_cfg::Dict{String,Any},
+    param_cfg::Dict{String,Any},
+    instance_config_path::String,
+    model_config_path::String,
+    param_config_path::String;
+    output_root::String,
+    resume::Bool=true,
+)
+    models = _load_hndp_model_specs(model_cfg)
+    params = _load_hndp_param_specs(param_cfg)
+    write_run_logs = get(param_cfg, "write_run_logs", true)
+
+    _prepare_hndp_experiment_output!(
+        output_root,
+        instance_config_path,
+        model_config_path,
+        param_config_path,
+    )
+
+    summary_csv_path = joinpath(output_root, "results", "batch_summary.csv")
+    completed_ids = resume ? JuBiC._read_completed_batch_ids(summary_csv_path) : Set{String}()
+    subprocess_log_root = joinpath(output_root, "results", "subprocess_logs")
+    mkpath(subprocess_log_root)
+
+    visit_hndp_networks(instance_cfg, generated_network -> begin
+        instance_metadata = deepcopy(generated_network.metadata)
+        instance_name = String(instance_metadata["name"])
+
+        for (model_idx, model_spec) in enumerate(models)
+            for (param_idx, param_spec) in enumerate(params)
+                experiment_id = _hndp_experiment_id(instance_name, model_spec, param_spec)
+                if experiment_id in completed_ids
+                    continue
+                end
+
+                if Bool(get(model_spec, "write_solver_instance_files", false))
+                    _maybe_export_hndp_solver_instance!(
+                        generated_network,
+                        model_spec,
+                        param_spec,
+                        output_root,
+                    )
+                end
+
+                ok = _run_hndp_experiment_subprocess!(
+                    instance_name,
+                    model_idx,
+                    param_idx,
+                    instance_config_path,
+                    model_config_path,
+                    param_config_path,
+                    output_root,
+                    experiment_id,
+                    subprocess_log_root,
+                )
+
+                if !ok
+                    aggregate_row = _build_hndp_error_row(
+                        generated_network,
+                        model_spec,
+                        param_spec,
+                        experiment_id,
+                        ErrorException("HNDP child process terminated before producing a result row. See subprocess logs."),
+                    )
+                    aggregate_row["experiment_id"] = experiment_id
+                    aggregate_row["instance_name"] = instance_name
+                    aggregate_row["RunStatus"] = "SubprocessError"
+                    JuBiC._append_batch_summary_csv!(summary_csv_path, aggregate_row)
+                end
+
+                push!(completed_ids, experiment_id)
+            end
+        end
+    end)
+
+    return Dict{String,JuBiC.RunStats}()
 end
 
 function _maybe_export_hndp_solver_instance!(
@@ -200,6 +321,8 @@ function _run_hndp_experiment(
     param_spec::Dict{String,Any},
     run_output_path::AbstractString,
     write_run_logs::Bool,
+    ;
+    force_post_cleanup::Bool=true,
 )
     hndp = generated_network.instance
     solver_wrapper = _build_hndp_mip_wrapper(param_spec)
@@ -241,8 +364,127 @@ function _run_hndp_experiment(
         model_instance = nothing
         params = nothing
         solver_wrapper = nothing
-        JuBiC._run_post_gurobi_cleanup!()
+        force_post_cleanup && JuBiC._run_post_gurobi_cleanup!()
     end
+end
+
+function _run_hndp_experiment_subprocess!(
+    instance_name::String,
+    model_idx::Int,
+    param_idx::Int,
+    instance_config_path::String,
+    model_config_path::String,
+    param_config_path::String,
+    output_root::String,
+    experiment_id::String,
+    subprocess_log_root::String,
+)
+    stdout_path = joinpath(subprocess_log_root, experiment_id * ".stdout.log")
+    stderr_path = joinpath(subprocess_log_root, experiment_id * ".stderr.log")
+    cmd = `$(Base.julia_cmd()) --project=$(Base.active_project()) $(abspath(@__FILE__))`
+    env = Dict(
+        "JUBIC_HNDP_CHILD_MODE" => "1",
+        "JUBIC_HNDP_INSTANCE_CONFIG" => instance_config_path,
+        "JUBIC_HNDP_MODEL_CONFIG" => model_config_path,
+        "JUBIC_HNDP_PARAM_CONFIG" => param_config_path,
+        "JUBIC_HNDP_OUTPUT_ROOT" => output_root,
+        "JUBIC_HNDP_INSTANCE_NAME" => instance_name,
+        "JUBIC_HNDP_MODEL_IDX" => string(model_idx),
+        "JUBIC_HNDP_PARAM_IDX" => string(param_idx),
+        "JUBIC_HNDP_EXPERIMENT_ID" => experiment_id,
+    )
+
+    proc = run(
+        pipeline(
+            ignorestatus(setenv(cmd, env));
+            stdout=stdout_path,
+            stderr=stderr_path,
+        ),
+    )
+    if success(proc)
+        return _summary_contains_experiment_id(joinpath(output_root, "results", "batch_summary.csv"), experiment_id)
+    end
+    return false
+end
+
+function _summary_contains_experiment_id(summary_csv_path::String, experiment_id::String)
+    isfile(summary_csv_path) || return false
+    df = CSV.read(summary_csv_path, DataFrame)
+    if !("experiment_id" in names(df))
+        return false
+    end
+    return any(isequal(experiment_id), df[!, "experiment_id"])
+end
+
+function _run_hndp_single_child_job_from_env!()
+    instance_config_path = ENV["JUBIC_HNDP_INSTANCE_CONFIG"]
+    model_config_path = ENV["JUBIC_HNDP_MODEL_CONFIG"]
+    param_config_path = ENV["JUBIC_HNDP_PARAM_CONFIG"]
+    output_root = ENV["JUBIC_HNDP_OUTPUT_ROOT"]
+    instance_name = ENV["JUBIC_HNDP_INSTANCE_NAME"]
+    model_idx = parse(Int, ENV["JUBIC_HNDP_MODEL_IDX"])
+    param_idx = parse(Int, ENV["JUBIC_HNDP_PARAM_IDX"])
+    experiment_id = ENV["JUBIC_HNDP_EXPERIMENT_ID"]
+
+    instance_cfg = load_hndp_network_generation_config(instance_config_path)
+    model_cfg = JSON.parsefile(model_config_path)
+    param_cfg = JSON.parsefile(param_config_path)
+    models = _load_hndp_model_specs(model_cfg)
+    params = _load_hndp_param_specs(param_cfg)
+    model_spec = models[model_idx]
+    param_spec = params[param_idx]
+    write_run_logs = get(param_cfg, "write_run_logs", true)
+    summary_csv_path = joinpath(output_root, "results", "batch_summary.csv")
+
+    found = Ref(false)
+    visit_hndp_networks(instance_cfg, generated_network -> begin
+        found[] && return nothing
+        current_name = String(generated_network.metadata["name"])
+        current_name == instance_name || return nothing
+        found[] = true
+
+        aggregate_row = Dict{String,Any}()
+        run_output_path = _allocate_hndp_run_output_path(
+            output_root,
+            experiment_id;
+            write_run_logs=write_run_logs,
+        )
+
+        try
+            _, aggregate_row = _run_hndp_experiment(
+                generated_network,
+                model_spec,
+                param_spec,
+                run_output_path,
+                write_run_logs;
+                force_post_cleanup=false,
+            )
+        catch err
+            aggregate_row = _build_hndp_error_row(
+                generated_network,
+                model_spec,
+                param_spec,
+                experiment_id,
+                err,
+            )
+        finally
+            aggregate_row["experiment_id"] = experiment_id
+            aggregate_row["instance_name"] = instance_name
+            JuBiC._append_batch_summary_csv!(summary_csv_path, aggregate_row)
+
+            if !write_run_logs
+                try
+                    rm(run_output_path; recursive=true, force=true, allow_delayed_delete=true)
+                catch err
+                    @warn "Could not immediately remove transient HNDP run folder $(run_output_path). Continuing. Error: $(sprint(showerror, err))"
+                end
+            end
+        end
+        return nothing
+    end)
+
+    found[] || error("HNDP child job could not find generated instance named '$(instance_name)'.")
+    return nothing
 end
 
 function _build_hndp_model_from_spec(
@@ -564,4 +806,8 @@ function _build_hndp_mip_wrapper(param_spec::Dict{String,Any})
     mip_solver = String(get(param_spec, "mip_solver", "Gurobi"))
     mip_solver == "Gurobi" || throw(ArgumentError("Unsupported HNDP mip_solver '$(mip_solver)'."))    
     return GurobiSolver()
+end
+
+if abspath(PROGRAM_FILE) == abspath(@__FILE__) && get(ENV, "JUBIC_HNDP_CHILD_MODE", "0") == "1"
+    _run_hndp_single_child_job_from_env!()
 end
