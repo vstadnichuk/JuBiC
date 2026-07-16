@@ -203,34 +203,46 @@ function _run_hndp_experiment(
 )
     hndp = generated_network.instance
     solver_wrapper = _build_hndp_mip_wrapper(param_spec)
+    model_instance = nothing
+    model_metadata = Dict{String,Any}()
+    params = nothing
+    stats = nothing
+    aggregate_row = Dict{String,Any}()
 
-    model_instance, model_metadata = _build_hndp_model_from_spec(
-        hndp,
-        generated_network.metadata,
-        solver_wrapper,
-        model_spec,
-        param_spec,
-    )
+    try
+        model_instance, model_metadata = _build_hndp_model_from_spec(
+            hndp,
+            generated_network.metadata,
+            solver_wrapper,
+            model_spec,
+            param_spec,
+        )
 
-    solver_name = JuBiC._infer_solver_name(model_instance)
-    resolved_param_config = _resolve_hndp_param_config(
-        param_spec,
-        solver_name,
-        run_output_path,
-        model_metadata,
-        write_run_logs,
-    )
-    params = JuBiC._build_solver_params(solver_name, resolved_param_config)
-    stats = solve_instance!(model_instance, params)
+        solver_name = JuBiC._infer_solver_name(model_instance)
+        resolved_param_config = _resolve_hndp_param_config(
+            param_spec,
+            solver_name,
+            run_output_path,
+            model_metadata,
+            write_run_logs,
+        )
+        params = JuBiC._build_solver_params(solver_name, resolved_param_config)
+        stats = solve_instance!(model_instance, params)
 
-    aggregate_row = _build_hndp_aggregate_row(
-        stats,
-        generated_network.metadata,
-        model_spec,
-        param_spec,
-        model_metadata,
-    )
-    return stats, aggregate_row
+        aggregate_row = _build_hndp_aggregate_row(
+            stats,
+            generated_network.metadata,
+            model_spec,
+            param_spec,
+            model_metadata,
+        )
+        return stats, aggregate_row
+    finally
+        model_instance = nothing
+        params = nothing
+        solver_wrapper = nothing
+        JuBiC._run_post_gurobi_cleanup!()
+    end
 end
 
 function _build_hndp_model_from_spec(

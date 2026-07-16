@@ -115,6 +115,20 @@ function get_next_optimizer(s::GurobiSolver)
 end
 
 """
+    _run_post_gurobi_cleanup!()
+
+Force Julia to run finalizers for unreachable Gurobi-backed JuMP objects at a
+controlled point between benchmark cases. This avoids deferred model/env
+teardown from happening later inside another active Gurobi callback, which has
+caused `GRBfree` access violations in long sequential benchmark runs.
+"""
+function _run_post_gurobi_cleanup!()
+    GC.gc()
+    GC.gc()
+    return nothing
+end
+
+"""
     set_seed!(model, solver, seed)
 
 Apply a solver-specific random seed to the passed JuMP model. If the wrapped

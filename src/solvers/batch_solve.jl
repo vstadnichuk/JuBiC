@@ -88,15 +88,25 @@ function _solve_experiment(
         resolved["instance_name"] = instance_name
     end
 
-    instance, instance_metadata = _materialize_instance(instance_factory)
-    solver_name = _infer_solver_name(instance)
-    resolved["solver"] = solver_name
-    _write_resolved_experiment_config(experiment_output_path, resolved)
+    instance = nothing
+    params = nothing
+    stats = nothing
+    aggregate_row = Dict{String,Any}()
+    try
+        instance, instance_metadata = _materialize_instance(instance_factory)
+        solver_name = _infer_solver_name(instance)
+        resolved["solver"] = solver_name
+        _write_resolved_experiment_config(experiment_output_path, resolved)
 
-    params = _build_solver_params(solver_name, resolved)
-    stats = solve_instance!(instance, params)
-    aggregate_row = _build_aggregate_row(stats, resolved, instance_metadata)
-    return stats, aggregate_row
+        params = _build_solver_params(solver_name, resolved)
+        stats = solve_instance!(instance, params)
+        aggregate_row = _build_aggregate_row(stats, resolved, instance_metadata)
+        return stats, aggregate_row
+    finally
+        instance = nothing
+        params = nothing
+        JuBiC._run_post_gurobi_cleanup!()
+    end
 end
 
 function _read_batch_config(config_path::AbstractString)
