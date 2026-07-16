@@ -343,7 +343,8 @@ Each entry in `instances` supports the following common fields.
   - `"competition"`:
     - exactly `k` arcs are sampled as decision arcs,
     - the sampled arcs receive the `beta` cost scaling,
-    - and only those sampled arcs contribute operator-side risk
+    - and only those sampled arcs contribute operator-side risk, with negative
+      coefficients representing operator profit
   - `"decision_only"`:
     - exactly `k` arcs are sampled as decision arcs,
     - no `beta` scaling is applied,
@@ -353,7 +354,7 @@ Each entry in `instances` supports the following common fields.
   - layered competition instances use negative operator-side coefficients on
     relevant operator arcs to represent profit earned by the operator
   - single-layer `"competition"` keeps nonzero operator-side coefficients only
-    on sampled decision arcs
+    on sampled decision arcs, and these coefficients are negative
   - single-layer `"decision_only"` uses positive risk coefficients on all arcs
 
 ### `decision_arc_count`

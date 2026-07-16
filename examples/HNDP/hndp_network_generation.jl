@@ -788,7 +788,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=true,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
@@ -810,7 +810,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=true,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
