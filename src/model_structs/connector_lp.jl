@@ -291,7 +291,7 @@ function _sanitize_nonnegative_opt_cut_coefficient(
     throw(ArgumentError("The $(coeff_name) coefficient $(numeric_value) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
 end
 
-function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gval, kvals, x_vals)
+function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gval, kvals, x_vals, params::GBCparam)
     bound_value = sval - optL2 * gval - subLP.lower_bound_obj_contribution
     for a in subLP.A
         if Float64(kvals[a]) > 0.0 && Float64(x_vals[a]) > 0.0
@@ -299,6 +299,18 @@ function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gva
         end
     end
     @debug "ConnectorLP $(name(subLP.sub_solver)) uses bound coefficient xi=$(bound_value) with s=$(sval), optL2=$(optL2), g=$(gval), and lower_bound=$(subLP.lower_bound_obj_contribution)."
+    if bound_value < 0.0 && Float64(optL2) > 0.0
+        required_g_reduction = (-Float64(bound_value)) / Float64(optL2)
+        # TODO: replace this local tolerance rule by a more principled stabilization of the connector / Pareto fallback state.
+        if required_g_reduction <= 1e-3
+            @warn "ConnectorLP $(name(subLP.sub_solver)) rounds the bound / xi coefficient $(bound_value) up to 0.0 because it would become nonnegative after reducing g by only $(required_g_reduction). JuBiC treats this as a numerical intervention."
+            subLP.numeric_state[:accepted_numerically] = true
+            subLP.numeric_state[:xi_g_reduction_tolerance] = required_g_reduction
+            params.stats.data["Opt_status_override"] = "Numerics"
+            params.stats.data["GBCStatus"] = "Numerics"
+            return 0.0
+        end
+    end
     return _sanitize_nonnegative_opt_cut_coefficient(bound_value, "bound / xi", subLP)
 end
 
@@ -545,7 +557,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     incumbent_reference_value = Float64(cut_rhs)
 
     kvals = _snapshot_k(subLP)
-    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, optL2, gval, kvals, x_vals)
+    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, optL2, gval, kvals, x_vals, params)
     k_coeffs = _compute_opt_cut_k_coefficients(subLP, kvals, bound_value, params)
 
     cut -= sum(k_coeffs[a] * master_vars[a] for a in subLP.A)
