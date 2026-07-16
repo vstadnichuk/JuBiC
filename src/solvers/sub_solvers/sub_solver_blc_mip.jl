@@ -35,16 +35,16 @@ function _copy_affexpr(expr::GenericAffExpr, ref_map)
     return copied
 end
 
-function _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
+function _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm, solver::SolverWrapper)
     oracle_model, oracle_ref_map = copy_model(mip_model)
     oracle_link_vars = Dict(a => oracle_ref_map[link_varsC[a]] for a in A)
     oracle_y_vars = Dict(a => oracle_ref_map[y_vars[a]] for a in A)
     oracle_c_objterm = _copy_affexpr(c_objterm, oracle_ref_map)
+    set_optimizer(oracle_model, () -> get_next_optimizer(solver))
     set_silent(oracle_model)
     @objective(oracle_model, Min, oracle_c_objterm)
 
     return function (x_vals, params, time_limit)
-        set_optimizer(oracle_model, () -> get_next_optimizer(params.solver))
         set_silent(oracle_model)
         set_time_limit_sec(oracle_model, time_limit)
         set_seed!(oracle_model, params.solver, get_seed(params))
@@ -115,10 +115,11 @@ function SubSolverBlCJuMP(
     y_vars,
     r_objterm,
     c_objterm,
+    solver::SolverWrapper,
     big_m::Function,
 ) where T
     link_varsC = _create_link_varsC(mip_model, name, A, y_vars)
-    oracle_solve = _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
+    oracle_solve = _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm, solver)
     return SubSolverBlCJuMP{T}(
         name,
         mip_model,

@@ -128,6 +128,28 @@ MIP solvers are represented through [`SolverWrapper`](solver_api.md) subtypes. C
 
 For callback-based routines, JuBiC expects the selected MIP solver to support [JuMP's solver-independent callback interface](https://jump.dev/JuMP.jl/stable/manual/callbacks/).
 
+## Multi-Threading
+
+JuBiC distinguishes between:
+
+- `threads_master`: threads used inside the master MIP solve
+- `threads_sub_con`: threads used inside follower-side MIP / connector solves
+- `parallel_separation`: whether multiple follower-side solves are executed in parallel at the Julia level
+
+For Gurobi-backed models, JuBiC now gives each created JuMP model its own
+Gurobi environment. This avoids sharing one `Gurobi.Env` across multiple
+concurrent solves.
+
+There is one important restriction: if `parallel_separation = true`, then
+`threads_sub_con` must be `1`. In that mode JuBiC parallelizes by solving
+multiple follower-side models concurrently, so each individual worker model must
+remain single-threaded. JuBiC throws an error if this restriction is violated.
+
+In practice:
+
+- use `parallel_separation = false` and `threads_sub_con > 1` if you want each subproblem solve itself to use multiple MIP threads
+- use `parallel_separation = true` and `threads_sub_con = 1` if you want several follower-side solves to run concurrently
+
 ## Statistics and Experiment Output
 
 `solve_instance!` returns a `RunStats` object. It stores the main status, objective value, runtime, and solver-specific statistics collected during the solve.

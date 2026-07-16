@@ -65,7 +65,7 @@ function seedhunt_configs()
                 "runtime" => 60.0,
                 "seed" => 42,
                 "threads_master" => 2,
-                "threads_sub_con" => 2,
+                "threads_sub_con" => 1,
                 "file_format_output" => "lp",
                 "debbug_out" => false,
                 "pareto" => "OPT",

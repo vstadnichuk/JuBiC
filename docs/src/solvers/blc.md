@@ -86,6 +86,10 @@ first-level solutions. The currently implemented supported subsolvers are:
 The big-M coefficients are not part of `BLCparam`; they are passed through the
 `big_m(a, sub_name)` function stored in `BlCMaster`.
 
+If `parallel_separation = true`, JuBiC requires `threads_sub_con = 1`. In that
+mode the follower-side work is parallelized across workers, so each worker-side
+model must remain single-threaded.
+
 ## Minimal Working Example
 
 The example solves

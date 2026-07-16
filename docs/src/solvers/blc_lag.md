@@ -74,6 +74,10 @@ The currently implemented supported subsolvers are:
 Unlike `BlC`, `BlCLag` does not take user-provided big-M coefficients in the
 master wrapper.
 
+If `parallel_separation = true`, JuBiC requires `threads_sub_con = 1`. In that
+mode the parallelism comes from solving several connector/subsolver tasks
+concurrently, so each worker-side model must remain single-threaded.
+
 ## Minimal Working Example
 
 The example solves the same small bilevel model as the `BlC` page, but the
@@ -116,14 +120,15 @@ function build_blclag_example()
     master_obj_term = @expression(sub_model, 10 * y[2])
 
     subsolver = SubSolverBlCJuMP(
-        sub_name,
-        sub_model,
-        A,
-        y,
-        master_obj_term,
-        follower_obj,
-        a -> 100.0,
-    )
+    sub_name,
+    sub_model,
+    A,
+    y,
+    master_obj_term,
+    follower_obj,
+    solver,
+    a -> 100.0,
+)
 
     return Instance(master, [subsolver]), solver
 end

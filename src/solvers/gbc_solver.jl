@@ -44,6 +44,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
+    validate_parallel_subsolver_threads!(param.parallel_separation, sub_threads; context="Gurobi-backed subproblem solves")
     if param.parallel_separation
         parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
         new_stat!(param.stats, "parallel_connector_workers_used", parallel_workers)

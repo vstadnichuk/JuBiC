@@ -394,6 +394,7 @@ function _build_hndp_gbc_subsolver(
             y_vars,
             leader_obj,
             follower_obj,
+            solver,
             a -> user_big_m,
         )
     end
@@ -429,6 +430,7 @@ function _build_hndp_blclag_subsolver(
         y_vars,
         leader_obj,
         follower_obj,
+        solver,
         a -> user_big_m,
     )
 end
@@ -551,7 +553,7 @@ end
 
 function _attach_hndp_model_size_metadata!(instance::Instance)
     master_model = _hndp_master_model(instance)
-    if !isnothing(master_model)
+    if !isnothing(master_model) && hasproperty(master_model, :ext)
         master_model.ext[:hndp_model_size_metadata] = hndp_model_size_metadata(instance)
     end
     return instance

@@ -27,6 +27,7 @@ SubSolverBlCJuMP(
     y_vars,
     r_objterm,
     c_objterm,
+    solver,
     big_m,
 )
 ```
@@ -54,6 +55,7 @@ The parameters are:
 - `y_vars`: follower-side variables appearing in the linking constraints. For every `a in A`, JuBiC creates an internal binary copy `x_copy[a]` and adds `y_vars[a] <= x_copy[a]`.
 - `r_objterm`: expression for the follower solution's contribution to the first-level objective.
 - `c_objterm`: expression for the original follower objective. This is the objective used by the oracle to verify lower-level optimality.
+- `solver`: the MIP solver wrapper used to attach an optimizer to the internally copied oracle model. JuBiC builds this oracle during subsolver construction so that no new Gurobi environment has to be created inside threaded separation code.
 - `oracle_solve`: optional callback that solves the original follower problem for fixed linking-variable values. If omitted, JuBiC builds a default oracle by copying `mip_model` and minimizing `c_objterm`.
 - `big_m`: big-M callback used to generate persistent BlC cuts inside the subsolver. This is the same type of coefficient used in the `BlC` solver: `big_m(a)` must return a valid coefficient for resource `a`.
 

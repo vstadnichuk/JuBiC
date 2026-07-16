@@ -26,6 +26,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
+    validate_parallel_subsolver_threads!(param.parallel_separation, sub_threads; context="Gurobi-backed connector and bilevel subproblem solves")
     if param.parallel_separation
         parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
         new_stat!(param.stats, "parallel_subsolver_workers_used", parallel_workers)

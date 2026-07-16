@@ -132,6 +132,31 @@ function used_nthreads(stats::RunStats, stat_prefix::String)
 end
 
 """
+    validate_parallel_subsolver_threads!(parallel_separation, sub_threads; context="subproblem solves")
+
+JuBiC's parallel separation modes require each worker-side model to run with a
+single solver thread. If parallel separation is requested together with
+multi-threaded subproblem solves, throw an error instead of silently overriding
+the user's configuration.
+"""
+function validate_parallel_subsolver_threads!(
+    parallel_separation,
+    sub_threads;
+    context="subproblem solves",
+)
+    if parallel_separation && Int(sub_threads) > 1
+        throw(
+            ArgumentError(
+                "JuBiC does not allow parallel separation together with $(context) using more than one thread per model. " *
+                "Received threads_sub_con=$(Int(sub_threads)) while parallel_separation=true. " *
+                "Set threads_sub_con=1 or disable parallel separation.",
+            ),
+        )
+    end
+    return nothing
+end
+
+"""
     print_collected_cuts(param::SolverParam, sol_to_lazy::Dict)
 
 Print the passed list of JuMP constraints 'sol_to_lazy' to file.

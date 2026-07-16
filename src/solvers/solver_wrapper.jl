@@ -1,5 +1,6 @@
 # a wrapper for the solvers we support internally
 using JuMP, Gurobi
+using Base.Threads
 
 
 """
@@ -16,8 +17,10 @@ Gurobi-based implementation of `SolverWrapper`.
 The wrapper stores a `Gurobi.Env` and creates `Gurobi.Optimizer` objects through
 `get_next_optimizer`.
 """
-struct GurobiSolver <: SolverWrapper
-    env::Any  # The enviroment for the currernt solver 
+mutable struct GurobiSolver <: SolverWrapper
+    silent::Bool
+    precreated_envs::Vector{Any}
+    env_lock::ReentrantLock
 end
 
 """
@@ -31,6 +34,10 @@ function silent_gurobi_env()
     return Gurobi.Env(Dict{String,Any}("OutputFlag" => 0))
 end
 
+function _create_gurobi_env(silent::Bool)
+    return silent ? silent_gurobi_env() : Gurobi.Env()
+end
+
 """
     GurobiSolver(; silent=true)
 
@@ -38,9 +45,35 @@ Convenience constructor for a Gurobi-based solver wrapper. By default we create
 the underlying `Gurobi.Env` in silent mode to avoid confusing initialization
 messages for end users.
 """
-function GurobiSolver(; silent::Bool=true)
-    env = silent ? silent_gurobi_env() : Gurobi.Env()
-    return GurobiSolver(env)
+function GurobiSolver(; silent::Bool=true, precreate_envs::Integer=0)
+    solver = GurobiSolver(silent, Any[], ReentrantLock())
+    reserve_environments!(solver, precreate_envs)
+    return solver
+end
+
+"""
+    reserve_environments!(solver::SolverWrapper, n)
+
+Prepare `n` solver-side environments in advance. Solver wrappers that do not
+manage explicit environment objects can implement this as a no-op.
+"""
+function reserve_environments!(solver::SolverWrapper, n::Integer)
+    return nothing
+end
+
+function reserve_environments!(solver::GurobiSolver, n::Integer)
+    n <= 0 && return nothing
+    threadid() == 1 || throw(
+        ArgumentError(
+            "Gurobi environments must be created on the main Julia thread. Requested $(n) additional environments from worker thread $(threadid()).",
+        ),
+    )
+    lock(solver.env_lock) do
+        for _ in 1:n
+            push!(solver.precreated_envs, _create_gurobi_env(solver.silent))
+        end
+    end
+    return nothing
 end
 
 
@@ -54,10 +87,31 @@ function get_next_optimizer(s::SolverWrapper)
     print("You need to overload this function for your solver variant!")
 end
 
+function _take_gurobi_env!(solver::GurobiSolver)
+    env = nothing
+    lock(solver.env_lock) do
+        if !isempty(solver.precreated_envs)
+            env = pop!(solver.precreated_envs)
+        end
+    end
+    if !isnothing(env)
+        return env
+    end
+
+    threadid() == 1 || throw(
+        ArgumentError(
+            "JuBiC tried to create a new Gurobi environment on worker thread $(threadid()). " *
+            "Gurobi environment creation is not thread-safe. Pre-create environments on the main thread " *
+            "and avoid constructing new Gurobi-backed JuMP models inside threaded code.",
+        ),
+    )
+    return _create_gurobi_env(solver.silent)
+end
 
 function get_next_optimizer(s::GurobiSolver)
-    # TODO Warning: Gurobi.Env are NOT thread-safe. If two models both use the same environment you must not solve them simultaneously on different threads.
-    return Gurobi.Optimizer(s.env)
+    # Each optimizer receives an exclusive environment. JuBiC intentionally does
+    # not share one Gurobi.Env across concurrently solved models.
+    return Gurobi.Optimizer(_take_gurobi_env!(s))
 end
 
 """

@@ -74,7 +74,7 @@ function run_hndp_experiments!(
                             generated_network,
                             model_spec,
                             param_spec,
-                            run_output_path,
+                            output_root,
                         )
                     end
                     stats, aggregate_row = _run_hndp_experiment(
@@ -115,6 +115,57 @@ function run_hndp_experiments!(
 end
 
 function _maybe_export_hndp_solver_instance!(
+    generated_network::HNDPGeneratedNetwork,
+    model_spec::Dict{String,Any},
+    param_spec::Dict{String,Any},
+    output_root::AbstractString,
+)
+    solver_wrapper = _build_hndp_mip_wrapper(param_spec)
+    instance_name = String(generated_network.metadata["name"])
+    export_root = joinpath(output_root, "mibs_instances")
+    export_id = bytes2hex(sha1(instance_name))[1:16]
+    export_dir = joinpath(export_root, export_id)
+    export_basename = "instance"
+    mps_path = joinpath(export_dir, export_basename * ".mps")
+    aux_path = joinpath(export_dir, export_basename * ".aux")
+    meta_path = joinpath(export_dir, "metadata.json")
+
+    if isfile(mps_path) && isfile(aux_path) && isfile(meta_path)
+        return nothing
+    end
+
+    instance = build_hndp_mibs_instance(
+        generated_network.instance,
+        solver_wrapper;
+        partial_decomposition=false,
+    )
+
+    mkpath(export_dir)
+    try
+        JuBiC.output_MibS_instance(instance, export_basename, export_dir)
+        open(meta_path, "w") do io
+            write(
+                io,
+                JSON.json(
+                    Dict(
+                        "instance_name" => instance_name,
+                        "export_id" => export_id,
+                        "files" => Dict(
+                            "mps" => export_basename * ".mps",
+                            "aux" => export_basename * ".aux",
+                        ),
+                    ),
+                    2,
+                ),
+            )
+        end
+    catch err
+        @warn "Could not export the MiBS-format HNDP instance for $(instance_name) into $(export_dir): $(sprint(showerror, err))"
+    end
+    return nothing
+end
+
+function _legacy_maybe_export_hndp_solver_instance!(
     generated_network::HNDPGeneratedNetwork,
     model_spec::Dict{String,Any},
     param_spec::Dict{String,Any},

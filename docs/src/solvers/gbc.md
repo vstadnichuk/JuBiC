@@ -100,11 +100,17 @@ implemented supported subsolvers are:
 - `warmstart`: whether connector state is reused across callback solves.
 - `bigMwithLC`: whether BlC-style subroutines are used to strengthen some GBC coefficients.
 - `trim_coeff`: whether generated coefficients are trimmed by available bounds.
+- `parallel_separation`: whether follower-side connector separation is parallelized across multiple Julia workers.
+- `threads_master` and `threads_sub_con`: thread limits for the master MIP and follower-side solves.
 - `connector_add_current_solution_cut`: if enabled, the follower solution computed for the current first-level point is inserted into the corresponding `ConnectorLP` before the connector separation loop starts, unless the same row already exists.
 - `subsolver_numerical_preprocessing`: if enabled, compatible subsolvers may simplify numerically extreme connector objectives before solving the pricing problem.
 
 Additional constructor variants expose seed, thread, and numerical-tolerance
 settings; see [Core API Reference](../solver_api.md).
+
+If `parallel_separation = true`, JuBiC requires `threads_sub_con = 1`. In that
+mode the parallelism comes from solving several follower-side models
+concurrently, not from letting each worker model use multiple Gurobi threads.
 
 The last two options are intended for numerically difficult `GBC` runs. They
 can change the internal sequence of generated connector rows, but not the

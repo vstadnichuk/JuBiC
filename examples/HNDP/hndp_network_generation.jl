@@ -525,15 +525,19 @@ function _load_named_base_graph(topology_id::String)
     if topology_id == "sioux_falls"
         return _load_sioux_falls_graph()
     elseif topology_id == "anaheim"
-        return _load_tntp_graph("examples/data/Anaheim_net.tntp")
+        return _load_tntp_graph(_hndp_data_path("Anaheim_net.tntp"))
     elseif topology_id == "friedrichshain_center"
-        return _load_tntp_graph("examples/data/friedrichshain-center_net.tntp")
+        return _load_tntp_graph(_hndp_data_path("friedrichshain-center_net.tntp"))
     elseif topology_id == "berlin_mitte_center"
-        return _load_tntp_graph("examples/data/berlin-mitte-center_net.tntp")
+        return _load_tntp_graph(_hndp_data_path("berlin-mitte-center_net.tntp"))
     elseif topology_id == "ema"
-        return _load_tntp_graph("examples/data/EMA_net.tntp")
+        return _load_tntp_graph(_hndp_data_path("EMA_net.tntp"))
     end
     throw(ArgumentError("Unsupported HNDP topology '$topology_id'."))
+end
+
+function _hndp_data_path(filename::String)
+    return normpath(joinpath(@__DIR__, "..", "data", filename))
 end
 
 function _load_tntp_graph(file_path::String)

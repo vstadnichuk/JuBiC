@@ -61,6 +61,7 @@ end
 function generate_gbc_simple_bilevel_instance_blc_subsolver_auto_oracle()
     A = [1, 2]
     nsub = "SubBlCJuMPAuto"
+    solver = GurobiSolver()
 
     mm = Model(optimizer)
     @variable(mm, x[A], Bin)
@@ -82,10 +83,11 @@ function generate_gbc_simple_bilevel_instance_blc_subsolver_auto_oracle()
         y,
         master_sub_obj,
         sub_obj,
+        solver,
         a -> 100.0,
     )
 
-    return Instance(master, [subS])
+    return Instance(master, [subS]), solver
 end
 
 function generate_blclag_simple_bilevel_instance_blc_subsolver()
@@ -127,6 +129,7 @@ end
 function generate_blclag_simple_bilevel_instance_blc_subsolver_auto_oracle()
     A = [1, 2]
     nsub = "SubBlCJuMPAuto"
+    solver = GurobiSolver()
 
     hpr = Model(optimizer)
     @variable(hpr, x[A], Bin)
@@ -153,10 +156,11 @@ function generate_blclag_simple_bilevel_instance_blc_subsolver_auto_oracle()
         y,
         master_sub_obj,
         sub_obj,
+        solver,
         a -> 100.0,
     )
 
-    return Instance(master, [subS])
+    return Instance(master, [subS]), solver
 end
 
 function test_gbc_simple_bilevel_with_blc_subsolver()
@@ -196,11 +200,11 @@ function test_blclag_simple_bilevel_with_blc_subsolver()
 end
 
 function test_gbc_simple_bilevel_with_blc_subsolver_auto_oracle()
-    model = generate_gbc_simple_bilevel_instance_blc_subsolver_auto_oracle()
+    model, solver = generate_gbc_simple_bilevel_instance_blc_subsolver_auto_oracle()
     outdir = logging_folder * "/gbc_simple_bilevel_blc_subsolver_auto_oracle"
     mkpath(outdir)
     parameter = GBCparam(
-        GurobiSolver(),
+        solver,
         true,
         outdir,
         "lp",
@@ -213,11 +217,11 @@ function test_gbc_simple_bilevel_with_blc_subsolver_auto_oracle()
 end
 
 function test_blclag_simple_bilevel_with_blc_subsolver_auto_oracle()
-    model = generate_blclag_simple_bilevel_instance_blc_subsolver_auto_oracle()
+    model, solver = generate_blclag_simple_bilevel_instance_blc_subsolver_auto_oracle()
     outdir = logging_folder * "/blclag_simple_bilevel_blc_subsolver_auto_oracle"
     mkpath(outdir)
     parameter = BlCLagparam(
-        GurobiSolver(),
+        solver,
         true,
         outdir,
         "lp",

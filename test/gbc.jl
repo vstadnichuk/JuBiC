@@ -199,6 +199,34 @@ function test_gbc_simple_bilevel()
     @test haskey(stats.data, "Opt") && isapprox(stats.data["Opt"], 1; atol=GBC_TEST_OBJ_ATOL)
 end
 
+function test_gbc_parallel_subsolver_threads_validation()
+    model = generate_gbc_simple_bilevel_instance()
+    parameter = GBCparam(
+        GurobiSolver(),
+        false,
+        mktempdir(),
+        "lp",
+        JuBiC.RunStats(),
+        60,
+        42,
+        8,
+        2,
+        true,
+        PARETO_OPTIMALITY_ONLY,
+        true,
+        false,
+        true,
+        1e9,
+        0,
+        false,
+        1e-4,
+        1e-4,
+        true,
+        true,
+    )
+    @test_throws ArgumentError solve_instance!(model, parameter)
+end
+
 function test_gbc_solver_instance_io_roundtrip()
     instance = generate_gbc_simple_bilevel_instance()
     export_dir = mktempdir()
@@ -463,7 +491,7 @@ function test_gbc_duplicate_cut_numerical_guard()
     @test parameter.stats.data["Opt_status_override"] == "Numerics"
     @test haskey(parameter.stats.data, "GBCStatus")
     @test parameter.stats.data["GBCStatus"] == "Numerics"
-    @test length(connector.my_subsolutions) == 1
+    @test length(connector.my_subsolutions) == 2
     @test isempty(connector.numeric_state)
 end
 
@@ -525,6 +553,8 @@ function test_gbc_opt_cut_coefficient_refactor_helpers()
         parameter.integer_obj,
         parameter.pareto_band_tolerance,
         parameter.blc_pareto_band_tolerance,
+        parameter.connector_add_current_solution_cut,
+        parameter.subsolver_numerical_preprocessing,
     )
     parameter.stats.data["enable_output_logs"] = true
 
@@ -548,6 +578,7 @@ function test_gbc_opt_cut_coefficient_refactor_helpers()
 end
 
 test_gbc_simple_bilevel()
+test_gbc_parallel_subsolver_threads_validation()
 test_gbc_solver_instance_io_roundtrip()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
