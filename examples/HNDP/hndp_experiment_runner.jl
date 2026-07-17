@@ -401,8 +401,16 @@ function _run_hndp_experiment_subprocess!(
             stderr=stderr_path,
         ),
     )
+    summary_csv_path = joinpath(output_root, "results", "batch_summary.csv")
+    row_written = _summary_contains_experiment_id(summary_csv_path, experiment_id)
+
     if success(proc)
-        return _summary_contains_experiment_id(joinpath(output_root, "results", "batch_summary.csv"), experiment_id)
+        return row_written
+    end
+
+    if row_written
+        @warn "HNDP child process for $(experiment_id) exited with a nonzero status after already writing its CSV row. Treating the experiment as completed and skipping the parent-side SubprocessError duplicate row."
+        return true
     end
     return false
 end
