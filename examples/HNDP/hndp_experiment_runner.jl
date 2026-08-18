@@ -529,6 +529,8 @@ function _build_hndp_model_from_spec(
             include_objL2=Bool(get(model_spec, "include_objL2", false)),
             subproblem_method=_parse_hndp_subproblem_method(get(model_spec, "subproblem_method", "mip")),
             big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
+            heuristic_subsolver=Bool(get(model_spec, "heuristic_subsolver", false)),
+            heuristic_mip_gap=get(model_spec, "mip_gap", nothing),
         )
         return instance, hndp_model_size_metadata(instance)
     elseif model_type == "mibs"

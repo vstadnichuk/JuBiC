@@ -41,6 +41,11 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "ConnectorLPTimePricing", 0.0)  # time spent in subsolver pricing / separation calls
     new_stat!(param.stats, "ConnectorLPTimePareto", 0.0)  # time spent in pareto refinement inside connectors
     new_stat!(param.stats, "ConnectorLPIterations", 0)  # number of connector LP resolve/pricing iterations
+    new_stat!(param.stats, "ConnectorApproximation", string(param.connector_approximation))
+    new_stat!(param.stats, "ConnectorPricingMaxError", 0.0)
+    new_stat!(param.stats, "NInexactPricingCalls", 0)
+    new_stat!(param.stats, "UsedInexactPricing", false)
+    param.stats.data["ConnectorPricingMaxErrorBySub"] = Dict{String,Float64}()
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
@@ -56,6 +61,10 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     for sub in subs
         check(sub, param)
     end
+
+    # Preserve the direct first-level objective so the final master incumbent
+    # can be combined with exact fixed-x follower evaluations.
+    base_master_objective = objective_function(master.model)
 
     # add subObj variables, one for each sub_problem, to the master, and add them to objective
     @debug "Start with initialization of GBC solver."
@@ -113,10 +122,11 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
     msol_cuts_mapping_blc = Dict()  # a mapping of master solution to found lazy blc constraints. They are only generated if BlC coef. are automatically computed in subroutine
     msol_subobj_mapping = Dict()  # for each master solution, store per subproblem which subObj values were already separated
+    msol_certificate_mapping = Dict()  # final pricing/connector certificate per master solution and follower
     solve_start_time = time()
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
-        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param, solve_start_time, true_runtime))
+        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, msol_certificate_mapping, param, solve_start_time, true_runtime))
     else
         @debug "We do not add any callbacks to GBCSolver because preprocessing consumed the available runtime."
         new_stat!(param.stats, "GBCStatus", "Timelimit")
@@ -151,7 +161,9 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         try
             if primal_status(master.model) == MOI.FEASIBLE_POINT
                 mobj = objective_value(master.model)
-                xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
+                xsol = round_master_solution(
+                    Dict(a => value(master.link_vars[a]) for a in master.A),
+                )
                 print_solution_to_file(mobj, xsol, param)
                 new_stat!(param.stats, "Opt", mobj)
             end
@@ -184,7 +196,9 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             if primal_status(master.model) == MOI.FEASIBLE_POINT
                 try
                     mobj = objective_value(master.model)
-                    xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
+                    xsol = round_master_solution(
+                        Dict(a => value(master.link_vars[a]) for a in master.A),
+                    )
                     @debug "The master objective is $(mobj) and solution is $(xsol)."
                     print_solution_to_file(mobj, xsol, param)
                     new_stat!(param.stats, "Opt", mobj)
@@ -219,6 +233,17 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
 
         # TODO: find and print correct second level solutions?
     end
+
+    _finalize_gbc_objective_interval!(
+        master,
+        names,
+        clps,
+        base_master_objective,
+        msol_certificate_mapping,
+        param,
+        solve_start_time,
+        true_runtime,
+    )
 
 end
 
@@ -365,6 +390,7 @@ function _local_gbc_param(params::GBCparam)
         params.blc_pareto_band_tolerance,
         params.connector_add_current_solution_cut,
         params.subsolver_numerical_preprocessing,
+        params.connector_approximation,
     )
 end
 
@@ -438,7 +464,223 @@ function _gbc_timeout_status(param::GBCparam, true_runtime::Real)
     return budget >= full_budget_threshold ? "Timeout_Submodel" : "Timelimit"
 end
 
-function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam, solve_start_time::Real, true_runtime::Real)
+"""Return the serializable certificate left by the most recent connector solve."""
+function _connector_certificate(con::ConnectorLP)
+    state = con.numeric_state
+    return (
+        raw_value=Float64(get(state, :raw_connector_value, NaN)),
+        cut_value=Float64(get(state, :local_cut_value, NaN)),
+        pricing_upper=Float64(get(state, :pricing_upper_bound, NaN)),
+        pricing_lower=Float64(get(state, :pricing_lower_bound, NaN)),
+        error=Float64(get(state, :pricing_error, 0.0)),
+        fixed_x_master_contribution=Float64(
+            get(state, :fixed_x_master_contribution, NaN),
+        ),
+        pricing_is_exact=Bool(get(state, :pricing_is_exact, true)),
+        fixed_x_feasible=Bool(get(state, :fixed_x_feasible, false)),
+    )
+end
+
+"""
+Compute the certified interval for the original bilevel optimum.
+
+For safe underestimation, the master objective bound is already a lower bound
+on the original optimum. For tight overestimation, each retained cut for
+follower `k` may exceed its value function by at most `delta_kj`; subtracting
+`sum(k, maximum(j, delta_kj))` from the heuristic-master bound restores a valid
+lower bound. At the final binary incumbent, GBC attempts the optional
+`solve_sub_for_x_optimistic` method for every follower. When all followers
+support it, the interval width is bounded by the master MIP gap plus the
+relevant connector pricing-error term. An unsupported follower falls back to
+the exact but arbitrarily tie-broken fixed-`x` response cached during
+separation. That fallback remains a valid incumbent upper bound, but its
+additional follower tie-breaking error is not controlled by the pricing bound.
+"""
+function _finalize_gbc_objective_interval!(
+    master::Master,
+    sub_names,
+    connectors,
+    base_master_objective,
+    certificate_mapping::Dict,
+    param::GBCparam,
+    solve_start_time::Real,
+    solve_runtime::Real,
+)
+    model = master.model
+    primal_status(model) == MOI.FEASIBLE_POINT || return nothing
+
+    master_bound = try
+        Float64(objective_bound(model))
+    catch
+        -Inf
+    end
+    master_incumbent = try
+        Float64(objective_value(model))
+    catch
+        Inf
+    end
+    param.stats.data["MasterObjective"] = master_incumbent
+    param.stats.data["MasterObjectiveBound"] = master_bound
+    param.stats.data["MasterAbsoluteGap"] = master_incumbent - master_bound
+    # Compatibility aliases for existing benchmark post-processing.
+    param.stats.data["HeuristicMasterObjective"] = master_incumbent
+    param.stats.data["HeuristicMasterObjectiveBound"] = master_bound
+    param.stats.data["HeuristicMasterAbsoluteGap"] = master_incumbent - master_bound
+
+    global_error = 0.0
+    if param.connector_approximation == CONNECTOR_OVERESTIMATION
+        by_sub = get(
+            param.stats.data,
+            "ConnectorPricingMaxErrorBySub",
+            Dict{String,Float64}(),
+        )
+        global_error = sum(get(by_sub, String(name), 0.0) for name in sub_names)
+    end
+    interval_lower = master_bound - global_error
+
+    # Normalize solver tolerances before the values are used as a cache key.
+    xvals = round_master_solution(
+        Dict(a => Float64(value(master.link_vars[a])) for a in master.A),
+    )
+    msolkey = key_master_sol(xvals, master.A)
+    final_certificates = get(certificate_mapping, msolkey, Dict{String,Any}())
+    final_error = 0.0
+    connector_upper_sum = 0.0
+    cache_complete = true
+    for subname in sub_names
+        cert = get(final_certificates, String(subname), nothing)
+        if isnothing(cert) || !cert.fixed_x_feasible
+            cache_complete = false
+            break
+        end
+        connector_upper_sum += cert.raw_value
+        final_error += cert.error
+    end
+    # Prefer a lexicographically optimistic fixed-x solution for the final
+    # upper endpoint. This optional solve is intentionally isolated from cut
+    # generation so custom subsolvers need not implement it.
+    optimistic_risk_sum = 0.0
+    optimistic_complete = true
+    optimistic_used = false
+    fallback_followers = String[]
+    optimistic_by_sub = Dict{String,Bool}()
+    connector_by_name = Dict(String(name(con.sub_solver)) => con.sub_solver for con in connectors)
+    optimistic_start = time()
+    for subname in sub_names
+        subkey = String(subname)
+        subsolver = get(connector_by_name, subkey, nothing)
+        contribution = nothing
+        if !isnothing(subsolver) && applicable(
+            solve_sub_for_x_optimistic,
+            subsolver,
+            xvals,
+            param,
+            1.0,
+        )
+            remaining = solve_runtime - (time() - solve_start_time)
+            if remaining > 0
+                try
+                    found, _, optimistic_contribution, _ = solve_sub_for_x_optimistic(
+                        subsolver,
+                        xvals,
+                        param,
+                        remaining,
+                    )
+                    found || error(
+                        "Optimistic fixed-x evaluation declared final incumbent x infeasible for follower $(subkey).",
+                    )
+                    contribution = Float64(optimistic_contribution)
+                    optimistic_used = true
+                    optimistic_by_sub[subkey] = true
+                catch err
+                    if !(err isa TimeoutException)
+                        rethrow()
+                    end
+                    @warn "Optimistic fixed-x evaluation timed out for follower $(subkey); using its cached arbitrary follower-optimal response."
+                end
+            end
+        end
+
+        if isnothing(contribution)
+            optimistic_complete = false
+            optimistic_by_sub[subkey] = false
+            push!(fallback_followers, subkey)
+            cert = get(final_certificates, subkey, nothing)
+            if isnothing(cert) || !cert.fixed_x_feasible
+                cache_complete = false
+                continue
+            end
+            contribution = Float64(cert.fixed_x_master_contribution)
+        end
+        optimistic_risk_sum += contribution
+    end
+    optimistic_time = time() - optimistic_start
+
+    first_level_value = try
+        Float64(value(base_master_objective))
+    catch
+        NaN
+    end
+    upper_complete = optimistic_complete || cache_complete
+    interval_upper = upper_complete ? first_level_value + optimistic_risk_sum : Inf
+    connector_upper = cache_complete ? first_level_value + connector_upper_sum : Inf
+
+    pricing_width_error = if param.connector_approximation == CONNECTOR_OVERESTIMATION
+        global_error
+    else
+        cache_complete ? final_error : Inf
+    end
+    master_gap = max(0.0, master_incumbent - master_bound)
+    width_bounded_by_pricing = optimistic_complete && cache_complete &&
+        isfinite(master_gap) && isfinite(pricing_width_error)
+    width_bound = width_bounded_by_pricing ? master_gap + pricing_width_error : Inf
+
+    param.stats.data["ConnectorApproximationErrorBound"] = global_error
+    param.stats.data["FinalConnectorErrorSum"] = cache_complete ? final_error : Inf
+    param.stats.data["FinalConnectorUpperBound"] = connector_upper
+    param.stats.data["FinalOptimisticEvaluationUsed"] = optimistic_used
+    param.stats.data["FinalOptimisticEvaluationComplete"] = optimistic_complete
+    param.stats.data["FinalOptimisticEvaluationBySub"] = optimistic_by_sub
+    param.stats.data["FinalOptimisticEvaluationFallbackFollowers"] = fallback_followers
+    param.stats.data["FinalOptimisticEvaluationTime"] = optimistic_time
+    param.stats.data["IncumbentObjectiveUpperBound"] = interval_upper
+    param.stats.data["OptimisticIncumbentObjective"] = optimistic_complete ? interval_upper : Inf
+    # Historical compatibility alias for the selected exact fixed-x response.
+    param.stats.data["ExactIncumbentObjective"] = interval_upper
+    param.stats.data["ObjectiveIntervalLower"] = interval_lower
+    param.stats.data["ObjectiveIntervalUpper"] = interval_upper
+    param.stats.data["ObjectiveIntervalWidth"] = interval_upper - interval_lower
+    param.stats.data["ObjectiveIntervalCertified"] = isfinite(interval_lower) && isfinite(interval_upper)
+    param.stats.data["ObjectiveIntervalWidthBoundedByPricingError"] = width_bounded_by_pricing
+    param.stats.data["ObjectiveIntervalWidthBound"] = width_bound
+
+    if !upper_complete
+        @warn "The final GBC master incumbent was not fully represented in the connector certificate cache. JuBiC does not perform a fallback fixed-x solve and reports an infinite objective-interval upper endpoint."
+    end
+    if !optimistic_complete
+        @warn "Followers $(fallback_followers) do not provide a completed optimistic fixed-x evaluation. The reported objective interval remains valid, but its width is not bounded solely by the master gap and certified subsolver pricing errors because follower tie-breaking error is unknown."
+    end
+
+    used_inexact = Bool(get(param.stats.data, "UsedInexactPricing", false))
+    solution_type = used_inexact ? "Heuristic" : "Exact"
+    master_optimal = termination_status(model) in (MOI.OPTIMAL, MOI.LOCALLY_SOLVED)
+    result_status = if master_optimal
+        used_inexact ? "HeuristicOptimal" : "Optimal"
+    else
+        base_status = string(get(param.stats.data, "Opt_status", termination_status(model)))
+        used_inexact ? "Heuristic_$(base_status)" : base_status
+    end
+    param.stats.data["GBCSolutionType"] = solution_type
+    param.stats.data["GBCResultStatus"] = result_status
+    param.stats.data["MasterSolvedToOptimality"] = master_optimal
+    if master_optimal && !haskey(param.stats.data, "Opt_status_override")
+        param.stats.data["GBCStatus"] = result_status
+        param.stats.data["Opt_status"] = result_status
+    end
+    return nothing
+end
+
+function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, msol_certificate_mapping::Dict, parameter::GBCparam, solve_start_time::Real, true_runtime::Real)
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
 
@@ -453,10 +695,11 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                 name => callback_value(cb_data, subObj[name]) for name in sub_names
             )
             @debug "Current values of the sub objectives are $(subObj_val)"
-            x_vals = Dict(
-                a => callback_value(cb_data, master.link_vars[a]) for a in master.A
+            x_vals = round_master_solution(
+                Dict(
+                    a => callback_value(cb_data, master.link_vars[a]) for a in master.A
+                ),
             )
-            round_master_solution(x_vals) # round to integer
             @debug "Current values of the master linking variables are $(x_vals)"
             lazy = []
             lazy_blc = []
@@ -513,6 +756,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                                     cut=cut,
                                     bigMcut=bigMcut,
                                     pobj=pobj,
+                                    certificate=_connector_certificate(con),
                                     stats=local_param.stats,
                                 )
                             end
@@ -556,6 +800,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             cut=cut,
                             bigMcut=bigMcut,
                             pobj=pobj,
+                            certificate=_connector_certificate(con),
                             stats=(parameter.parallel_separation ? local_param.stats : nothing),
                         )
                     end
@@ -569,6 +814,20 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                     _merge_parallel_gbc_stats!(parameter.stats, result.stats)
                 end
                 _cache_subobj_value!(msol_subobj_mapping, msolkey, result.subname, result.current_subobj)
+                per_solution_certificates = get!(msol_certificate_mapping, msolkey, Dict{String,Any}())
+                per_solution_certificates[result.subname] = result.certificate
+                if isfinite(result.certificate.error)
+                    parameter.stats.data["ConnectorPricingMaxError"] = max(
+                        Float64(get(parameter.stats.data, "ConnectorPricingMaxError", 0.0)),
+                        Float64(result.certificate.error),
+                    )
+                else
+                    parameter.stats.data["ConnectorPricingMaxError"] = Inf
+                end
+                if !isfinite(result.certificate.error) || result.certificate.error > 1e-9
+                    parameter.stats.data["UsedInexactPricing"] = true
+                    add_stat!(parameter.stats, "NInexactPricingCalls", 1)
+                end
                 add_stat!(parameter.stats, "SepaTimeCut", result.cuttime)
 
                 if result.feas
@@ -582,6 +841,21 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                         @debug "Adding optimality cut $(cutopt) to the master problem for sub $(result.subname)."
                         add_stat!(parameter.stats, "NOptCuts", 1)
                         push!(lazy, cutopt)
+
+                        # Only retained overestimating cuts restrict the master and
+                        # therefore contribute to its global correction E.  Pricing
+                        # calls that produce no cut must not enlarge that correction.
+                        if parameter.connector_approximation == CONNECTOR_OVERESTIMATION
+                            max_error_by_sub = get!(
+                                parameter.stats.data,
+                                "ConnectorPricingMaxErrorBySub",
+                                Dict{String,Float64}(),
+                            )
+                            max_error_by_sub[result.subname] = max(
+                                get(max_error_by_sub, result.subname, 0.0),
+                                Float64(result.certificate.error),
+                            )
+                        end
 
                         if !isnothing(master.objL2) && !isnothing(result.bigMcut)
                             cutopt_blc = @build_constraint(master.objL2[result.subname] <= result.bigMcut)

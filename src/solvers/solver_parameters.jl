@@ -74,6 +74,25 @@ Pareto-refinement mode used by GBC and BlCLag cut generation.
     PARETO_OPTIMALITY_AND_FEASIBILITY  # Pareto cuts used for both optimality and feasibility
 end
 
+"""
+Policy used when pricing returns a certified interval without proving the
+current `ConnectorLP` point feasible.
+
+Let `delta = max(0, s - pricing_lower_bound)` be the certified maximum
+omitted-row violation. `CONNECTOR_UNDERESTIMATION` subtracts `delta` from the
+GBC expression and therefore preserves a globally valid lower approximation.
+`CONNECTOR_OVERESTIMATION` keeps the point-tight expression and records
+`delta` as its maximum possible overestimation error.
+"""
+@enum ConnectorApproximation begin
+    CONNECTOR_UNDERESTIMATION
+    CONNECTOR_OVERESTIMATION
+end
+
+function Base.string(mode::ConnectorApproximation)
+    return mode == CONNECTOR_UNDERESTIMATION ? "underestimation" : "overestimation"
+end
+
 function Base.string(po::ParetoCut)
     if po == PARETO_NONE
         return "None"
@@ -91,7 +110,8 @@ Parameters for the Generalized Benders Cuts (`GBC`) solver.
 
 Important options include the MIP solver wrapper, runtime and thread limits,
 parallel separation, Pareto-cut mode, warm-start behavior for connector LPs,
-and optional coefficient strengthening through BlC-style subroutines.
+optional coefficient strengthening through BlC-style subroutines, and the
+certified incomplete-pricing policy selected by `connector_approximation`.
 """
 struct GBCparam <: SolverParam
     solver::SolverWrapper
@@ -118,6 +138,26 @@ struct GBCparam <: SolverParam
     blc_pareto_band_tolerance::Any  # absolute tolerance used to keep the original ConnectorLP_BlC objective fixed during Pareto refinement
     connector_add_current_solution_cut::Bool  # if true, add the current second-level solution to ConnectorLP before separation iterations
     subsolver_numerical_preprocessing::Bool  # if true, let compatible subsolvers simplify numerically extreme connector objectives
+    connector_approximation::ConnectorApproximation  # handling of certified incomplete pricing
+end
+
+# Backwards-compatible full constructor for existing scripts and serialized
+# configurations created before connector approximation modes were introduced.
+function GBCparam(
+    solver, debbug_out, output_folder_path, file_format_output, stats::RunStats,
+    runtime, seed, threads_master, threads_sub_con, parallel_separation, pareto,
+    warmstart, bigMwithLC, trim_coeff, infinity_num, g_round_digit,
+    integer_obj::Bool, pareto_band_tolerance, blc_pareto_band_tolerance,
+    connector_add_current_solution_cut, subsolver_numerical_preprocessing,
+)
+    return GBCparam(
+        solver, debbug_out, output_folder_path, file_format_output, stats,
+        runtime, seed, threads_master, threads_sub_con, parallel_separation,
+        pareto, warmstart, bigMwithLC, trim_coeff, infinity_num, g_round_digit,
+        integer_obj, pareto_band_tolerance, blc_pareto_band_tolerance,
+        connector_add_current_solution_cut, subsolver_numerical_preprocessing,
+        CONNECTOR_UNDERESTIMATION,
+    )
 end
 
 function GBCparam(
@@ -252,7 +292,20 @@ function GBCparam(
     )
 end
 
-GBCparam(solver, debbug_out, output_folder_path, file_format_output) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 1, true, PARETO_OPTIMALITY_ONLY, true, false, true, 1e9, 0, false, 1e-4, 1e-4, true, true)
+function GBCparam(
+    solver,
+    debbug_out,
+    output_folder_path,
+    file_format_output;
+    connector_approximation::ConnectorApproximation=CONNECTOR_UNDERESTIMATION,
+)
+    return GBCparam(
+        solver, debbug_out, output_folder_path, file_format_output, RunStats(),
+        3600, 42, 8, 1, true, PARETO_OPTIMALITY_ONLY, true, false, true,
+        1e9, 0, false, 1e-4, 1e-4, true, true,
+        connector_approximation,
+    )
+end
 GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 1, true, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4, true, true)
 GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 1, true, pareto, true, false, true, 1e9, 0, false, 1e-4, 1e-4, true, true)
 GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 1, true, pareto, true, false, true, 1e9, 0, integer_obj, 1e-4, 1e-4, true, true)

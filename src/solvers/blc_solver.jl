@@ -76,7 +76,9 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
         if status == MOI.OPTIMAL || status == MOI.LOCALLY_SOLVED || status == MOI.TIME_LIMIT
             if primal_status(blcm.hpr) == MOI.FEASIBLE_POINT
                 mobj = objective_value(blcm.hpr)
-                xsol = Dict(a => value(blcm.link_vars[a]) for a in blcm.A)
+                xsol = round_master_solution(
+                    Dict(a => value(blcm.link_vars[a]) for a in blcm.A),
+                )
                 @debug "The master objective is $(mobj) and solution is $(xsol)."
                 print_solution_to_file(mobj, xsol, param)
                 new_stat!(param.stats, "Opt", mobj)
@@ -116,8 +118,9 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
         sepatime = @elapsed begin
 
             # `callback_value(cb_data, x)` is integer (to some tolerance).
-            x_vals = Dict(a => callback_value(cb_data, blcm.link_vars[a]) for a in blcm.A)
-            round_master_solution(x_vals)  # round to integer
+            x_vals = round_master_solution(
+                Dict(a => callback_value(cb_data, blcm.link_vars[a]) for a in blcm.A),
+            )
             @debug "Starting Benders-like cuts: Current values of the master linking variables are $(x_vals)."
             lazy = []
 

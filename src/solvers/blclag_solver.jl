@@ -113,7 +113,9 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
         if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT
             if primal_status(master.model) == MOI.FEASIBLE_POINT
                 mobj = objective_value(master.model)
-                xsol = Dict(a => value(master.link_vars[a]) for a in master.A)
+                xsol = round_master_solution(
+                    Dict(a => value(master.link_vars[a]) for a in master.A),
+                )
                 @debug "The master objective is $(mobj) and solution is $(xsol)."
                 print_solution_to_file(mobj, xsol, param)
                 new_stat!(param.stats, "Opt", mobj)
@@ -177,10 +179,11 @@ function blclag_callback_function(cb_data, master::BlCLagMaster, sub_names, clps
                 name => callback_value(cb_data, subObj[name]) for name in sub_names
             )
             @debug "Current values of the sub objectives are $(subObj_val)"
-            x_vals = Dict(
-                a => callback_value(cb_data, master.link_vars[a]) for a in master.A
+            x_vals = round_master_solution(
+                Dict(
+                    a => callback_value(cb_data, master.link_vars[a]) for a in master.A
+                ),
             )
-            round_master_solution(x_vals) # round to integer
             @debug "Current values of the master linking variables are $(x_vals)"
             lazy = []
 

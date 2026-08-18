@@ -22,11 +22,40 @@ Custom subsolvers should implement:
 - `name(sub_solver)`: return the unique follower name. This name is used to match subsolvers with `sub_names` stored in the master wrapper and to label statistics and diagnostic output.
 - `check(sub_solver, params)`: validate the subsolver before optimization starts. This should catch structural modeling errors early, for example missing linking variables, inconsistent resource sets, or unsupported objective/constraint types.
 - `capacity_linking(sub_solver, a, params)`: return the capacity coefficient `C_a` of the linking constraint for resource `a`, i.e. the coefficient in `y_a <= C_a x_a`. Most current JuBiC examples use unit capacities.
-- `compute_lower_bound_master_contribution(sub_solver, params, time_limit)`: compute a valid lower bound on the follower contribution to the first-level objective. In `GBC`, this is a lower bound on the value function approximated by the generated cuts. Connector models use this value to build safe cuts and numerical bounds.
+- `compute_lower_bound_master_contribution(sub_solver, params, time_limit)`: compute the proven optimal minimum follower contribution to the first-level objective. In `GBC`, this value is used as a global lower bound on the value function in every connector model, so a heuristic incumbent is not sufficient. The built-in `SubSolverJuMP` explicitly disables its separation gap for this initialization solve.
 - `solve_sub_for_x(sub_solver, xvals, params, time_limit)`: solve the follower problem for fixed first-level linking values `xvals`. It returns whether a feasible follower solution exists, the follower objective value, the first-level contribution of the returned follower solution, and the follower linking-variable solution.
-- `separation!(sub_solver, sval, gvals, kvals, params, time_limit)`: solve the GBC connector separation problem. The inputs define the current connector objective and resource prices; the method returns a `SubSolution` describing whether a violated connector constraint was found and the corresponding objective values/resource set.
+- `solve_sub_for_x_optimistic(sub_solver, xvals, params, time_limit)`: optional final-incumbent evaluator. It must first minimize the follower objective and then minimize the first-level contribution over all follower-optimal solutions. GBC detects support through method applicability; no capability flag is required.
+- `separation!(sub_solver, sval, gvals, kvals, params, time_limit)`: solve the GBC connector separation problem. The method returns a `SubSolution` containing a feasible pricing solution, its objective, and a certified lower bound for the minimization pricing problem.
 - `separation_BlC!(sub_solver, sval, kvals, params, time_limit)`: solve the BlC/BlCLag connector separation problem. The returned solution must be bilevel-feasible for the follower problem; otherwise the generated BlC coefficients are not meaningful.
 - `supports_bilevel_subproblem_solver(sub_solver)`: return `true` only if the subsolver implements the bilevel separation functionality required by `separation_BlC!`. The default is `false`.
+- `separation_exact!`: GBC uses this method for feasibility-cut pricing. Its
+  default delegates to `separation!`; a custom subsolver whose ordinary
+  separation can stop early must overload it and return equal certified bounds.
+
+There is deliberately no `is_heuristic` capability flag. ConnectorLP infers
+whether a pricing call is exact exclusively from the returned bounds. Likewise,
+`solve_sub_for_x` must solve the fixed-``x`` follower problem exactly, but it may
+return any follower-optimal solution. The optional optimistic method is called
+only after GBC terminates. If it is unavailable, JuBiC uses the ordinary cached
+response as a valid upper bound and warns that the interval width cannot be
+bounded solely by the master gap and connector-pricing errors.
+
+## Certified pricing result
+
+`SubSolution.obj_compare` is the objective ``U`` of the returned feasible
+pricing solution. Since connector pricing is a minimization problem, it is an
+upper bound. `SubSolution.obj_bound` is a certified lower bound ``L``:
+
+```math
+L \le p^* \le U.
+```
+
+The five-argument `SubSolution` constructor remains available for exact custom
+subsolvers and sets `obj_bound == obj_compare`. A pricing method without a finite
+certificate must use `-Inf` for `obj_bound`; JuBiC then reports an infinite
+approximation error. `SubSolverJuMP` reads the bound from
+`JuMP.objective_bound`. Numerical preprocessing that changes the pricing
+objective or feasible region is disabled during certified inexact calls.
 
 Subsolvers that support thread control can also implement `set_nthreads` and
 `set_singlethread`. Solvers without internal parallelism may leave these as

@@ -175,6 +175,42 @@ Typical convenience usage:
 param = GBCparam(solver, false, outdir, "lp", PARETO_OPTIMALITY_ONLY, 3600)
 ```
 
+For certified heuristic connector pricing, build the HNDP followers with
+`heuristic_subsolver=true` and an optional `heuristic_mip_gap`, then choose the
+cut policy in `GBCparam`:
+
+```julia
+instance = build_hndp_gbc_instance(
+    hndp,
+    solver;
+    subproblem_method=HNDP_SUBPROBLEM_MIP,
+    heuristic_subsolver=true,
+    heuristic_mip_gap=0.10,
+)
+params = GBCparam(
+    solver, false, outdir, "lp";
+    connector_approximation=CONNECTOR_UNDERESTIMATION,
+)
+```
+
+HNDP experiment JSON files can set `"heuristic_subsolver": true` and
+`"mip_gap"` in the model specification, and
+`"connector_approximation": "underestimation"` or `"overestimation"` in the
+parameter specification. Existing exact benchmark configurations remain
+compatible and default to underestimation, which has no effect when pricing is
+exact. GBC determines exact versus inexact behavior from the returned pricing
+bounds, rather than from a subsolver capability flag. Benchmark rows expose
+`GBCSolutionType` and `GBCResultStatus`; in particular, a master solved to
+optimality after using bounded-inexact pricing is marked `HeuristicOptimal`.
+HNDP's `SubSolverJuMP` followers also perform an exact lexicographic optimistic
+evaluation at the final master solution. Consequently,
+`ObjectiveIntervalWidthBound` certifies the interval-width estimate from the
+master gap and connector errors, and
+`ObjectiveIntervalWidthBoundedByPricingError` is `true`. A custom follower that
+does not implement this optional final evaluation still receives a valid
+interval, but JuBiC warns that its width additionally contains an unknown
+follower tie-breaking term.
+
 This uses:
 - `seed = 42`
 - `threads_master = 8`

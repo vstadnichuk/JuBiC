@@ -73,7 +73,7 @@ The optimal first-level solution is x1 = 1, x2 = 0, with overall objective 1.
 This function returns the decomposed instance with a `Master` and one
 `SubSolverJuMP`.
 """
-function generate_gbc_simple_bilevel_instance()
+function generate_gbc_simple_bilevel_instance(; heuristic::Bool=false, mip_gap=nothing)
     A = [1, 2]
     nsub = "Sub0"
 
@@ -95,8 +95,9 @@ function generate_gbc_simple_bilevel_instance()
         A,
         y,
         master_sub_obj,
-        sub_obj,
-        timelimit -> (false, 0),
+        sub_obj;
+        heuristic=heuristic,
+        mip_gap=mip_gap,
     )
 
     set_silent(sub)
@@ -198,6 +199,120 @@ function test_gbc_simple_bilevel()
 
     @test haskey(stats.data, "Opt") && isapprox(stats.data["Opt"], 1; atol=GBC_TEST_OBJ_ATOL)
 end
+
+function test_gbc_heuristic_objective_intervals()
+    for mode in (CONNECTOR_UNDERESTIMATION, CONNECTOR_OVERESTIMATION)
+        model = generate_gbc_simple_bilevel_instance(; heuristic=true, mip_gap=0.5)
+        params = GBCparam(
+            GurobiSolver(), false, mktempdir(), "lp";
+            connector_approximation=mode,
+        )
+        params.stats.data["enable_output_logs"] = false
+        stats = solve_instance!(model, params)
+        @test stats.data["ConnectorApproximation"] == string(mode)
+        @test stats.data["ObjectiveIntervalCertified"]
+        @test stats.data["ObjectiveIntervalLower"] <= 1.0 + GBC_TEST_OBJ_ATOL
+        @test stats.data["ObjectiveIntervalUpper"] ≈ 1.0 atol=GBC_TEST_OBJ_ATOL
+        @test stats.data["IncumbentObjectiveUpperBound"] ≈ 1.0 atol=GBC_TEST_OBJ_ATOL
+        @test stats.data["ExactIncumbentObjective"] ≈ 1.0 atol=GBC_TEST_OBJ_ATOL
+        @test stats.data["GBCSolutionType"] in ("Exact", "Heuristic")
+        @test stats.data["GBCResultStatus"] in ("Optimal", "HeuristicOptimal")
+        @test stats.data["MasterSolvedToOptimality"]
+        @test stats.data["FinalOptimisticEvaluationComplete"]
+        @test stats.data["ObjectiveIntervalWidthBoundedByPricingError"]
+        @test stats.data["ObjectiveIntervalWidth"] <=
+            stats.data["ObjectiveIntervalWidthBound"] + GBC_TEST_OBJ_ATOL
+        @test !haskey(stats.data, "FinalFixedXAuditPerformed")
+        @test !haskey(stats.data, "FinalFixedXAuditTime")
+    end
+end
+
+function test_optimistic_fixed_x_jump_uses_lexicographic_solve()
+    A = [1]
+    model = Model(optimizer)
+    @variable(model, y[A], Bin)
+    follower_objective = @expression(model, 0.0 * y[1])
+    leader_contribution = @expression(model, 1000.0 * y[1])
+    sub = SubSolverJuMP(
+        "Tie",
+        model,
+        A,
+        y,
+        leader_contribution,
+        follower_objective,
+    )
+    set_silent(model)
+    params = GBCparam(GurobiSolver(), false, mktempdir(), "lp")
+    params.stats.data["enable_output_logs"] = false
+
+    set_optimizer_attribute(model, "MIPGap", 0.25)
+    set_optimizer_attribute(model, "MIPGapAbs", 10.0)
+    found, follower_value, leader_value, y_value =
+        JuBiC.solve_sub_for_x_optimistic(sub, Dict(1 => 1.0), params, 60.0)
+
+    @test found
+    @test follower_value ≈ 0.0 atol=GBC_TEST_OBJ_ATOL
+    @test leader_value ≈ 0.0 atol=GBC_TEST_OBJ_ATOL
+    @test y_value[1] ≈ 0.0 atol=GBC_TEST_OBJ_ATOL
+    @test get_optimizer_attribute(model, "MIPGap") ≈ 0.25
+    @test get_optimizer_attribute(model, "MIPGapAbs") ≈ 10.0
+    @test !haskey(JuMP.object_dictionary(model), :fixc)
+    @test !haskey(JuMP.object_dictionary(model), :optimistic_fix_x)
+end
+
+function test_binary_master_solution_normalization()
+    A = [1, 2, 3]
+    numerical = Dict(1 => -1.0e-8, 2 => 0.99999999, 3 => 1.0)
+    normalized = JuBiC.round_master_solution(numerical)
+
+    @test normalized == Dict(1 => 0, 2 => 1, 3 => 1)
+    @test JuBiC.key_master_sol(normalized, A) == (0, 1, 1)
+    @test numerical[2] == 0.99999999 # the helper returns a new dictionary
+end
+
+function test_connector_lower_bound_forces_exact_mip_gap()
+    instance = generate_gbc_simple_bilevel_instance(; heuristic=true, mip_gap=0.5)
+    sub = only(instance.subproblems)
+    params = GBCparam(GurobiSolver(), false, mktempdir(), "lp")
+    params.stats.data["enable_output_logs"] = false
+
+    set_optimizer_attribute(sub.mip_model, "MIPGap", 0.75)
+    set_optimizer_attribute(sub.mip_model, "MIPGapAbs", 123.0)
+    lower_bound = JuBiC.compute_lower_bound_master_contribution(sub, params, 60.0)
+
+    @test lower_bound ≈ 0.0 atol=GBC_TEST_OBJ_ATOL
+    @test get_optimizer_attribute(sub.mip_model, "MIPGap") ≈ 0.75
+    @test get_optimizer_attribute(sub.mip_model, "MIPGapAbs") ≈ 123.0
+end
+
+mutable struct MockCertifiedPricingSubSolver <: SubSolver
+    name::String
+    mip_model::Model
+    A::Vector{Int}
+end
+
+JuBiC.name(sub_solver::MockCertifiedPricingSubSolver) = sub_solver.name
+JuBiC.check(sub_solver::MockCertifiedPricingSubSolver, params::SolverParam) = nothing
+JuBiC.capacity_linking(sub_solver::MockCertifiedPricingSubSolver, a, params::SolverParam) = 1
+JuBiC.compute_lower_bound_master_contribution(
+    sub_solver::MockCertifiedPricingSubSolver,
+    params::SolverParam,
+    time_limit,
+) = 0.0
+JuBiC.solve_sub_for_x(
+    sub_solver::MockCertifiedPricingSubSolver,
+    xvals,
+    params::SolverParam,
+    time_limit,
+) = (true, 0.0, 10.0, Dict(a => 0.0 for a in sub_solver.A))
+JuBiC.separation!(
+    sub_solver::MockCertifiedPricingSubSolver,
+    sval,
+    gvals,
+    kvals::Dict,
+    params::SolverParam,
+    time_limit,
+) = SubSolution(false, 10.0, 0.0, 10.0, 7.0, Int[])
 
 function test_gbc_parallel_subsolver_threads_validation()
     model = generate_gbc_simple_bilevel_instance()
@@ -492,7 +607,93 @@ function test_gbc_duplicate_cut_numerical_guard()
     @test haskey(parameter.stats.data, "GBCStatus")
     @test parameter.stats.data["GBCStatus"] == "Numerics"
     @test length(connector.my_subsolutions) == 2
-    @test isempty(connector.numeric_state)
+    @test connector.numeric_state[:raw_connector_value] ≈ 1.0e9
+    @test !haskey(connector.numeric_state, :last_sub_solver_solution)
+end
+
+
+function test_gbc_certified_connector_approximation_modes()
+    function solve_mode(mode)
+        A = [1]
+        master = Model(optimizer)
+        @variable(master, x[A], Bin)
+        link_vars = Dict(a => x[a] for a in A)
+
+        sub_model = Model(optimizer)
+        set_silent(sub_model)
+        sub_solver = MockCertifiedPricingSubSolver("Certified", sub_model, A)
+
+        connector_lp = Model(optimizer)
+        set_silent(connector_lp)
+        @variable(connector_lp, s <= 10.0)
+        @variable(connector_lp, k[A] >= 0)
+        @variable(connector_lp, 0 <= g <= 0.0)
+        connector = ConnectorLP(
+            connector_lp, A, link_vars, sub_solver, 0.0, nothing,
+            ConSubsolCut[], 0, Dict{Symbol,Any}(),
+        )
+
+        base = GBCparam(GurobiSolver(), false, mktempdir(), "lp", PARETO_NONE, 60.0)
+        params = GBCparam(
+            base.solver, base.debbug_out, base.output_folder_path,
+            base.file_format_output, base.stats, base.runtime, base.seed,
+            base.threads_master, base.threads_sub_con, base.parallel_separation,
+            base.pareto, base.warmstart, base.bigMwithLC, base.trim_coeff,
+            base.infinity_num, base.g_round_digit, base.integer_obj,
+            base.pareto_band_tolerance, base.blc_pareto_band_tolerance,
+            base.connector_add_current_solution_cut,
+            base.subsolver_numerical_preprocessing, mode,
+        )
+        _, cut, _, pobj = genBenders_cut!(connector, Dict(1 => 0.0), params, 60.0)
+        return cut, pobj, connector.numeric_state
+    end
+
+    under_cut, under_pobj, under_state = solve_mode(CONNECTOR_UNDERESTIMATION)
+    over_cut, over_pobj, over_state = solve_mode(CONNECTOR_OVERESTIMATION)
+
+    @test under_state[:pricing_error] ≈ 3.0
+    @test over_state[:pricing_error] ≈ 3.0
+    @test !under_state[:pricing_is_exact]
+    @test !over_state[:pricing_is_exact]
+    @test under_cut.constant ≈ 7.0
+    @test under_pobj ≈ 7.0
+    @test over_cut.constant ≈ 10.0
+    @test over_pobj ≈ 10.0
+end
+
+function test_gbc_bound_driven_heuristic_status()
+    A = [1]
+    master_model = Model(optimizer)
+    @variable(master_model, x[A], Bin)
+    @objective(master_model, Min, 0.0)
+    master = Master(
+        master_model,
+        A,
+        Dict(a => x[a] for a in A),
+        ["Certified"],
+    )
+
+    sub_model = Model(optimizer)
+    set_silent(sub_model)
+    sub = MockCertifiedPricingSubSolver("Certified", sub_model, A)
+    instance = Instance(master, [sub])
+    params = GBCparam(
+        GurobiSolver(), false, mktempdir(), "lp";
+        connector_approximation=CONNECTOR_UNDERESTIMATION,
+    )
+    params.stats.data["enable_output_logs"] = false
+    stats = solve_instance!(instance, params)
+
+    @test stats.data["UsedInexactPricing"]
+    @test stats.data["NInexactPricingCalls"] >= 1
+    @test stats.data["GBCSolutionType"] == "Heuristic"
+    @test stats.data["GBCResultStatus"] == "HeuristicOptimal"
+    @test stats.data["GBCStatus"] == "HeuristicOptimal"
+    @test stats.data["Opt_status"] == "HeuristicOptimal"
+    @test !stats.data["FinalOptimisticEvaluationComplete"]
+    @test stats.data["FinalOptimisticEvaluationFallbackFollowers"] == ["Certified"]
+    @test !stats.data["ObjectiveIntervalWidthBoundedByPricingError"]
+    @test isinf(stats.data["ObjectiveIntervalWidthBound"])
 end
 
 function test_gbc_opt_cut_coefficient_refactor_helpers()
@@ -578,9 +779,15 @@ function test_gbc_opt_cut_coefficient_refactor_helpers()
 end
 
 test_gbc_simple_bilevel()
+test_gbc_heuristic_objective_intervals()
+test_binary_master_solution_normalization()
+test_connector_lower_bound_forces_exact_mip_gap()
+test_optimistic_fixed_x_jump_uses_lexicographic_solve()
 test_gbc_parallel_subsolver_threads_validation()
 test_gbc_solver_instance_io_roundtrip()
 test_gbc_feasibility_cuts()
 test_gbc_two_follower()
 test_gbc_duplicate_cut_numerical_guard()
+test_gbc_certified_connector_approximation_modes()
+test_gbc_bound_driven_heuristic_status()
 test_gbc_opt_cut_coefficient_refactor_helpers()

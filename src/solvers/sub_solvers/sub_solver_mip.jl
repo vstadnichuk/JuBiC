@@ -17,10 +17,38 @@ struct SubSolverJuMP{T} <: SubSolver
 
     # extra functionalities
     extra_cuts::Function # Adds additional cuts in a branch and check manner. Called after 'mip_model' is solved to optimality. Should add the cut to the MIP itself. Input is only the time limit for this function. Then MIP is resolved. Return (b, time) where b is Bool if resolving should be used and time the runtime spend within the function
-    # TODO: implement MIPGap for GBC solver (i.e., solve subproblem heuristically as long as it is not the coefficient of Benders-like cut)?
+    heuristic::Bool # Whether separation! may accept a suboptimal incumbent
+    mip_gap::Union{Nothing,Float64} # Optional separation-only relative MIP gap
 end
 
-_default_extra_cuts() = (timelimit -> (false, 0))
+const _DEFAULT_EXTRA_CUTS = (timelimit -> (false, 0))
+_default_extra_cuts() = _DEFAULT_EXTRA_CUTS
+
+# Compatibility constructor for code that directly instantiated the
+# parametric type before the heuristic configuration fields were added.
+function SubSolverJuMP{T}(
+    name,
+    mip_model,
+    A::Vector{T},
+    link_varsC,
+    y_vars,
+    r_objterm,
+    c_objterm,
+    extra_cuts::Function,
+) where T
+    return SubSolverJuMP{T}(
+        name,
+        mip_model,
+        A,
+        link_varsC,
+        y_vars,
+        r_objterm,
+        c_objterm,
+        extra_cuts,
+        false,
+        nothing,
+    )
+end
 
 function _create_link_varsC(mip_model::JuMP.Model, sub_name, A, y_vars)
     link_varsC = @variable(mip_model, [a in A], Bin, base_name = "x_copy_$(sub_name)")
@@ -34,9 +62,15 @@ function SubSolverJuMP(
     A::Vector{T},
     y_vars,
     r_objterm,
-    c_objterm,
+    c_objterm;
+    heuristic::Bool=false,
+    mip_gap=nothing,
 ) where T
-    return SubSolverJuMP(name, mip_model, A, y_vars, r_objterm, c_objterm, _default_extra_cuts())
+    return SubSolverJuMP(
+        name, mip_model, A, y_vars, r_objterm, c_objterm, _default_extra_cuts();
+        heuristic=heuristic,
+        mip_gap=mip_gap,
+    )
 end
 
 function SubSolverJuMP(
@@ -46,10 +80,26 @@ function SubSolverJuMP(
     y_vars,
     r_objterm,
     c_objterm,
-    extra_cuts::Function,
+    extra_cuts::Function;
+    heuristic::Bool=false,
+    mip_gap=nothing,
 ) where T
+    if !isnothing(mip_gap) && (!(mip_gap isa Real) || mip_gap < 0)
+        throw(ArgumentError("mip_gap must be nothing or a nonnegative number."))
+    end
     link_varsC = _create_link_varsC(mip_model, name, A, y_vars)
-    return SubSolverJuMP{T}(name, mip_model, A, link_varsC, y_vars, r_objterm, c_objterm, extra_cuts)
+    return SubSolverJuMP{T}(
+        name,
+        mip_model,
+        A,
+        link_varsC,
+        y_vars,
+        r_objterm,
+        c_objterm,
+        extra_cuts,
+        heuristic,
+        isnothing(mip_gap) ? nothing : Float64(mip_gap),
+    )
 end
 
 function SubSolverJuMP(
@@ -236,27 +286,54 @@ function compute_lower_bound_master_contribution(sol::SubSolverJuMP, params::Sol
     # set objective function corresponding to master problem contribution
     @objective(sol.mip_model, Min, sol.r_objterm)
 
-    # print the MIP to solve when debbug mode
-    try 
-        if should_debbug_print(params)
-            write_to_file(
-                sol.mip_model,
-                "$(params.output_folder_path)/ubbound_$(sol.name).$(params.file_format_output)",
-            )
+    # This value initializes the connector with a globally valid lower bound.
+    # It must therefore not inherit either the separation-only heuristic gap or
+    # a nonzero MIPGap configured directly on the model. Restore the user's
+    # setting afterwards; only this initialization solve is forced exact.
+    previous_gaps = _force_exact_mip_gaps!(sol)
+
+    try
+        # print the MIP to solve when debbug mode
+        try
+            if should_debbug_print(params)
+                write_to_file(
+                    sol.mip_model,
+                    "$(params.output_folder_path)/ubbound_$(sol.name).$(params.file_format_output)",
+                )
+            end
+        catch err
+            @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
         end
-    catch err
-        @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
+
+        # `allow_suboptimal` retains its default `false`; together with the
+        # zero gap and status check this requires an optimal solution.
+        solve_mip(sol, params, time_limit)
+
+        # check if optimal solution found and otherwise handle exceptions
+        check_solution_status(sol)
+
+        # in debbug mode, print solution before return
+        @debug "The found lower bound solution for $(sol.name) is $(objective_value(sol.mip_model))."
+        return objective_value(sol.mip_model)
+    finally
+        _restore_mip_gaps!(sol, previous_gaps)
     end
+end
 
-    # solve adjusted sub 
-    solve_mip(sol, params, time_limit)
+function _force_exact_mip_gaps!(sol::SubSolverJuMP)
+    previous_gaps = (
+        relative=get_optimizer_attribute(sol.mip_model, "MIPGap"),
+        absolute=get_optimizer_attribute(sol.mip_model, "MIPGapAbs"),
+    )
+    set_optimizer_attribute(sol.mip_model, "MIPGap", 0.0)
+    set_optimizer_attribute(sol.mip_model, "MIPGapAbs", 0.0)
+    return previous_gaps
+end
 
-    # check if optimal solution found and otherwise handle exceptions
-    check_solution_status(sol)
-
-    # in debbug mode, print solution before return
-    @debug "The found lower bound solution for $(sol.name) is $(objective_value(sol.mip_model))."
-    return objective_value(sol.mip_model)
+function _restore_mip_gaps!(sol::SubSolverJuMP, gaps)
+    set_optimizer_attribute(sol.mip_model, "MIPGap", gaps.relative)
+    set_optimizer_attribute(sol.mip_model, "MIPGapAbs", gaps.absolute)
+    return nothing
 end
 
 function name(ss::SubSolverJuMP)
@@ -275,15 +352,57 @@ function _near_numeric_upper_bound(value, params::SolverParam; rel_tol=1e-4)
     return value >= bound * (1 - rel_tol)
 end
 
+function _set_separation_mip_gap!(sol::SubSolverJuMP, heuristic_mode::Bool)
+    if !heuristic_mode || isnothing(sol.mip_gap)
+        return nothing
+    end
+
+    previous_gap = get_optimizer_attribute(sol.mip_model, "MIPGap")
+    set_optimizer_attribute(sol.mip_model, "MIPGap", sol.mip_gap)
+    return previous_gap
+end
+
+function _restore_separation_mip_gap!(sol::SubSolverJuMP, previous_gap)
+    if !isnothing(previous_gap)
+        set_optimizer_attribute(sol.mip_model, "MIPGap", previous_gap)
+    end
+end
+
 function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::SolverParam, time_limit)
+    return _separation_jump!(sol, sval, gvals, kvals, params, time_limit; heuristic_mode=sol.heuristic)
+end
+
+function separation_exact!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::SolverParam, time_limit)
+    return _separation_jump!(sol, sval, gvals, kvals, params, time_limit; heuristic_mode=false)
+end
+
+function _separation_jump!(
+    sol::SubSolverJuMP,
+    sval,
+    gvals,
+    kvals::Dict,
+    params::SolverParam,
+    time_limit;
+    heuristic_mode::Bool,
+)
     # TODO: we use hard coded numeric tolerances here...
     obj_tolerance = 4 # 10e-4
     var_non_zero_tolerance = 10e-4
 
+    if heuristic_mode && sol.extra_cuts !== _DEFAULT_EXTRA_CUTS
+        error(
+            "Heuristic separation for SubSolverJuMP $(sol.name) does not support " *
+            "custom extra_cuts callbacks. Remove extra_cuts or use exact separation.",
+        )
+    end
+
     # set new objective function
     k_term = sum([kvals[a] * sol.link_varsC[a] for a in sol.A])  # TODO: This is only correct if linking variables on sub_problem side are binary? I think, it should be correct like this, but it is at least not very intuitive. 
     full_obj = sol.c_objterm * gvals + sol.r_objterm + k_term
-    preprocessing = _numeric_preprocessing_enabled(params)
+    # The numerical preprocessing fixes variables or changes the objective and
+    # therefore invalidates the solver's objective bound for the original
+    # pricing problem. Certified heuristic pricing deliberately bypasses it.
+    preprocessing = _numeric_preprocessing_enabled(params) && !heuristic_mode
     g_at_bound = preprocessing && _near_numeric_upper_bound(gvals, params)
     k_at_bound = preprocessing ? [a for a in sol.A if _near_numeric_upper_bound(get(kvals, a, 0.0), params)] : eltype(sol.A)[]
     fix_numprep = Dict{Any,ConstraintRef}()
@@ -301,6 +420,8 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
         @objective(sol.mip_model, Min, full_obj)
     end
 
+    previous_gap = _set_separation_mip_gap!(sol, heuristic_mode)
+
     # Solve sub_problem (and print it in debbug mode)
     try 
         if should_debbug_print(params)
@@ -313,7 +434,12 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
         @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
     end
     try
-        solve_mip(sol, params, time_limit)
+        solve_mip(
+            sol,
+            params,
+            time_limit;
+            allow_suboptimal=heuristic_mode,
+        )
 
         if preprocessing && !isempty(fix_numprep)
             status = termination_status(sol.mip_model)
@@ -324,15 +450,33 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
                 end
                 empty!(fix_numprep)
                 @objective(sol.mip_model, Min, full_obj)
-                solve_mip(sol, params, time_limit)
+                solve_mip(
+                    sol,
+                    params,
+                    time_limit;
+                    allow_suboptimal=heuristic_mode,
+                )
             end
         end
 
-        # check if optimal solution found and otherwise handle exceptions
-        check_solution_status(sol)
+        # Exact separation requires optimality. Heuristic separation has
+        # already verified that a feasible incumbent exists in solve_mip.
+        if !heuristic_mode
+            check_solution_status(sol)
+        end
 
         # construct return value 
         opt_obj = value(full_obj)
+        pricing_bound = if heuristic_mode
+            try
+                Float64(objective_bound(sol.mip_model))
+            catch err
+                @warn "SubSolverJuMP $(sol.name) could not retrieve a pricing objective bound; the GBC approximation certificate is infinite. Error: $(sprint(showerror, err))"
+                -Inf
+            end
+        else
+            Float64(opt_obj)
+        end
         @debug "Optimal solution of sub " * sol.name * " is " * string(opt_obj)
 
         is_violate = Bool(!(sval < opt_obj + var_non_zero_tolerance))
@@ -341,8 +485,9 @@ function separation!(sol::SubSolverJuMP, sval, gvals, kvals::Dict, params::Solve
         r = round(value(sol.r_objterm); digits=obj_tolerance)
         c = round(value(sol.c_objterm); digits=obj_tolerance)
         as = [a for a in sol.A if value(sol.y_vars[a]) > var_non_zero_tolerance]  # TODO: Not that it should make a difference here, but why do we use y and not copies of x variables here?
-        return SubSolution(is_violate, r, c, opt_obj, as)
+        return SubSolution(is_violate, r, c, opt_obj, pricing_bound, as)
     finally
+        _restore_separation_mip_gap!(sol, previous_gap)
         for cref in values(fix_numprep)
             if is_valid(sol.mip_model, cref)
                 delete(sol.mip_model, cref)
@@ -408,6 +553,8 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
     # fix values for linking variables
     @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))  # TODO: The rounding seems to help with numerics
     #@constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == xvals[a])
+
+    previous_gaps = _force_exact_mip_gaps!(sol)
 
     # solve adjusted sub (and write to file in debbug mode)
     try
@@ -477,53 +624,60 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
             delete(sol.mip_model, fixc[a])
         end
         unregister(sol.mip_model, :fixc)
+        _restore_mip_gaps!(sol, previous_gaps)
     end
 end
 
-function verify_sub_for_x_optimistic(sol::SubSolverJuMP, xvals, params::SolverParam, time_limit)
+"""
+    solve_sub_for_x_optimistic(sol::SubSolverJuMP, xvals, params, time_limit)
+
+Compute the optimistic fixed-`x` follower response lexicographically. First,
+`solve_sub_for_x` proves the minimum follower objective value. Second, that
+value and the binary linking decisions are fixed exactly and the model
+minimizes `r_objterm`. This two-solve formulation deliberately avoids weighted
+or epsilon-penalty objectives, whose required scaling is problem-dependent and
+can be numerically unstable.
+"""
+function solve_sub_for_x_optimistic(
+    sol::SubSolverJuMP,
+    xvals,
+    params::SolverParam,
+    time_limit,
+)
     start_time = time()
+    found, follower_optimum, _, _ = solve_sub_for_x(sol, xvals, params, time_limit)
+    found || return false, 0, 0, Dict()
 
-    @objective(sol.mip_model, Min, sol.c_objterm)
-    @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))
+    remaining_time = time_limit - (time() - start_time)
+    remaining_time > 0 || throw(TimeoutException(
+        "Subsolver $(sol.name) exhausted its time limit before optimistic tie-breaking.",
+    ))
 
-    tie_constraint = nothing
+    @constraint(sol.mip_model, optimistic_fix_x[a=sol.A], sol.link_varsC[a] == round(xvals[a]))
+    follower_optimum_constraint = @constraint(sol.mip_model, sol.c_objterm == follower_optimum)
+    @objective(sol.mip_model, Min, sol.r_objterm)
+    previous_gaps = _force_exact_mip_gaps!(sol)
+
     try
-        solve_mip(sol, params, time_limit)
-
-        status = termination_status(sol.mip_model)
-        if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
-            @debug "The Subproblem $(sol.name) was infeasible during optimistic verification."
-            return false, 0, 0, Dict()
-        end
-
-        check_solution_status(sol)
-        opt_cost = objective_value(sol.mip_model)
-
-        remaining_time = time_limit - (time() - start_time)
-        if remaining_time <= 0
-            throw(TimeoutException("We hit the time limit while solving optimistic verification problem of subsolver $(sol.name)"))
-        end
-
-        tie_constraint = @constraint(sol.mip_model, sol.c_objterm <= opt_cost + 1e-6)
-        @objective(sol.mip_model, Min, sol.r_objterm)
         solve_mip(sol, params, remaining_time)
         check_solution_status(sol)
 
-        y_vals = sol.y_vars isa AbstractDict ? Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) : value.(sol.y_vars)
-        osol_L1 = value(sol.r_objterm)
-        return true, opt_cost, osol_L1, y_vals
+        y_vals = sol.y_vars isa AbstractDict ?
+            Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) :
+            value.(sol.y_vars)
+        leader_contribution = value(sol.r_objterm)
+        @debug "Optimistic fixed-x evaluation for $(sol.name) found follower value $(follower_optimum) and minimum first-level contribution $(leader_contribution)."
+        return true, follower_optimum, leader_contribution, y_vals
     finally
-        if !isnothing(tie_constraint)
-            delete(sol.mip_model, tie_constraint)
-        end
+        _restore_mip_gaps!(sol, previous_gaps)
+        delete(sol.mip_model, follower_optimum_constraint)
         for a in sol.A
-            delete(sol.mip_model, fixc[a])
+            delete(sol.mip_model, optimistic_fix_x[a])
         end
-        unregister(sol.mip_model, :fixc)
+        unregister(sol.mip_model, :optimistic_fix_x)
+        @objective(sol.mip_model, Min, sol.c_objterm)
     end
 end
-
-
 
 ####### Auxiliary functions #######
 """
@@ -569,7 +723,12 @@ end
 
 Solve the underlying MIP. Mainly calls 'optimize!' and handles Branch&Check for additional cuts. It also sets the time limit and adjusts it if necessary.
 """
-function solve_mip(sol::SubSolverJuMP, params::SolverParam, time_limit)
+function solve_mip(
+    sol::SubSolverJuMP,
+    params::SolverParam,
+    time_limit;
+    allow_suboptimal::Bool=false,
+)
     inner_time_limit = time_limit
     need_solving = true
 
@@ -593,6 +752,20 @@ function solve_mip(sol::SubSolverJuMP, params::SolverParam, time_limit)
         # if solved to optimality, apply branch and check
         status = termination_status(sol.mip_model)
         @debug "Subproblem $(sol.name) MIP was solved with status $status"
+
+        # Heuristic separation accepts any feasible incumbent, including one
+        # returned because the effective time limit was reached. Do not run
+        # branch-and-check callbacks in this mode: they are part of the exact
+        # solve path and could turn a heuristic call into an exact one.
+        if allow_suboptimal
+            if primal_status(sol.mip_model) == MOI.FEASIBLE_POINT
+                @debug "Subproblem $(sol.name) accepted a feasible heuristic incumbent with status $status"
+                return nothing
+            elseif status == MOI.TIME_LIMIT
+                throw(TimeoutException("The heuristic subsolver $(sol.name) reached its time limit without finding a feasible solution."))
+            end
+        end
+
         if status == MOI.OPTIMAL
             need_solving, time_spend = sol.extra_cuts(time_limit) 
             inner_time_limit = max(inner_time_limit - time_spend, 0) # deduce time spend in subsolver from time limit

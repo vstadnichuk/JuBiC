@@ -524,6 +524,9 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         integer_obj = _get_bool(config, "integer_obj", false)
         infinity_num = _get_number(config, "infinity_num", 1e9)
         g_round_digit = _get_int(config, "g_round_digit", 0)
+        connector_approximation = _parse_connector_approximation(
+            get(config, "connector_approximation", "underestimation"),
+        )
         param = GBCparam(
             wrapper,
             debbug_out,
@@ -542,6 +545,11 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             infinity_num,
             g_round_digit,
             integer_obj,
+            1e-4,
+            1e-4,
+            true,
+            true,
+            connector_approximation,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
         return param
@@ -641,6 +649,19 @@ function _parse_pareto_cut(value)
         return PARETO_OPTIMALITY_AND_FEASIBILITY
     end
     error("Unsupported pareto setting '$(value_str)' in experiment configuration.")
+end
+
+function _parse_connector_approximation(value)
+    normalized = lowercase(replace(String(value), "_" => "", "-" => ""))
+    if normalized in ("under", "underestimate", "underestimation", "safe")
+        return CONNECTOR_UNDERESTIMATION
+    elseif normalized in ("over", "overestimate", "overestimation", "tight")
+        return CONNECTOR_OVERESTIMATION
+    end
+    error(
+        "Unsupported connector_approximation '$(value)'. " *
+        "Use 'underestimation' or 'overestimation'.",
+    )
 end
 
 function _required_string(config::Dict{String,Any}, key::String)

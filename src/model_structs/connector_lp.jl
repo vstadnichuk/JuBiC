@@ -48,10 +48,27 @@ function _add_connector_solution_cut_if_new!(subLP::ConnectorLP, csc::ConSubsolC
     new_const_left =
         subLP.lp[:s] - sum(subLP.lp[:k][a] for a in csc.res; init=0) -
         csc.objL2 * subLP.lp[:g]
-    c = @constraint(subLP.lp, new_const_left <= csc.objL1)
+    c = @constraint(
+        subLP.lp,
+        new_const_left <= csc.objL1,
+        base_name=_next_connector_row_name!(subLP, "i"),
+    )
     push!(subLP.my_subsolutions, csc)
     @debug "Seeded ConnectorLP $(name(subLP.sub_solver)) with known follower solution row $(c)."
     return true
+end
+
+function _next_connector_row_name!(subLP::ConnectorLP, prefix::AbstractString)
+    # The counter starts after the rows already retained by a warm-started
+    # ConnectorLP. This keeps names unique across repeated solves without
+    # changing the public ConnectorLP constructor.
+    counter = get(
+        subLP.numeric_state,
+        :connector_row_name_counter,
+        length(subLP.my_subsolutions),
+    ) + 1
+    subLP.numeric_state[:connector_row_name_counter] = counter
+    return "$(prefix)$(counter)"
 end
 
 function _used_resources_from_yvals(subLP::ConnectorLP, y_vals; tolerance=10e-4)
@@ -408,6 +425,12 @@ Generate an general Benders (feasibility or optimality) cut.
 - 'cut': The left-hand (i.e., non-trivial) side of the cut.
 - 'bigMcut': If big M coefficients for BlC were computed as subroutine, return the right-hand (i.e., non-trivial) side of the BlC. Otherwise, return 'nothing'. 
 - 'pobj': The contribution of the cut to the objective for the current solution (0 if feasibility cut).
+
+For inexact pricing, `pobj` is the value of the expression actually added to
+the master: the raw connector objective in overestimation mode and the raw
+objective minus the certified pricing error in underestimation mode. The raw
+value, pricing interval, and error remain available in `subLP.numeric_state`
+until the next call and are propagated to the final master certificate.
 """
 function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
     _reset_numeric_state!(subLP)
@@ -424,7 +447,15 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP $(name(subLP.sub_solver))."
 
-    foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, require_remaining_time!("solving the follower for fixed master values"))
+    foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(
+        subLP.sub_solver,
+        link_vals,
+        params,
+        require_remaining_time!("solving the follower for fixed master values"),
+    )
+    subLP.numeric_state[:fixed_x_feasible] = foundfeas
+    subLP.numeric_state[:fixed_x_follower_value] = Float64(optL2)
+    subLP.numeric_state[:fixed_x_master_contribution] = Float64(optL2_risk)
     if params.connector_add_current_solution_cut && foundfeas
         current_resources = _used_resources_from_yvals(subLP, y_vals)
         _add_connector_solution_cut_if_new!(subLP, ConSubsolCut(current_resources, optL2, optL2_risk))
@@ -452,7 +483,12 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         fix_g_constraint = @constraint(subLP.lp, subLP.lp[:g] == 0)
 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for feasibility cut generation."
-        iterate_subsolver(subLP, params, require_remaining_time!("iterating the feasibility ConnectorLP"))  # solve with new constraint
+        iterate_subsolver(
+            subLP,
+            params,
+            require_remaining_time!("iterating the feasibility ConnectorLP");
+            exact_pricing=true,
+        )  # feasibility cuts require a proven connector ray
 
         
         # pareto optimality step for feasibility cuts
@@ -471,11 +507,19 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for optimality cut generation."
         iterate_subsolver(subLP, params, require_remaining_time!("iterating the optimality ConnectorLP"))
         time_limit_build_cut = require_remaining_time!("building the optimality cut")
-        pobj = value(new_obj)
+        raw_pobj = Float64(value(new_obj))
+        subLP.numeric_state[:raw_connector_value] = raw_pobj
+        pricing_error = get(subLP.numeric_state, :pricing_error, 0.0)
+        pobj = if params.connector_approximation == CONNECTOR_UNDERESTIMATION
+            isfinite(pricing_error) ? raw_pobj - pricing_error : Float64(subLP.lower_bound_obj_contribution)
+        else
+            raw_pobj
+        end
 
         if get(subLP.numeric_state, :accepted_numerically, false)
             @debug "ConnectorLP $(name(subLP.sub_solver)) was accepted numerically after detecting a repeated cut. We skip adding the duplicate cut to the ConnectorLP itself and now build the usual optimality cut using the numerically stabilized g-value."
-        elseif params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
+        elseif get(subLP.numeric_state, :pricing_is_exact, true) &&
+               (params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY)
             # pareto optimality step for optimality cuts
             time_limit_pareto = require_remaining_time!("generating the optimality Pareto cut")
             pareto_snapshot = _connector_solution_snapshot(subLP)
@@ -487,7 +531,9 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
                 pareto_time = @elapsed pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
                 add_stat!(params.stats, "ConnectorLPTimePareto", pareto_time)
                 time_limit_build_cut = time_limit_pareto
-                pobj = value(new_obj)
+                raw_pobj = Float64(value(new_obj))
+                subLP.numeric_state[:raw_connector_value] = raw_pobj
+                pobj = raw_pobj
             catch err
                 if err isa TimeoutException
                     rethrow(err)
@@ -546,6 +592,13 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     bigMcut = nothing
     rounded_x_vals = _rounded_binary_x_values(subLP, x_vals, params)
 
+    pricing_error = Float64(get(subLP.numeric_state, :pricing_error, 0.0))
+    if params.connector_approximation == CONNECTOR_UNDERESTIMATION && !isfinite(pricing_error)
+        @warn "ConnectorLP $(name(subLP.sub_solver)) has no finite pricing certificate. The underestimation policy falls back to the global follower lower bound and omits this uncertified GBC cut."
+        subLP.numeric_state[:local_cut_value] = Float64(subLP.lower_bound_obj_contribution)
+        return Float64(subLP.lower_bound_obj_contribution), nothing
+    end
+
     # g term of the cut
     gval = _snapshot_g(subLP)
 
@@ -567,7 +620,8 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     @debug "ConnectorLP $(name(subLP.sub_solver)) uses k-coefficients $(k_coeffs) and base g-coefficient xi=$(bound_value) for this optimality cut."
 
     ## generate cut from bound or by solving Lagrangian dual for BlC
-    blc_subroutine = params.bigMwithLC && gval > 0 
+    blc_subroutine = params.bigMwithLC && gval > 0 &&
+                     get(subLP.numeric_state, :pricing_is_exact, true)
     if blc_subroutine
         @debug "The conditions are met s.t. we generate a BlC for obtaining better big M coef. It is g=$gval "
         # If g=0, investing computational efford into generating a Lagrangian cut is just waste of computational ressources
@@ -616,6 +670,17 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         end
     end
 
+    if params.connector_approximation == CONNECTOR_UNDERESTIMATION && pricing_error > 0
+        # Every connector row has coefficient +1 on s. Subtracting the maximum
+        # certified omitted-row violation from the final affine expression is
+        # equivalent to using s_safe = s - pricing_error while preserving the
+        # coefficient-strengthening choices made above.
+        cut -= pricing_error
+        incumbent_cut_value -= pricing_error
+        incumbent_reference_value -= pricing_error
+    end
+
+    subLP.numeric_state[:local_cut_value] = incumbent_cut_value
     _record_opt_cut_validation!(subLP, params, incumbent_cut_value, incumbent_reference_value, cut_rhs)
 
     
@@ -631,7 +696,6 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
             )
         end
     end
-    _reset_numeric_state!(subLP)
     return cut, bigMcut
 end
 
@@ -700,17 +764,27 @@ end
 
 
 """
-    iterate_subsolver(subLP::ConnectorLP, params::GBCparam)
+    iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit; exact_pricing=false)
 
 Solve the LP by a separation procedure. 
 Uses an iterative while loop in the implementation, avoiding stack overflow exceptions compared to this function recursive version.
 
 In case the separation takes longer that the set time limit, throw an exception. 
 
+When pricing finds no violated row, this routine records the feasible pricing
+objective ``U``, certified lower bound ``L``, and
+``delta=max(0,s-L)``. With `exact_pricing=true`, it calls
+`separation_exact!`; GBC uses that path for feasibility-cut generation.
+
 # Return
     The time it required to execute this function
 """
-function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
+function iterate_subsolver(
+    subLP::ConnectorLP,
+    params::GBCparam,
+    time_limit;
+    exact_pricing::Bool=false,
+)
     # this part of the solver can run into quite some nasty infinity loops. To prevent the software just freezing (or seeming to freeze for the user),
     ## we stop the separation process in case we reach the timelimit set in the parameters (what still can take long, but at least the user is expected to wait this long) 
     current_time = time()
@@ -757,13 +831,14 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
         @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
         pricing_time = @elapsed begin
-            sub_solver = separation!(
+            pricing_function = exact_pricing ? separation_exact! : separation!
+            sub_solver = pricing_function(
                 subLP.sub_solver,
                 value(subLP.lp[:s]),
                 value(subLP.lp[:g]),
                 kvals,
                 params,
-                remaining_time
+                remaining_time,
             )
             subLP.numeric_state[:last_sub_solver_solution] = sub_solver
         end
@@ -814,7 +889,11 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
             new_const_left =
                 subLP.lp[:s] - sum(subLP.lp[:k][a] for a in sub_solver.A_sub; init=0) -
                 sub_solver.obj_second_level * subLP.lp[:g] 
-            c = @constraint(subLP.lp, new_const_left <= sub_solver.obj_first_level)
+            c = @constraint(
+                subLP.lp,
+                new_const_left <= sub_solver.obj_first_level,
+                base_name=_next_connector_row_name!(subLP, "i"),
+            )
             @debug "We added an violated constraint $(c) for connector $(name(subLP.sub_solver)). Continue separation."
 
             # save found solution to our internal storage
@@ -830,6 +909,26 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
             violated_cut = true
         else
             # no violated constraint many more
+            pricing_upper = Float64(sub_solver.obj_compare)
+            pricing_lower = Float64(sub_solver.obj_bound)
+            sval = Float64(value(subLP.lp[:s]))
+            pricing_is_exact = isfinite(pricing_upper) && isfinite(pricing_lower) &&
+                               isapprox(pricing_upper, pricing_lower; atol=1e-8, rtol=1e-9)
+            if exact_pricing && !pricing_is_exact
+                error(
+                    "Exact connector pricing for subsolver $(name(subLP.sub_solver)) " *
+                    "returned distinct bounds [$(pricing_lower), $(pricing_upper)]. " *
+                    "Implement separation_exact! so it solves pricing to optimality.",
+                )
+            end
+            pricing_error = pricing_is_exact ? 0.0 :
+                            (isfinite(pricing_lower) ? max(0.0, sval - pricing_lower) : Inf)
+            subLP.numeric_state[:pricing_upper_bound] = pricing_upper
+            subLP.numeric_state[:pricing_lower_bound] = pricing_lower
+            subLP.numeric_state[:pricing_error] = pricing_error
+            subLP.numeric_state[:pricing_gap] = pricing_upper - pricing_lower
+            subLP.numeric_state[:pricing_is_exact] = pricing_is_exact
+            @debug "ConnectorLP $(name(subLP.sub_solver)) terminates pricing with interval [$(pricing_lower), $(pricing_upper)] at s=$(sval), giving certified cut error $(pricing_error)."
             violated_cut = false
         end
     end
@@ -880,8 +979,17 @@ function iterate_subsolver_recursive(subLP::ConnectorLP, params::GBCparam)
         new_const_left =
             subLP.lp[:s] - sum(subLP.lp[:k][a] for a in sub_solver.A_sub; init=0) -
             sub_solver.obj_second_level * subLP.lp[:g]
-        c = @constraint(subLP.lp, new_const_left <= sub_solver.obj_first_level)
+        c = @constraint(
+            subLP.lp,
+            new_const_left <= sub_solver.obj_first_level,
+            base_name=_next_connector_row_name!(subLP, "i"),
+        )
         @debug "We added an violated constraint $(c) for connector $(name(subLP.sub_solver)). Continue separation."
+
+        push!(
+            subLP.my_subsolutions,
+            ConSubsolCut(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level),
+        )
 
         # resolve
         iterate_subsolver_recursive(subLP, params)

@@ -61,6 +61,145 @@ They are added as linear constraints of the form
 \gamma + \sum_{a \in A} \delta_a x_a \ge 1.
 ```
 
+## Certified Inexact Connector Pricing
+
+For connector variables ``(s,g,k)``, pricing computes
+
+```math
+p^*(g,k)=\min_{p\in\mathcal P}
+\left\{r_p+g c_p+\sum_{a\in A_p}k_a\right\}.
+```
+
+The connector point satisfies every omitted row exactly when ``s\le p^*``.
+A pricing solver returns a feasible objective ``U`` and certified
+lower bound ``L``, so ``L\le p^*\le U``. JuBiC uses three cases:
+
+1. If ``U<s``, the feasible solution supplies a genuinely violated row.
+2. If ``L\ge s``, the connector point is certified feasible.
+3. Otherwise the maximum possible omitted-row violation is
+
+```math
+\delta=\max\{0,s-L\}.
+```
+
+Without a finite lower bound, ``\delta=+\infty``. Feasibility-cut pricing is
+always exact; the policies below apply only to optimality cuts. Pareto
+refinement and BlC coefficient strengthening are skipped whenever the returned
+bounds leave a positive connector error, because those stages require exact
+connector feasibility. No subsolver-level heuristic flag is consulted.
+
+### Safe underestimation
+
+`CONNECTOR_UNDERESTIMATION` subtracts ``\delta`` from the complete affine GBC
+expression. This is equivalent to using ``s_{\mathrm{safe}}=s-\delta``:
+
+```math
+\ell^-(x)=\ell(x)-\delta\le\varphi(x)\qquad\forall x.
+```
+
+Every retained cut remains valid for the original value-function epigraph, so
+the master objective bound is a direct lower bound on the bilevel optimum. If
+no finite certificate exists, JuBiC omits the uncertified GBC expression and
+falls back to the follower's global lower bound.
+
+### Tight bounded overestimation
+
+`CONNECTOR_OVERESTIMATION` retains the unshifted expression. Globally,
+
+```math
+\ell(x)\le\varphi(x)+\delta.
+```
+
+Such cuts are bounded-inexact cuts, not necessarily global majorants. Since
+ordinary `solve_sub_for_x` may return any follower-optimal solution, the cached
+fixed-``x`` response used during separation need not minimize the leader
+contribution among follower optima. This does not invalidate the corrected
+lower bound below, but an arbitrary response cannot provide a pricing-error
+bound on the final interval width. JuBiC therefore treats optimistic
+tie-breaking as a separate optional final-evaluation capability rather than a
+requirement for cut generation.
+Because the master enforces the maximum of all retained cuts, a newer exact cut does
+not overwrite an older inaccurate cut. For follower ``k`` JuBiC tracks
+
+```math
+\bar\delta_k=\max_{j\in J_k}\delta_{kj},
+\qquad E=\sum_k\bar\delta_k.
+```
+
+If ``B_M`` is the inexact master's MIP objective bound, ``B_M-E`` is a valid
+lower bound on the original bilevel optimum.
+
+### Objective interval
+
+Let ``x^I`` be the final fully separated master incumbent and let ``V^+(x^I)``
+denote the optimistic value obtained by minimizing the first-level contribution
+over all follower-optimal responses. After the master terminates, GBC calls the
+optional `solve_sub_for_x_optimistic` method for each follower. Binary master
+values are normalized to exact zeros and ones before this evaluation and before
+cache lookup. When every follower implements the method, JuBiC reports
+
+```math
+\begin{array}{ll}
+\text{underestimation:} & B_M\le Z^*\le V^+(x^I),\\
+\text{overestimation:}  & B_M-E\le Z^*\le V^+(x^I).
+\end{array}
+```
+
+Let ``G_M`` be the master absolute MIP gap, and for underestimation let
+``E_I=\sum_k\delta_k(x^I)`` be the sum of the final-incumbent connector errors.
+Then the interval widths satisfy
+
+```math
+\begin{array}{ll}
+\text{underestimation:} & W\le G_M+E_I,\\
+\text{overestimation:}  & W\le G_M+E.
+\end{array}
+```
+
+Thus, if there are ``m`` followers and every relevant absolute pricing error is
+at most ``\delta``, then ``W\le G_M+m\delta``. These formulas also cover early
+master termination.
+
+The optimistic method is optional. For an unsupported follower, JuBiC reuses
+the exact but arbitrarily tie-broken response cached during separation. This
+still gives a valid upper endpoint. However, if ``\widehat V(x^I)`` is that
+response and
+
+```math
+\tau(x^I)=\widehat V(x^I)-V^+(x^I)\ge 0,
+```
+
+then the width contains the additional, generally unknown term ``\tau(x^I)``.
+JuBiC emits a warning and does not claim a pricing-error width bound. A unique
+follower optimum, a leader contribution constant over the follower-optimal
+set, or an independent bound on ``\tau`` would provide equivalent assurance.
+
+Relevant `RunStats` keys are:
+
+- `MasterObjective`, `MasterObjectiveBound`, and `MasterAbsoluteGap`;
+- `ConnectorPricingMaxError` and `ConnectorPricingMaxErrorBySub`;
+- `ConnectorApproximationErrorBound`, equal to ``E`` for overestimation;
+- `FinalConnectorErrorSum` and `FinalConnectorUpperBound`;
+- `IncumbentObjectiveUpperBound`;
+- `OptimisticIncumbentObjective`, finite only when every follower completed
+  optimistic evaluation;
+- `FinalOptimisticEvaluationUsed`, `FinalOptimisticEvaluationComplete`,
+  `FinalOptimisticEvaluationBySub`,
+  `FinalOptimisticEvaluationFallbackFollowers`, and
+  `FinalOptimisticEvaluationTime`;
+- `ObjectiveIntervalLower`, `ObjectiveIntervalUpper`,
+  `ObjectiveIntervalWidth`, and `ObjectiveIntervalCertified`.
+- `ObjectiveIntervalWidthBoundedByPricingError` and
+  `ObjectiveIntervalWidthBound`.
+- `GBCSolutionType` (`Exact` or `Heuristic`), `GBCResultStatus` (for example
+  `Optimal` or `HeuristicOptimal`), `MasterSolvedToOptimality`,
+  `UsedInexactPricing`, and `NInexactPricingCalls`.
+
+`Opt` remains the historical master-surrogate objective for benchmark
+compatibility. The old `HeuristicMaster*` and `ExactIncumbentObjective` keys are
+also retained as compatibility aliases. New benchmark code should use
+`IncumbentObjectiveUpperBound` and the explicit GBC status markers.
+
 ## Master Representation Used by `GBC`
 
 The first level is passed as a JuMP model through `Master`.
@@ -104,9 +243,25 @@ implemented supported subsolvers are:
 - `threads_master` and `threads_sub_con`: thread limits for the master MIP and follower-side solves.
 - `connector_add_current_solution_cut`: if enabled, the follower solution computed for the current first-level point is inserted into the corresponding `ConnectorLP` before the connector separation loop starts, unless the same row already exists.
 - `subsolver_numerical_preprocessing`: if enabled, compatible subsolvers may simplify numerically extreme connector objectives before solving the pricing problem.
+- `connector_approximation`: use `CONNECTOR_UNDERESTIMATION` (default) for
+  globally valid weakened cuts or `CONNECTOR_OVERESTIMATION` for point-tight,
+  bounded-inexact cuts.
 
 Additional constructor variants expose seed, thread, and numerical-tolerance
 settings; see [Core API Reference](../solver_api.md).
+
+For direct construction, the four-argument convenience constructor accepts the
+policy as a keyword:
+
+```julia
+params = GBCparam(
+    GurobiSolver(), false, output_directory, "lp";
+    connector_approximation=CONNECTOR_OVERESTIMATION,
+)
+```
+
+Batch and HNDP JSON configurations use
+`"connector_approximation": "underestimation"` or `"overestimation"`.
 
 If `parallel_separation = true`, JuBiC requires `threads_sub_con = 1`. In that
 mode the parallelism comes from solving several follower-side models

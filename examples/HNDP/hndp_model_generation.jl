@@ -208,6 +208,8 @@ end
         include_objL2=false,
         subproblem_method=HNDP_SUBPROBLEM_MIP,
         big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+        heuristic_subsolver=false,
+        heuristic_mip_gap=nothing,
     )
 
 Build a JuBiC `GBCSolver` instance for the passed HNDP network. The master uses
@@ -220,6 +222,14 @@ Supported follower subproblem options:
 - `HNDP_SUBPROBLEM_BLC_JUMP`: `SubSolverBlCJuMP`, i.e. a bilevel-aware JuMP
   subsolver that enforces follower optimality inside the subproblem
 - `HNDP_SUBPROBLEM_ASTAR`: `AStarSolver`
+
+Set `heuristic_subsolver=true` to terminate MIP connector pricing with the
+relative gap `heuristic_mip_gap`. This option is supported only by
+`HNDP_SUBPROBLEM_MIP`; fixed-network follower evaluation and feasibility
+pricing remain exact. The GBC driver determines whether an ordinary pricing
+call is exact from its returned bounds. Select safe underestimation or bounded
+overestimation through `GBCparam.connector_approximation`, not through this
+model builder.
 """
 function build_hndp_gbc_instance(
     hndp::HNDPwC,
@@ -229,9 +239,14 @@ function build_hndp_gbc_instance(
     subproblem_method::Symbol=HNDP_SUBPROBLEM_MIP,
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     enforce_integer_construction_cost::Bool=false,
+    heuristic_subsolver::Bool=false,
+    heuristic_mip_gap=nothing,
 )
     subproblem_method in (HNDP_SUBPROBLEM_MIP, HNDP_SUBPROBLEM_BLC_JUMP, HNDP_SUBPROBLEM_ASTAR) ||
         throw(ArgumentError("Unknown HNDP GBC subproblem method $(subproblem_method)."))
+    if heuristic_subsolver && subproblem_method != HNDP_SUBPROBLEM_MIP
+        throw(ArgumentError("HNDP heuristic subsolvers are currently supported only with subproblem_method=:mip."))
+    end
 
     all_arcs = _hndp_all_arcs(hndp)
     user_names = [string(user.uname) for user in hndp.users]
@@ -289,7 +304,19 @@ function build_hndp_gbc_instance(
 
     subs = Any[]
     for user in hndp.users
-        push!(subs, _build_hndp_gbc_subsolver(user, hndp, all_arcs, solver, subproblem_method, big_m_by_user))
+        push!(
+            subs,
+            _build_hndp_gbc_subsolver(
+                user,
+                hndp,
+                all_arcs,
+                solver,
+                subproblem_method,
+                big_m_by_user;
+                heuristic_subsolver=heuristic_subsolver,
+                heuristic_mip_gap=heuristic_mip_gap,
+            ),
+        )
     end
 
     instance = Instance(master, subs)
@@ -329,7 +356,8 @@ function _build_hndp_blc_subsolver(
     hndp::HNDPwC,
     all_arcs,
     solver::SolverWrapper,
-    subproblem_method::Symbol,
+    subproblem_method::Symbol;
+    heuristic_subsolver::Bool=false, heuristic_mip_gap=nothing,
 )
     if subproblem_method == HNDP_SUBPROBLEM_MIP
         sub_model = Model(() -> get_next_optimizer(solver))
@@ -351,7 +379,8 @@ function _build_hndp_blc_subsolver(
             hndp.edgeA,
             y_vars,
             leader_obj,
-            follower_obj,
+            follower_obj;
+            heuristic=heuristic_subsolver, mip_gap=heuristic_mip_gap,
         )
     elseif subproblem_method == HNDP_SUBPROBLEM_ASTAR
         return build_hndp_astar_user(user, hndp, hndp.edgeA)
@@ -366,10 +395,15 @@ function _build_hndp_gbc_subsolver(
     all_arcs,
     solver::SolverWrapper,
     subproblem_method::Symbol,
-    big_m_by_user::Dict{String,Float64},
+    big_m_by_user::Dict{String,Float64};
+    heuristic_subsolver::Bool=false, heuristic_mip_gap=nothing,
 )
     if subproblem_method == HNDP_SUBPROBLEM_MIP
-        return _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, HNDP_SUBPROBLEM_MIP)
+        return _build_hndp_blc_subsolver(
+            user, hndp, all_arcs, solver, HNDP_SUBPROBLEM_MIP;
+            heuristic_subsolver=heuristic_subsolver,
+            heuristic_mip_gap=heuristic_mip_gap,
+        )
     elseif subproblem_method == HNDP_SUBPROBLEM_ASTAR
         return _build_hndp_blc_subsolver(user, hndp, all_arcs, solver, HNDP_SUBPROBLEM_ASTAR)
     elseif subproblem_method == HNDP_SUBPROBLEM_BLC_JUMP

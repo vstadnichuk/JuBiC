@@ -184,16 +184,26 @@ function print_solution_to_file(mobj, xvars, params::SolverParam)
 end
 
 
+"""
+    round_master_solution(msol::Dict)
+
+Validate and normalize a numerical solution of binary master linking variables.
+
+MIP solvers may expose an integer incumbent with small feasibility-tolerance
+deviations from zero or one. This function returns a new dictionary containing
+only exact `Float64` values `0.0` and `1.0`; it does not mutate `msol`. Callers must use the
+returned dictionary before constructing cache keys, passing first-level values
+to subsolvers/connectors, or reporting the binary solution.
+"""
 function round_master_solution(msol::Dict)
-    # round values in the master solution mapping to 0 or 1. Creates new dict that is returned
-    # TODO: nach Auxiliaries.jl verschieben?
-    nsol = Dict{Any,Int}()
+    K = keytype(typeof(msol))
+    nsol = Dict{K,Float64}()
 
     for (a, sol) in msol
         if !(sol >= -0.000001 && sol <= 1.00001)
             error("The value of linking variable for $a is not binary but $sol")
         end
-        nsol[a] = (sol > 0.5) ? 1 : 0
+        nsol[a] = (sol > 0.5) ? 1.0 : 0.0
     end
 
     return nsol

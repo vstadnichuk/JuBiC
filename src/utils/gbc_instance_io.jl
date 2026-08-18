@@ -118,6 +118,8 @@ function _read_gbc_subproblem(
         r_objterm,
         c_objterm,
         _default_extra_cuts(),
+        false,
+        nothing,
     )
 end
 
