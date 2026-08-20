@@ -1,0 +1,14 @@
+{
+  "write_run_logs": false,
+  "params": [
+    {
+      "name": "gurobi_1min",
+      "mip_solver": "Gurobi",
+      "runtime": 60.0,
+      "threads_master": 8,
+      "threads_sub_con": 8,
+      "parallel_separation": false,
+      "seed": 17
+    }
+  ]
+}

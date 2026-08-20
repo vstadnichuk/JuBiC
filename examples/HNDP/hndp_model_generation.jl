@@ -66,6 +66,28 @@ function _apply_hndp_availability_budget!(
     return effective_count
 end
 
+function _apply_hndp_decision_groups!(model::JuMP.Model, xvars, hndp::HNDPwC)
+    groups = hndp.decision_groups
+    groups === nothing && return nothing
+    for (group_index, group) in enumerate(groups)
+        isempty(group) && continue
+        anchor = first(group)
+        for arc in group[2:end]
+            @constraint(model, xvars[arc] == xvars[anchor], base_name="decision_group_$(group_index)_$(arc)")
+        end
+    end
+    return nothing
+end
+
+function _apply_hndp_decision_budget!(model::JuMP.Model, xvars, hndp::HNDPwC)
+    budget = hndp.decision_budget
+    budget === nothing && return nothing
+    groups = hndp.decision_groups
+    groups === nothing && return nothing
+    @constraint(model, sum(xvars[first(group)] for group in groups if !isempty(group)) <= budget, base_name="decision_budget")
+    return nothing
+end
+
 """
     build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH, subproblem_method=HNDP_SUBPROBLEM_MIP)
 
@@ -88,6 +110,8 @@ function build_hndp_blc_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(hpr, x, hndp)
+    _apply_hndp_decision_budget!(hpr, x, hndp)
 
     master_terms = Dict{String,Any}()
     sub_terms = Dict{String,Any}()
@@ -153,6 +177,8 @@ function build_hndp_blclag_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(hpr, x, hndp)
+    _apply_hndp_decision_budget!(hpr, x, hndp)
 
     master_terms = Dict{String,JuMP.AbstractJuMPScalar}()
     sub_terms = Dict{String,JuMP.AbstractJuMPScalar}()
@@ -239,6 +265,8 @@ function build_hndp_gbc_instance(
     mm = Model(() -> get_next_optimizer(solver))
     @variable(mm, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mm, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mm, x, hndp)
+    _apply_hndp_decision_budget!(mm, x, hndp)
 
     constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @variable(mm, construction_cost_var)
@@ -626,6 +654,8 @@ function build_hndp_hybrid_blc_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(hpr, x, hndp)
+    _apply_hndp_decision_budget!(hpr, x, hndp)
     _apply_hndp_availability_budget!(
         hpr,
         x,
@@ -731,6 +761,8 @@ function build_hndp_sd_instance(
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     indicator_constraints::Bool=false,
     bound_duals::Bool=true,
+    availability_budget_fraction=nothing,
+    availability_budget_count=nothing,
 )
     any(!isnothing(user.weighlimit) for user in hndp.users) &&
         throw(ArgumentError("The strong-duality HNDP formulation is currently only supported for instances without weight bounds."))
@@ -739,6 +771,15 @@ function build_hndp_sd_instance(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
+    _apply_hndp_availability_budget!(
+        mip,
+        x,
+        hndp.edgeA;
+        availability_budget_fraction=availability_budget_fraction,
+        availability_budget_count=availability_budget_count,
+    )
 
     big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
     big_m_function(a, uname) = big_m_by_user[string(uname)]
@@ -794,6 +835,8 @@ function build_hndp_sd_auto_instance(
     master_model = Model()
     @variable(master_model, x[all_arcs], Bin)
     _fix_non_decision_arcs!(master_model, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(master_model, x, hndp)
+    _apply_hndp_decision_budget!(master_model, x, hndp)
     constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @objective(master_model, Min, constructioncost)
 
@@ -894,6 +937,8 @@ function build_hndp_path_instance_sequential(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
 
     total_enum_runtime = 0.0
     path_counts = Dict{String,Int}()
@@ -1014,6 +1059,8 @@ function build_hndp_path_instance_parallel(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
 
     leader_terms = Dict{String,Any}()
     path_counts = Dict{String,Int}()
@@ -1109,6 +1156,8 @@ function build_hndp_hybrid_instance(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
 
     leader_terms = Dict{String,Any}()
     path_counts = Dict{String,Int}()
@@ -1642,13 +1691,31 @@ function _compute_user_path_data(
         )
     end
 
-    paths, enum_runtime, timed_out = _enumerate_user_paths_v2(
-        user,
-        hndp,
-        bound,
-        deadline;
-        use_decision_arc_dominance=use_decision_arc_dominance,
-    )
+    paths, enum_runtime, timed_out = try
+        _enumerate_user_paths_v2(
+            user,
+            hndp,
+            bound,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
+    catch err
+        if !(err isa ArgumentError && occursin("No feasible path was enumerated", sprint(showerror, err)))
+            rethrow()
+        end
+        # A fixed-network bound can be numerically too tight when the TNTP
+        # network contains directed connector structure. Retry with the safe
+        # simple-path bound so the accelerated path model records a runtime
+        # rather than failing during instance construction.
+        fallback_bound = _n_minus_one_user_bound(user, hndp, all_arcs)
+        _enumerate_user_paths_v2(
+            user,
+            hndp,
+            fallback_bound,
+            deadline;
+            use_decision_arc_dominance=use_decision_arc_dominance,
+        )
+    end
     total_runtime = min(bound_runtime + enum_runtime, max(0.0, deadline - start_time))
     return (
         bound=bound,

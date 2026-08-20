@@ -232,6 +232,8 @@ function _build_hndp_model_from_spec(
             big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
             indicator_constraints=Bool(get(model_spec, "indicator_constraints", false)),
             bound_duals=Bool(get(model_spec, "bound_duals", true)),
+            availability_budget_fraction=nothing,
+            availability_budget_count=get(instance_metadata, "availability_budget_count", nothing),
         )
         return instance, Dict{String,Any}()
     elseif model_type == "path"

@@ -134,6 +134,25 @@ function _expand_hndp_generation_spec!(
 
     generated_here = HNDPGeneratedNetwork[]
 
+    if instance_type == "multimodal_bike" || instance_type == "multimodal_expansion"
+        for topology_id in topology_ids
+            for nusers in user_counts
+                for parameter_seed in parameter_seeds
+                    local_spec = copy(spec)
+                    local_spec["nusers"] = nusers
+                    local_spec["parameter_seed"] = parameter_seed
+                    push!(generated_here, _build_multimodal_generated_network(
+                        base_name,
+                        topology_id,
+                        instance_type,
+                        local_spec,
+                    ))
+                end
+            end
+        end
+        return generated_here
+    end
+
     if instance_type == "constrained_shortest_path"
         alpha_values = _get_optional_float_vector(spec, "alpha")
         length_slack_values = isnothing(alpha_values) ? _float_vector(get(spec, "length_slack", [1.0]), "length_slack") : alpha_values
@@ -509,7 +528,7 @@ end
 function _default_topology_family(instance_type::String)
     if instance_type == "constrained_shortest_path"
         return "sioux_falls"
-    elseif instance_type == "competition"
+    elseif instance_type == "competition" || startswith(instance_type, "multimodal_")
         return "sioux_falls"
     end
     throw(ArgumentError("Unsupported HNDP instance_type '$instance_type'."))
@@ -576,6 +595,8 @@ function _resolve_availability_budget(decision_arc_count::Int, spec::Dict{String
     count = max(0, floor(Int, fraction * decision_arc_count))
     return fraction, count
 end
+
+include("hndp_multimodal_generation.jl")
 
 function parse_tntp_edges(file_path::String)
     lines = readlines(file_path)

@@ -1,0 +1,30 @@
+{
+  "parameter_seeds": [17],
+  "instances": [
+    {
+      "name": "sioux_multimodal_bike",
+      "instance_type": "multimodal_bike",
+      "topologies": ["sioux_falls"],
+      "nusers": [8],
+      "station_limit": 6,
+      "station_budget": 3,
+      "car_speed_kmh": 40,
+      "bike_speed_kmh": 15,
+      "transit_delta_min_bp": 2000,
+      "transit_delta_max_bp": 5000,
+      "bike_station_profit": 1,
+      "bike_station_cost": 1
+    },
+    {
+      "name": "sioux_multimodal_expansion",
+      "instance_type": "multimodal_expansion",
+      "topologies": ["sioux_falls"],
+      "nusers": [8],
+      "station_limit": 6,
+      "expansion_station_count": 3,
+      "arc_budget": 4,
+      "expansion_arc_profit": 1,
+      "expansion_arc_cost": 1
+    }
+  ]
+}

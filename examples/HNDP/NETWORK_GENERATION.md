@@ -428,3 +428,118 @@ seeds or other fields.
   ]
 }
 ```
+# Realistic multimodal instances
+
+`hndp_network_generation.jl` also supports two parameterized multimodal
+scenarios:
+
+- `multimodal_bike`: fixed car and station-service public-transport layers plus a bike layer.
+  The leader decides which high-degree stations to open; opening a station
+  enables both bike transfer arcs and is limited by `station_budget`.
+- `multimodal_expansion`: fixed car and station-service public-transport layers plus candidate
+  station-to-station expansion arcs on the public-transport layer. Set
+  `expansion_station_count` to control how many additional stations are introduced;
+  every directed service involving at least one additional station is a decision arc.
+  `arc_budget` can limit how many of those services are opened.
+
+Both scenarios read distance and capacity from the TNTP/SF network file. Car
+and bike speeds, budgets, costs, profits, and all generated arc coefficients
+are integer-valued. Travel times are stored in integer units controlled by
+`time_scale` (the default is 1000 units per hour). Fractional effects are
+specified in basis points: for example, `car_degree_penalty_bp=1500` means a
+maximum 15% penalty, and `transit_delta_min_bp=2000` means a 20% minimum
+transit improvement. Transit deltas are sampled as integer basis-point values.
+
+The car layer contains the original network topology. The public-transport
+layer contains only station-to-station services; it does not duplicate the
+original car arcs. The fixed public-transport layer is the complete directed
+subgraph on the selected base stations. Expansion stations are selected by the
+same degree-and-separation heuristic, and all directed services involving an
+expansion station are additional decision arcs. Defaults are exposed as integer
+parameters rather than treated as calibrated universal constants.
+
+## Multimodal generation parameters and formulas
+
+The generator is called through an instance specification. `topologies`
+selects `sioux_falls`, `anaheim`, `friedrichshain_center`,
+`berlin_mitte_center`, or `ema`; `instance_type` selects
+`multimodal_bike` or `multimodal_expansion`; `nusers` controls the number of
+sampled users; and `parameter_seed` controls reproducible station, transit,
+and OD sampling. OD pairs are sampled with replacement from pairs reachable
+in the original directed car network.
+
+The accepted generation parameters are:
+
+| Parameter | Meaning and computation |
+| --- | --- |
+| `station_limit` | Absolute number of base public-transport stations. |
+| `station_fraction_percent` | Alternative to `station_limit`: `floor(percent × number_of_nodes / 100)`, clamped to the number of nodes. |
+| `expansion_station_count` | Number of additional stations in the expansion scenario. |
+| `expansion_station_fraction_percent` | Alternative expansion count: `floor(percent × (nodes − base_stations) / 100)`. |
+| `station_budget` | Maximum number of bike stations that may be opened. |
+| `station_budget_fraction_percent` | Alternative bike budget: `floor(percent × base_stations / 100)`. |
+| `arc_budget` | Maximum number of expansion transit arcs that may be opened. |
+| `arc_budget_fraction_percent` | Alternative expansion budget: `floor(percent × candidate_arcs / 100)`. |
+| `car_speed_kmh` | Average car speed used in the base travel-time calculation. |
+| `bike_speed_kmh` | Average bicycle speed used on the bike copy of the original topology. |
+| `time_scale` | Integer multiplier for travel times; `1000` means one hour is represented by 1000 time units. |
+| `car_degree_penalty_bp` | Maximum car-time penalty in basis points, scaled by the average normalized degree of an arc's endpoints. `1500` means up to 15%. |
+| `car_capacity_boost_bp` | Maximum car-time reduction on high-capacity arcs. `1000` means up to 10%. |
+| `bike_low_capacity_boost_bp` | Maximum bike-time reduction on low-capacity arcs. |
+| `transit_delta_min_bp`, `transit_delta_max_bp` | Inclusive integer range for the transit improvement sampled independently for every service. `2000`–`5000` means 20%–50% faster than the car baseline. |
+| `bike_station_profit`, `bike_station_cost` | Integer leader profit and construction cost associated with each opened bike station. |
+| `expansion_arc_profit`, `expansion_arc_cost` | Integer leader profit and construction cost associated with each opened expansion transit arc. |
+
+Parameters ending in `_bp` are basis points in `[0,10000]`; legacy decimal
+names such as `car_degree_penalty` are still accepted and converted to basis
+points. Speeds, counts, budgets, costs, profits, sampled deltas, and generated
+arc coefficients are integer-valued. A generated travel time is rounded to a
+positive integer after applying the time scale.
+
+For an original arc `(i,j)`, let `d` be distance, `c` normalized capacity,
+and `q` the average normalized degree of its endpoints. Generated times are:
+
+```text
+car(i,j)  = round(time_scale*d/car_speed_kmh
+                 * (1 + car_degree_penalty_bp*q/10000)
+                 * (1 - car_capacity_boost_bp*c/10000))
+bike(i,j) = round(time_scale*d/bike_speed_kmh
+                 * (1 - bike_low_capacity_boost_bp*(1-c)/10000))
+```
+
+Both values are bounded below by one. Capacity is normalized between the
+minimum and maximum input capacity. Zero-distance connector arcs use their
+free-flow time, or one kilometre if that is also unavailable.
+
+Stations are selected by total directed degree. Candidates are shuffled only
+to break ties, then considered in descending degree order. The first pass
+greedily selects candidates that are not direct in- or out-neighbours of an
+already selected station, producing a high-degree independent-set-like spread.
+If that cannot provide the requested count, remaining stations are filled by
+degree. Expansion stations use the same heuristic while treating base
+stations as already selected.
+
+For every ordered pair of distinct base stations, the fixed public-transport
+layer contains one service. In expansion, every ordered pair with at least one
+additional station is a candidate service and is a decision arc. Each service
+uses the shortest car-network travel time between its endpoints as baseline,
+then applies `round(baseline × (10000 − delta_bp) / 10000)`. The car layer
+remains the original topology, while the transit layer contains only station
+services. Bike keeps the original topology as a third layer; its only
+decisions are the two transfer arcs at each possible bike station. Expansion
+has fixed transfers to all stations; only additional transit services are
+decisions.
+
+The ready-to-run Sioux Falls smoke manifest is:
+
+```powershell
+julia --project=. examples/HNDP/run_hndp_manifest.jl `
+  examples/HNDP/run_settings/multimodal_sioux_strong_duality `
+  tmp_compare/multimodal_sioux_strong_duality
+```
+
+For a construction-only check, run:
+
+```powershell
+julia --project=. examples/HNDP/multimodal_smoke.jl
+```
