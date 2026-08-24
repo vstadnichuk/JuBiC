@@ -144,7 +144,8 @@ function extra_cuts_benderslike_JuMP(jump::JuMP.Model, sub::JuMP.Model, A, oL2, 
     bigMterms = 0
     for a in A
         bigMterms +=
-            bigMs(a) *
+            (applicable(bigMs, a, subopt, x_vals) ?
+                bigMs(a, subopt, x_vals) : bigMs(a)) *
             y_vals[a] *
             (1 - x_subproblem[a])
     end

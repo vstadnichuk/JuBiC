@@ -1,148 +1,58 @@
-# JuBiC: Paper Reproduction Branch
+# JuBiC — paper reproduction branch
 
-This branch is dedicated to the paper
-[*A Catalog of Formulations for the Multi-Follower Discrete Bilevel Network Design Problem*](https://optimization-online.org/?p=35437).
-Here, we provide the code for the formulations discussed in the paper. You can
-also reproduce the computations reported in the paper.
+This branch is associated with the paper "Automated Benders-like Cut Generation and its Application to the Bilevel Network Design Problem".
 
-If you want to work with JuBiC beyond reproducing this paper, we recommend
-checking out the latest version of the `main` branch. The broader JuBiC
-documentation starts at [`docs/src/index.md`](./docs/src/index.md), and the
-HNDP example, i.e., the description of the existing algorithms including the
-instance generation used in the paper, is documented under
-[`docs/src/examples/hndp/motivation.md`](./docs/src/examples/hndp/motivation.md).
+## Reproduction entry point
 
-To build the rendered HTML documentation locally, run:
+The complete fixed-order benchmark is reproduced by one script:
 
 ```powershell
-julia --project=. docs/make.jl
+julia --project=. examples/HNDP/reproduce_fixed_order_big_runs.jl
 ```
 
----
+The script regenerates the Sioux Falls layered instances and runs:
 
-## Getting Started
+- BlC with n−1, fixed-path, and fixed-path/current-cost Big-M modes;
+- BlCLag with n−1 Big-M, with warm start and cold start;
+- fixed linking-first branching order;
+- sequential separation, 8 Gurobi threads for master and subproblems, and a 10-minute limit.
 
-1. Install Julia and instantiate the project environment:
+After each instance/solver combination, the script prints a compact Big-M coefficient summary. It writes a fresh result tree under `benchmark_run/runs/`. To choose another output location, set `JUBIC_REPRO_OUTPUT` before launching the script:
+
+```powershell
+$env:JUBIC_REPRO_OUTPUT = "tmp_compare/runs/fixed_order_reproduction"
+julia --project=. examples/HNDP/reproduce_fixed_order_big_runs.jl
+```
+
+## Published benchmark results
+
+The directly inspectable results are in [`benchmark_run/fixed_order_big_runs`](./benchmark_run/fixed_order_big_runs):
+
+- [`all_results.csv`](./benchmark_run/fixed_order_big_runs/all_results.csv) contains all 300 solver results;
+- [`big_m_coefficient_summary.txt`](./benchmark_run/fixed_order_big_runs/big_m_coefficient_summary.txt) reports Big-M coefficient ranges aggregated over all instances and for a common instance solved optimally by all five configurations.
+
+## Setup and tests
+
+Instantiate the Julia environment and run the tests with:
 
 ```powershell
 julia --project=. -e "using Pkg; Pkg.instantiate()"
-```
-
-2. Run the unit tests:
-
-```powershell
 julia --project=. test/runtests.jl
 ```
 
-3. Read the HNDP documentation:
+The HNDP documentation is available at:
 
-- [HNDP Motivation](./docs/src/examples/hndp/motivation.md)
-- [HNDP Instances](./docs/src/examples/hndp/instances.md)
-- [HNDP Solver Models](./docs/src/examples/hndp/solvers.md)
-- [HNDP Benchmark Pipeline](./docs/src/examples/hndp/benchmarks.md)
+- [HNDP motivation](./docs/src/examples/hndp/motivation.md)
+- [HNDP instances](./docs/src/examples/hndp/instances.md)
+- [HNDP solver models](./docs/src/examples/hndp/solvers.md)
+- [HNDP benchmark pipeline](./docs/src/examples/hndp/benchmarks.md)
 
----
-
-## Reproducing Results
-
-Paper reproduction manifests are stored in
-[`examples/HNDP/paper_manifests`](./examples/HNDP/paper_manifests). Each
-experiment is defined by three JSON files:
-
-- `instances.json`: topology and instance-generation grid,
-- `models.json`: formulation or hybrid model choices,
-- `params.json`: runtime, threads, solver, and logging settings.
-
-The helper script
-[`examples/HNDP/run_hndp_manifest.jl`](./examples/HNDP/run_hndp_manifest.jl)
-loads such a manifest directory and calls the HNDP benchmark pipeline.
-
-Before launching a long run, validate that the manifest loads:
-
-```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/solvercomparison_layered_sioux_10min `
-  tmp_compare/runs/paper_solvercomparison_layered_sioux_10min `
-  --dry-run
-```
-
-To run the 10-minute Sioux Falls layered solver comparison:
-
-```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/solvercomparison_layered_sioux_10min `
-  tmp_compare/runs/paper_solvercomparison_layered_sioux_10min
-```
-
-This sweep compares path enumeration, strong-duality formulations, and
-Benders-like cut formulations on layered Sioux Falls instances with a
-10-minute time limit per solve.
-
-To validate the 30-minute path and hybrid-SD manifest:
-
-```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/path_hybrid_sd_layered_sioux_ema_30min `
-  tmp_compare/runs/paper_path_hybrid_sd_layered_sioux_ema_30min `
-  --dry-run
-```
-
-To run it:
-
-```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/path_hybrid_sd_layered_sioux_ema_30min `
-  tmp_compare/runs/paper_path_hybrid_sd_layered_sioux_ema_30min
-```
-
-This sweep compares complete path enumeration with the hybrid strong-duality
-model. The hybrid model enumerates paths first and falls back to the
-strong-duality formulation when enumeration fails or when the enumerated path
-model would exceed the size of the arc-flow formulation.
-
-The benchmark pipeline appends partial results to
-`results/batch_summary.csv` after each completed instance and supports
-restarting with the same output folder. Per-instance debug logs are disabled in
-the supplied manifests, but the CSV and copied manifests are still written.
-
-Hint: running all paper reproduction experiments can take roughly one week
-on a typical workstation. The exact runtime depends strongly on CPU count,
-Julia thread configuration, Gurobi version, and license settings.
-
-The HNDP instances are randomly generated from the manifest seeds. Reruns should
-therefore show trends comparable to the paper, but concrete runtimes can vary
-with the generated instance structure.
-
----
-
-## Disclaimer
-
-JuBiC is still under active development. Results should be interpreted with
-care, and we recommend independently verifying computational results whenever
-possible.
-
-If you encounter difficulties or have questions, contact:
-Vladimir Stadnichuk, `vladimir.stadnichuk@uni-kassel.de`.
-
----
+The reproduction sweep is computationally intensive. Runtime depends on the CPU, Gurobi version, license, and solver settings. The supplied configuration uses Gurobi 13.0.1 when installed at `C:\gurobi1301\win64`.
 
 ## Citation
 
-If you use this branch for the HNDP formulation catalog, please cite:
-
-> Stadnichuk and Koster, *A Catalog of Formulations for the Multi-Follower
-> Discrete Bilevel Network Design Problem*, Optimization Online.
-> [Link](https://optimization-online.org/?p=35437)
-
 For the general JuBiC decomposition framework, see:
 
-> Stadnichuk and Koster (2024), *Solving Multi-Follower Mixed-Integer Bilevel
-> Problems with Binary Linking Variables*, Optimization Online.
-> [Link](https://optimization-online.org/?p=28877)
+> Stadnichuk and Koster (2024), *Solving Multi-Follower Mixed-Integer Bilevel Problems with Binary Linking Variables*, Optimization Online.
 
----
-
-## License
-
-JuBiC is released as an open-source project. See the [LICENSE](./LICENSE) file
-for details.
+JuBiC is released under the license in [LICENSE](./LICENSE).

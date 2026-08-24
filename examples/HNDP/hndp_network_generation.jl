@@ -339,6 +339,8 @@ function _build_competition_generated_network(
 )
     _validate_user_parameter_mode(user_parameter_mode)
     single_layer_arc_mode = _parse_single_layer_arc_mode(get(spec, "single_layer_arc_mode", "competition"))
+    od_pair_mode = String(get(spec, "od_pair_mode", "sampled"))
+    od_pair_mode in ("sampled", "all") || throw(ArgumentError("od_pair_mode must be \"sampled\" or \"all\"."))
 
     max_cost = Int(get(spec, "max_cost", 100))
     max_risk = Int(get(spec, "max_risk", 100))
@@ -368,6 +370,7 @@ function _build_competition_generated_network(
             decision_arcs,
             competitor_cost_factor,
             user_parameter_mode,
+            od_pair_mode,
         )
         availability_budget_fraction, availability_budget_count = _resolve_availability_budget(length(decision_arcs), spec)
         edge_price = _sample_edge_prices(graph, parameter_seed + 20_000, construction_cost_min, construction_cost_max)
@@ -388,6 +391,7 @@ function _build_competition_generated_network(
             "beta" => competitor_cost_factor,
             "competitor_cost_factor" => competitor_cost_factor,
             "user_parameter_mode" => user_parameter_mode,
+            "od_pair_mode" => od_pair_mode,
             "construction_cost" => construction_cost,
             "construction_cost_min" => construction_cost_min,
             "construction_cost_max" => construction_cost_max,
@@ -750,6 +754,10 @@ function _sample_feasible_od_pair(rng, feasible_targets::Dict{Int,Vector{Int}})
     return origin, destination
 end
 
+function _ordered_feasible_od_pairs(feasible_targets::Dict{Int,Vector{Int}})
+    return [(origin, destination) for origin in sort(collect(keys(feasible_targets))) for destination in sort(feasible_targets[origin])]
+end
+
 function _validate_users_reachable!(graph::DiGraph, users::Vector{User})
     feasible_targets = _feasible_od_targets(graph)
     for user in users
@@ -907,11 +915,14 @@ function _build_layered_users(
     decision_arcs,
     competitor_cost_factor::Float64,
     user_parameter_mode::String,
+    od_pair_mode::String,
 )
     rng = MersenneTwister(seed)
     users = User[]
     max_possible_weight = 4 * length(base_nodes) * max_weight
     feasible_targets = _feasible_od_targets(base_graph)
+    od_pairs = od_pair_mode == "all" ? _ordered_feasible_od_pairs(feasible_targets) : nothing
+    od_pair_mode != "all" || nusers == length(od_pairs) || throw(ArgumentError("nusers=$(nusers) must equal the number of feasible ordered OD pairs ($(length(od_pairs))) when od_pair_mode=all."))
 
     if user_parameter_mode == "shared"
         rcost, rrisk, rweight = _random_arc_matrices(
@@ -936,7 +947,7 @@ function _build_layered_users(
         user_weight = constrained ? rweight : nothing
         minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
         for user_id in 1:nusers
-            base_origin, base_destination = _sample_feasible_od_pair(rng, feasible_targets)
+            base_origin, base_destination = od_pair_mode == "all" ? od_pairs[user_id] : _sample_feasible_od_pair(rng, feasible_targets)
             origin = base_nodes[base_origin]
             destination = base_nodes[base_destination]
             bound = _compute_weight_bound(minweights, origin, destination, length_slack, max_possible_weight)
@@ -968,7 +979,7 @@ function _build_layered_users(
         )
         user_weight = constrained ? rweight : nothing
         user_minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
-        base_origin, base_destination = _sample_feasible_od_pair(rng, feasible_targets)
+        base_origin, base_destination = od_pair_mode == "all" ? od_pairs[user_id] : _sample_feasible_od_pair(rng, feasible_targets)
         origin = base_nodes[base_origin]
         destination = base_nodes[base_destination]
         bound = _compute_weight_bound(user_minweights, origin, destination, length_slack, max_possible_weight)

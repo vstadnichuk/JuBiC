@@ -96,6 +96,12 @@ function run_hndp_experiments!(
                 finally
                     aggregate_row["experiment_id"] = experiment_id
                     aggregate_row["instance_name"] = instance_name
+                    if Bool(get(param_spec, "print_collected_cuts", false))
+                        _print_hndp_collected_cuts(run_output_path, experiment_id)
+                    end
+                    if Bool(get(param_spec, "print_big_m_summary", false))
+                        _print_hndp_big_m_summary(run_output_path, experiment_id)
+                    end
                     JuBiC._append_batch_summary_csv!(summary_csv_path, aggregate_row)
                     push!(completed_ids, experiment_id)
 
@@ -112,6 +118,49 @@ function run_hndp_experiments!(
     end)
 
     return results
+end
+
+function _print_hndp_big_m_summary(run_output_path::AbstractString, experiment_id::AbstractString)
+    cut_path = joinpath(run_output_path, "mastercuts_collection.txt")
+    if !isfile(cut_path)
+        println("BIG_M_SUMMARY_NONE=" * experiment_id)
+        return nothing
+    end
+    text = read(cut_path, String)
+    matches = [
+        parse(Float64, replace(m.captures[1], " " => ""))
+        for m in eachmatch(r"([+-]?\s*\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s+x\[", text)
+    ]
+    if isempty(matches)
+        println("BIG_M_SUMMARY_NONE=" * experiment_id)
+        return nothing
+    end
+    # Values below one are numerical residuals in the serialized cut
+    # expression rather than meaningful Big-M coefficients. Exclude them from
+    # the summary while retaining the original cut files in the run directory.
+    matches = [value for value in matches if abs(value) >= 1.0]
+    isempty(matches) && (println("BIG_M_SUMMARY_NONE=" * experiment_id); return nothing)
+    sorted = sort(matches)
+    q(p) = sorted[clamp(ceil(Int, p * length(sorted)), 1, length(sorted))]
+    println(
+        "BIG_M_SUMMARY=$(experiment_id) " *
+        "count=$(length(sorted)) distinct=$(length(unique(sorted))) " *
+        "min=$(sorted[1]) p25=$(q(0.25)) median=$(q(0.5)) " *
+        "p75=$(q(0.75)) p90=$(q(0.9)) max=$(sorted[end]) mean=$(sum(sorted) / length(sorted))",
+    )
+    return nothing
+end
+
+function _print_hndp_collected_cuts(run_output_path::AbstractString, experiment_id::AbstractString)
+    cut_path = joinpath(run_output_path, "mastercuts_collection.txt")
+    if isfile(cut_path)
+        println("COLLECTED_CUTS_BEGIN=" * experiment_id)
+        print(read(cut_path, String))
+        println("COLLECTED_CUTS_END=" * experiment_id)
+    else
+        println("COLLECTED_CUTS_NONE=" * experiment_id)
+    end
+    return nothing
 end
 
 function _maybe_export_hndp_solver_instance!(
@@ -477,6 +526,8 @@ function _parse_hndp_big_m_mode(value)
     value_str = String(value)
     if value_str == "fixed_network_path"
         return HNDP_BIGM_FIXED_NETWORK_PATH
+    elseif value_str == "fixed_network_path_current_cost"
+        return HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST
     elseif value_str == "n_minus_one_most_expensive"
         return HNDP_BIGM_N_MINUS_ONE
     end

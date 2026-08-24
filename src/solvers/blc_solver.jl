@@ -40,6 +40,11 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     set_time_limit_sec(blcm.hpr, param.runtime)
     set_attribute(blcm.hpr, MOI.NumberOfThreads(), master_threads)
     set_seed!(blcm.hpr, param.solver, get_seed(param))
+    if get(param.stats.data, "branching_rule", "default") == "fixed_linking_order"
+        _set_fixed_linking_branch_priorities!(blcm.hpr, blcm.link_vars)
+    elseif get(param.stats.data, "branching_rule", "default") == "linking_first"
+        _set_linking_branch_priorities!(blcm.hpr, blcm.link_vars)
+    end
     for sub in inst.subproblems
         if param.parallel_separation
             set_singlethread(sub)
@@ -171,7 +176,7 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
                     bigMterms = 0
                     for a in blcm.A
                         bigMterms +=
-                            blcm.big_m(a, name(sub)) *
+                            _evaluate_blc_big_m(blcm.big_m, a, name(sub), result.subopt, x_vals) *
                             result.y_vals[a] *
                             (1 - blcm.link_vars[a])
                     end

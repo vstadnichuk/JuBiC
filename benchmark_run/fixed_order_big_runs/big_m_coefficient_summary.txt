@@ -1,0 +1,22 @@
+﻿Fixed-order BlC/BlCLag benchmark summary
+Generated from: C:\Users\Stadnichuk\Documents\GitHub\JuBiC\benchmark_run\runs\fixed_order_heuristics_gurobi1301_20260821_205724
+All benchmark rows are included in all_results.csv; timeout rows retain their recorded runtime.
+
+Big-M coefficient aggregation across all instances
+Coefficients are extracted from mastercuts_collection.txt and refer to coefficients on linking x variables.
+BlC_n_minus_one: n=110551; distinct=3; min=3972; p25=3972; median=3972; p75=4064; p90=4093; max=4093; mean=4020.0982
+BlC_fixed_path: n=109881; distinct=170; min=71; p25=128; median=169; p75=207; p90=241; max=4064; mean=244.9631
+BlC_fixed_path_current_cost: n=112868; distinct=162; min=1.1; p25=14.1; median=28.1; p75=44.1; p90=69.1; max=3909.1; mean=94.6884
+BlCLag_warm_start: n=24462; distinct=133; min=2; p25=11; median=20; p75=35; p90=49; max=308; mean=25.2622
+BlCLag_cold_start: n=24149; distinct=128; min=2; p25=11; median=19; p75=35; p90=48; max=308; mean=24.9634
+
+Selected common optimal instance
+sioux_fixed_order_heuristics_layered_sioux_falls_U150_S2_len_LS0.1_CCF1.0_B1.0_shared
+All five compared configurations were reported Optimal with objective -27880.0.
+BlC_n_minus_one: n=1870; distinct=1; min=4064; p25=4064; median=4064; p75=4064; p90=4064; max=4064; mean=4064
+BlC_fixed_path: n=1984; distinct=63; min=71; p25=139; median=178; p75=207; p90=234; max=293; mean=172.2525
+BlC_fixed_path_current_cost: n=2085; distinct=46; min=1.1; p25=14.1; median=21.1; p75=34.1; p90=54.1; max=85.1; mean=25.9652
+BlCLag_warm_start: n=450; distinct=49; min=2; p25=10; median=20; p75=34; p90=39; max=60; mean=22.1622
+BlCLag_cold_start: n=437; distinct=47; min=2; p25=10; median=20; p75=34; p90=39; max=60; mean=21.46
+
+Note: coefficient counts are coefficient occurrences, not total cut counts; cuts without linking x terms are not included in the coefficient statistics.

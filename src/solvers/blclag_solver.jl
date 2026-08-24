@@ -73,6 +73,11 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     set_time_limit_sec(master.model, true_runtime)
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
+    if get(param.stats.data, "branching_rule", "default") == "fixed_linking_order"
+        _set_fixed_linking_branch_priorities!(master.model, master.link_vars)
+    elseif get(param.stats.data, "branching_rule", "default") == "linking_first"
+        _set_linking_branch_priorities!(master.model, master.link_vars)
+    end
     for sub in subs
         if param.parallel_separation
             set_singlethread(sub)

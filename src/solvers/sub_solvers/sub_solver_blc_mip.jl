@@ -407,7 +407,11 @@ function solve_mip(sol::SubSolverBlCJuMP, params::SolverParam, time_limit)
             return
         end
 
-        rhs = oracle.optL2 + sum(sol.big_m(a) * oracle.y_vals[a] * (1 - sol.link_varsC[a]) for a in sol.A)
+        rhs = oracle.optL2 + sum(
+            (applicable(sol.big_m, a, oracle.optL2, x_vals) ?
+                sol.big_m(a, oracle.optL2, x_vals) : sol.big_m(a)) *
+            oracle.y_vals[a] * (1 - sol.link_varsC[a]) for a in sol.A
+        )
         cut = @constraint(sol.mip_model, sol.c_objterm <= rhs)
         @debug "Added persistent BlC cut $(cut) for subsolver $(sol.name) at x=$(x_vals), candidate c=$(current_c), oracle c=$(oracle.optL2)."
     end

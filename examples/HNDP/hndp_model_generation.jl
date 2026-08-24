@@ -10,6 +10,8 @@ include("hndp_astar_wrapper.jl")
 
 const HNDP_BIGM_FIXED_NETWORK_PATH = :fixed_network_path
 const HNDP_BIGM_N_MINUS_ONE = :n_minus_one_most_expensive
+const HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST = :fixed_network_path_current_cost
+const HNDP_BIGM_CURRENT_COST_MARGIN = 0.1
 const HNDP_SUBPROBLEM_MIP = :mip
 const HNDP_SUBPROBLEM_ASTAR = :astar
 const HNDP_SUBPROBLEM_BLC_JUMP = :blc_jump
@@ -116,7 +118,7 @@ function build_hndp_blc_instance(
     @objective(hpr, Min, construction_cost_var + sum(values(master_terms)))
 
     big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
-    big_m_function(a, uname) = big_m_by_user[string(uname)]
+    big_m_function = _hndp_big_m_function(big_m_by_user, big_m_mode)
     xdec = Dict(a => x[a] for a in hndp.edgeA)
     master = BlCMaster(hpr, hndp.edgeA, xdec, big_m_function, user_names, sub_terms)
 
@@ -186,8 +188,9 @@ function build_hndp_blclag_instance(
     subs = Any[]
     if subproblem_method == HNDP_SUBPROBLEM_BLC_JUMP
         big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
+        big_m_function = _hndp_big_m_function(big_m_by_user, big_m_mode)
         for user in hndp.users
-            push!(subs, _build_hndp_blclag_subsolver(user, hndp, all_arcs, solver, big_m_by_user))
+            push!(subs, _build_hndp_blclag_subsolver(user, hndp, all_arcs, solver, big_m_function))
         end
     else
         for user in hndp.users
@@ -406,7 +409,7 @@ function _build_hndp_blclag_subsolver(
     hndp::HNDPwC,
     all_arcs,
     solver::SolverWrapper,
-    big_m_by_user::Dict{String,Float64},
+    big_m_function::Function,
 )
     sub_model = Model(() -> get_next_optimizer(solver))
     leader_obj, follower_obj, flow = _add_user_flow_constraints!(
@@ -421,7 +424,6 @@ function _build_hndp_blclag_subsolver(
     @objective(sub_model, Min, follower_obj)
     set_silent(sub_model)
     y_vars = Dict(a => flow[a] for a in hndp.edgeA)
-    user_big_m = big_m_by_user[string(user.uname)]
     return SubSolverBlCJuMP(
         string(user.uname),
         sub_model,
@@ -429,7 +431,8 @@ function _build_hndp_blclag_subsolver(
         y_vars,
         leader_obj,
         follower_obj,
-        a -> user_big_m,
+        (a, current_cost=nothing, x_values=nothing) ->
+            big_m_function(a, string(user.uname), current_cost, x_values),
     )
 end
 
@@ -709,7 +712,7 @@ function build_hndp_hybrid_blc_instance(
             big_m_by_user[uname] = derived_big_m[uname]
         end
     end
-    big_m_function(a, uname) = get(big_m_by_user, string(uname), 0.0)
+    big_m_function = _hndp_big_m_function(big_m_by_user, big_m_mode)
     xdec = Dict(a => x[a] for a in hndp.edgeA)
     master = BlCMaster(hpr, hndp.edgeA, xdec, big_m_function, fallback_users, sub_terms)
 
@@ -741,7 +744,7 @@ function build_hndp_sd_instance(
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
 
     big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
-    big_m_function(a, uname) = big_m_by_user[string(uname)]
+    big_m_function = _hndp_big_m_function(big_m_by_user, big_m_mode)
 
     leader_terms = Dict{String,Any}()
     for user in hndp.users
@@ -826,7 +829,7 @@ function build_hndp_sd_auto_instance(
     end
 
     big_m_values = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
-    big_m_function(a, uname) = big_m_values[string(uname)]
+    big_m_function = _hndp_big_m_function(big_m_values, big_m_mode)
     xdec = Dict(a => x[a] for a in hndp.edgeA)
     return build_strong_duality_mip_instance(master_model, xdec, subs, big_m_function)
 end
@@ -1154,7 +1157,7 @@ function build_hndp_hybrid_instance(
         if isnothing(big_m_values)
             big_m_values = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
         end
-        big_m_function(a, fallback_uname) = big_m_values[string(fallback_uname)]
+        big_m_function = _hndp_big_m_function(big_m_values, big_m_mode)
 
         leader_obj, follower_obj = _add_hybrid_fallback_user!(
             mip,
@@ -1334,13 +1337,13 @@ fixed-network path bound, because this keeps the logic uniform for constrained
 shortest paths with optional weight limits.
 """
 function _derive_user_big_m_values(hndp::HNDPwC, all_arcs, solver::SolverWrapper, big_m_mode::Symbol)
-    big_m_mode in (HNDP_BIGM_FIXED_NETWORK_PATH, HNDP_BIGM_N_MINUS_ONE) ||
+    big_m_mode in (HNDP_BIGM_FIXED_NETWORK_PATH, HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST, HNDP_BIGM_N_MINUS_ONE) ||
         throw(ArgumentError("Unknown HNDP big-M mode $(big_m_mode)."))
 
     values = Dict{String,Float64}()
     for user in hndp.users
         uname = string(user.uname)
-        if big_m_mode == HNDP_BIGM_FIXED_NETWORK_PATH
+        if big_m_mode in (HNDP_BIGM_FIXED_NETWORK_PATH, HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST)
             path_cost = _fixed_network_path_cost(user, hndp, all_arcs, solver)
             if isnothing(path_cost)
                 fallback_bound = _n_minus_one_user_bound(user, hndp, all_arcs)
@@ -1356,6 +1359,22 @@ function _derive_user_big_m_values(hndp::HNDPwC, all_arcs, solver::SolverWrapper
         end
     end
     return values
+end
+
+"""Create the HNDP Big-M callback used by BlC-family formulations."""
+function _hndp_big_m_function(big_m_by_user::Dict{String,Float64}, big_m_mode::Symbol)
+    return function (a, uname, current_cost=nothing, x_values=nothing)
+        base = get(big_m_by_user, string(uname), 0.0)
+        if big_m_mode == HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST && !isnothing(current_cost)
+            raw_big_m = base - Float64(current_cost) + HNDP_BIGM_CURRENT_COST_MARGIN
+            if raw_big_m < 0.0
+                @warn "Dynamic HNDP Big-M became negative; clamping to zero." resource=a user=uname base_bound=base current_cost=current_cost margin=HNDP_BIGM_CURRENT_COST_MARGIN
+                return 0.0
+            end
+            return raw_big_m
+        end
+        return base
+    end
 end
 
 """
