@@ -178,6 +178,7 @@ function _expand_hndp_generation_spec!(
         competitor_cost_factor_values = isnothing(beta_values) ? _float_vector(get(spec, "competitor_cost_factor", [0.8]), "competitor_cost_factor") : beta_values
         user_parameter_modes = _string_vector(get(spec, "user_parameter_mode", ["shared"]), "user_parameter_mode")
         decision_arc_counts = _int_vector(get(spec, "decision_arc_count", [-1]), "decision_arc_count")
+        single_layer_arc_modes = _string_vector(get(spec, "single_layer_arc_mode", ["competition"]), "single_layer_arc_mode")
 
         for topology_id in topology_ids
             for nusers in user_counts
@@ -186,24 +187,27 @@ function _expand_hndp_generation_spec!(
                         for length_slack in length_slack_values
                             for competitor_cost_factor in competitor_cost_factor_values
                                 for decision_arc_count in decision_arc_counts
-                                    for availability_budget_fraction in availability_budget_fraction_values
-                                        for user_parameter_mode in user_parameter_modes
-                                            !constrained && length_slack != first(length_slack_values) && continue
-                                            local_spec = copy(spec)
-                                            local_spec["availability_budget_fraction"] = availability_budget_fraction
-                                            generated = _build_competition_generated_network(
-                                                base_name,
-                                                topology_id,
-                                                nusers,
-                                                parameter_seed,
-                                                constrained,
-                                                length_slack,
-                                                competitor_cost_factor,
-                                                user_parameter_mode,
-                                                local_spec;
-                                                decision_arc_count=decision_arc_count,
-                                            )
-                                            push!(generated_here, generated)
+                                    for single_layer_arc_mode in single_layer_arc_modes
+                                        for availability_budget_fraction in availability_budget_fraction_values
+                                            for user_parameter_mode in user_parameter_modes
+                                                !constrained && length_slack != first(length_slack_values) && continue
+                                                local_spec = copy(spec)
+                                                local_spec["availability_budget_fraction"] = availability_budget_fraction
+                                                local_spec["single_layer_arc_mode"] = single_layer_arc_mode
+                                                generated = _build_competition_generated_network(
+                                                    base_name,
+                                                    topology_id,
+                                                    nusers,
+                                                    parameter_seed,
+                                                    constrained,
+                                                    length_slack,
+                                                    competitor_cost_factor,
+                                                    user_parameter_mode,
+                                                    local_spec;
+                                                    decision_arc_count=decision_arc_count,
+                                                )
+                                                push!(generated_here, generated)
+                                            end
                                         end
                                     end
                                 end
@@ -412,7 +416,7 @@ function _build_competition_generated_network(
     graph = base_graph
     decision_arcs = _sample_decision_arcs(graph, parameter_seed, decision_arc_count)
 
-    users, minweights = if single_layer_arc_mode == "competition"
+    users, minweights = if single_layer_arc_mode == "competition" || single_layer_arc_mode == "decision_only_negative"
         _build_single_layer_competition_users(
             graph,
             nusers,
@@ -425,6 +429,7 @@ function _build_competition_generated_network(
             decision_arcs,
             competitor_cost_factor,
             user_parameter_mode,
+            single_layer_arc_mode == "decision_only_negative",
         )
     else
         _build_single_layer_decision_only_users(
@@ -484,10 +489,10 @@ end
 
 function _parse_single_layer_arc_mode(value)
     mode = lowercase(String(value))
-    if mode == "competition" || mode == "decision_only"
+    if mode == "competition" || mode == "decision_only" || mode == "decision_only_negative"
         return mode
     end
-    throw(ArgumentError("Unsupported single_layer_arc_mode '$value'. Supported values are 'competition' and 'decision_only'."))
+    throw(ArgumentError("Unsupported single_layer_arc_mode '$value'. Supported values are 'competition', 'decision_only', and 'decision_only_negative'."))
 end
 
 function _int_vector(value, key::String)
@@ -779,6 +784,7 @@ function _build_single_layer_competition_users(
     decision_arcs,
     competitor_cost_factor::Float64,
     user_parameter_mode::String,
+    negative_risk::Bool=false,
 )
     rng = MersenneTwister(seed)
     users = User[]
@@ -792,7 +798,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=negative_risk,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
@@ -814,7 +820,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=negative_risk,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
@@ -1219,7 +1225,7 @@ function _generated_name(
     competitor_cost_factor !== nothing && push!(parts, "CCF$(competitor_cost_factor)")
     decision_arc_count !== nothing && push!(parts, "K$(decision_arc_count)")
     if decision_arc_count !== nothing && single_layer_arc_mode !== nothing
-        push!(parts, single_layer_arc_mode == "competition" ? "KCOMP" : "KDEC")
+        push!(parts, single_layer_arc_mode == "competition" ? "KCOMP" : (single_layer_arc_mode == "decision_only_negative" ? "KDECNEG" : "KDEC"))
     end
     availability_budget_fraction !== nothing && push!(parts, "B$(availability_budget_fraction)")
     two_stage !== nothing && push!(parts, two_stage ? "coop" : "bilevel")

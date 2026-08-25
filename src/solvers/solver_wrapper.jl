@@ -28,7 +28,24 @@ license and initialization lines emitted by `Gurobi.Env()` itself; model-level
 `set_silent(...)` only applies after the environment already exists.
 """
 function silent_gurobi_env()
-    return Gurobi.Env(Dict{String,Any}("OutputFlag" => 0))
+    settings = Dict{String,Any}("OutputFlag" => 0)
+    if get(ENV, "JUBIC_GUROBI_MINIMAL", "0") == "1"
+        merge!(settings, Dict{String,Any}(
+            "Presolve" => 0,
+            "Heuristics" => 0.0,
+            "NoRelHeurTime" => 0.0,
+            "NoRelHeurWork" => 0.0,
+            "Cuts" => 0,
+            "Aggregate" => 0,
+            "PrePasses" => 0,
+            "PreSparsify" => 0,
+            "Symmetry" => 0,
+            "DualReductions" => 0,
+            "Method" => 1,
+            "NodeMethod" => 1,
+        ))
+    end
+    return Gurobi.Env(settings)
 end
 
 """

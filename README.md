@@ -1,53 +1,35 @@
 # JuBiC — paper reproduction branch
 
-This branch is associated with the paper "Automated Benders-like Cut Generation and its Application to the Bilevel Network Design Problem".
+This branch is associated with the paper “Automated Benders-like Cut Generation and its Application to the Bilevel Network Design Problem”.
 
-## Reproduction entry point
+## EMA benchmark reproduction
 
-The complete fixed-order benchmark is reproduced by one script:
-
-```powershell
-julia --project=. examples/HNDP/reproduce_fixed_order_big_runs.jl
-```
-
-The script regenerates the Sioux Falls layered instances and runs:
-
-- BlC with n−1, fixed-path, and fixed-path/current-cost Big-M modes;
-- BlCLag with n−1 Big-M, with warm start and cold start;
-- fixed linking-first branching order;
-- sequential separation, 8 Gurobi threads for master and subproblems, and a 10-minute limit.
-
-After each instance/solver combination, the script prints a compact Big-M coefficient summary. It writes a fresh result tree under `benchmark_run/runs/`. To choose another output location, set `JUBIC_REPRO_OUTPUT` before launching the script:
+The published benchmark is the EMA topology experiment. Reproduce the complete BlC/BlCLag run with:
 
 ```powershell
-$env:JUBIC_REPRO_OUTPUT = "tmp_compare/runs/fixed_order_reproduction"
-julia --project=. examples/HNDP/reproduce_fixed_order_big_runs.jl
+julia --project=. benchmark_run/fixed_order_big_runs/reproduce_ema_big_runs.jl
 ```
 
-## Published benchmark results
+The script runs EMA negative-profit k-decision instances with 43 decision arcs, 50–200 users in steps of 25, alpha values 0.01/0.05/0.1, seeds 2–4, both length settings, fixed linking-order branching, 8 Gurobi threads, sequential separation, and a 10-minute limit. It runs all three BlC Big-M modes and BlCLag with warm start enabled.
 
-The directly inspectable results are in [`benchmark_run/fixed_order_big_runs`](./benchmark_run/fixed_order_big_runs):
+The script prints a Big-M summary after each solver/instance combination and writes the full console stream to `console.log`. Raw output is written under `benchmark_run/runs/`; set `JUBIC_REPRO_OUTPUT` to choose another raw-output location.
 
-- [`all_results.csv`](./benchmark_run/fixed_order_big_runs/all_results.csv) contains all 300 solver results;
-- [`big_m_coefficient_summary.txt`](./benchmark_run/fixed_order_big_runs/big_m_coefficient_summary.txt) reports Big-M coefficient ranges aggregated over all instances and for a common instance solved optimally by all five configurations.
+## Published results
+
+The reviewer-facing results are in [`benchmark_run/fixed_order_big_runs`](./benchmark_run/fixed_order_big_runs):
+
+- [`all_results.csv`](./benchmark_run/fixed_order_big_runs/all_results.csv) contains 336 results: 252 BlC and 84 BlCLag warm-start runs.
+- [`big_m_coefficient_summary.txt`](./benchmark_run/fixed_order_big_runs/big_m_coefficient_summary.txt) contains Big-M coefficient statistics aggregated over all EMA runs.
+- [`reproduce_ema_big_runs.jl`](./benchmark_run/fixed_order_big_runs/reproduce_ema_big_runs.jl) reproduces both solver suites.
 
 ## Setup and tests
-
-Instantiate the Julia environment and run the tests with:
 
 ```powershell
 julia --project=. -e "using Pkg; Pkg.instantiate()"
 julia --project=. test/runtests.jl
 ```
 
-The HNDP documentation is available at:
-
-- [HNDP motivation](./docs/src/examples/hndp/motivation.md)
-- [HNDP instances](./docs/src/examples/hndp/instances.md)
-- [HNDP solver models](./docs/src/examples/hndp/solvers.md)
-- [HNDP benchmark pipeline](./docs/src/examples/hndp/benchmarks.md)
-
-The reproduction sweep is computationally intensive. Runtime depends on the CPU, Gurobi version, license, and solver settings. The supplied configuration uses Gurobi 13.0.1 when installed at `C:\gurobi1301\win64`.
+The supplied configuration uses Gurobi 13.0.1 when installed at `C:\gurobi1301\win64`. Runtime depends on the CPU, Gurobi installation, license, and solver settings.
 
 ## Citation
 
