@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $julia = "C:\Users\Stadnichuk\AppData\Local\Programs\Julia-1.12.6\bin\julia.exe"
