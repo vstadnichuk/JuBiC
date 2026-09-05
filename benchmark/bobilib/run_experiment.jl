@@ -80,10 +80,12 @@ function main()
 
     for (index, (name, source_mps, aux_path)) in enumerate(pairs)
         println("[$index/$(length(pairs))] $name")
-        mps_path = materialize_mps(source_mps, WORK_ROOT)
-        instance_dir = joinpath(WORK_ROOT, name)
-        mkpath(instance_dir)
         for solver in ("GBC", "MiBS")
+            input_dir = joinpath(WORK_ROOT, "inputs", solver)
+            instance_dir = joinpath(WORK_ROOT, "logs", solver, name)
+            mkpath(input_dir)
+            mkpath(instance_dir)
+            mps_path = materialize_mps(source_mps, input_dir)
             try
                 stats = solver == "GBC" ?
                     solve_gbc(mps_path, aux_path, name, instance_dir) :
