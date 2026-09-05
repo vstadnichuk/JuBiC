@@ -164,9 +164,14 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         try
             new_stat!(param.stats, "gap", JuMP.relative_gap(master.model))
         catch
+            new_stat!(param.stats, "gap", Inf)
         end
         try
+        try
             new_stat!(param.stats, "BNodes", MOI.get(master.model, MOI.NodeCount()))
+        catch
+            new_stat!(param.stats, "BNodes", Inf)
+        end
         catch
         end
     else
@@ -207,8 +212,16 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         
         # save run data to statistics
         new_stat!(param.stats, "runtime", solve_time(master.model))
-        new_stat!(param.stats, "gap", JuMP.relative_gap(master.model))
-        new_stat!(param.stats, "BNodes", MOI.get(master.model, MOI.NodeCount()))
+        try
+            new_stat!(param.stats, "gap", JuMP.relative_gap(master.model))
+        catch
+            new_stat!(param.stats, "gap", Inf)
+        end
+        try
+            new_stat!(param.stats, "BNodes", MOI.get(master.model, MOI.NodeCount()))
+        catch
+            new_stat!(param.stats, "BNodes", Inf)
+        end
 
         # TODO: find and print correct second level solutions?
     end

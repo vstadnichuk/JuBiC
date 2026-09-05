@@ -92,8 +92,16 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
 
             # save run data to statistics
             new_stat!(param.stats, "runtime", solve_time(blcm.hpr))
-            new_stat!(param.stats, "gap", JuMP.relative_gap(blcm.hpr))
-            new_stat!(param.stats, "BNodes", MOI.get(blcm.hpr, MOI.NodeCount()))
+            try
+                new_stat!(param.stats, "gap", JuMP.relative_gap(blcm.hpr))
+            catch
+                new_stat!(param.stats, "gap", Inf)
+            end
+            try
+                new_stat!(param.stats, "BNodes", MOI.get(blcm.hpr, MOI.NodeCount()))
+            catch
+                new_stat!(param.stats, "BNodes", Inf)
+            end
 
             # TODO: find and print correct second level solutions?
         else

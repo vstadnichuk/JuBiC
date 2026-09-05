@@ -59,6 +59,14 @@ function solve_with_MIP!(inst::Instance, param::MIPparam)
 
     # save run data to statistics
     new_stat!(param.stats, "runtime", solve_time(mipm.mymip))
-    new_stat!(param.stats, "gap", JuMP.relative_gap(mipm.mymip))
-    new_stat!(param.stats, "BNodes", MOI.get(mipm.mymip, MOI.NodeCount()))
+    try
+        new_stat!(param.stats, "gap", JuMP.relative_gap(mipm.mymip))
+    catch
+        new_stat!(param.stats, "gap", Inf)
+    end
+    try
+        new_stat!(param.stats, "BNodes", MOI.get(mipm.mymip, MOI.NodeCount()))
+    catch
+        new_stat!(param.stats, "BNodes", Inf)
+    end
 end
