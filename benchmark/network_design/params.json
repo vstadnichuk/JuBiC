@@ -1,0 +1,19 @@
+{
+  "write_run_logs": false,
+  "params": [
+    {
+      "name": "gurobi_10min_16threads",
+      "mip_solver": "Gurobi",
+      "runtime": 600.0,
+      "seed": 42,
+      "threads_master": 8,
+      "threads_sub_con": 1,
+      "parallel_separation": true,
+      "pareto": "OPT",
+      "warmstart": true,
+      "bigMwithLC": false,
+      "trim_coeff": false,
+      "enable_output_logs": false
+    }
+  ]
+}

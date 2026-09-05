@@ -1,0 +1,61 @@
+{
+  "parameter_seeds": [42, 43, 44],
+  "instances": [
+    {
+      "name": "sioux_falls",
+      "instance_type": "competition",
+      "topologies": ["sioux_falls"],
+      "decision_arc_count": [50, 76],
+      "nusers": [50, 250],
+      "length_constrained": [true, false],
+      "alpha": [0.01, 0.03, 0.05, 0.08, 0.1],
+      "beta": [1.0],
+      "single_layer_arc_mode": "competition",
+      "user_parameter_mode": "shared",
+      "construction_cost_min": 0,
+      "construction_cost_max": 0
+    },
+    {
+      "name": "ema",
+      "instance_type": "competition",
+      "topologies": ["ema"],
+      "decision_arc_count": [50, 100],
+      "nusers": [50, 250],
+      "length_constrained": [true, false],
+      "alpha": [0.01, 0.03, 0.05, 0.08, 0.1],
+      "beta": [1.0],
+      "single_layer_arc_mode": "competition",
+      "user_parameter_mode": "shared",
+      "construction_cost_min": 0,
+      "construction_cost_max": 0
+    },
+    {
+      "name": "berlin_friedrichshain",
+      "instance_type": "competition",
+      "topologies": ["friedrichshain_center"],
+      "decision_arc_count": [50, 100],
+      "nusers": [50, 250],
+      "length_constrained": [true, false],
+      "alpha": [0.01, 0.03, 0.05, 0.08, 0.1],
+      "beta": [1.0],
+      "single_layer_arc_mode": "competition",
+      "user_parameter_mode": "shared",
+      "construction_cost_min": 0,
+      "construction_cost_max": 0
+    },
+    {
+      "name": "anaheim",
+      "instance_type": "competition",
+      "topologies": ["anaheim"],
+      "decision_arc_count": [50, 100],
+      "nusers": [50, 250],
+      "length_constrained": [true, false],
+      "alpha": [0.01, 0.03, 0.05, 0.08, 0.1],
+      "beta": [1.0],
+      "single_layer_arc_mode": "competition",
+      "user_parameter_mode": "shared",
+      "construction_cost_min": 0,
+      "construction_cost_max": 0
+    }
+  ]
+}

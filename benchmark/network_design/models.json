@@ -1,0 +1,10 @@
+{
+  "models": [
+    {"name": "ND", "model_type": "gbc", "partial_decomposition": false, "subproblem_method": "mip"},
+    {"name": "ND_PD", "model_type": "gbc", "partial_decomposition": true, "subproblem_method": "mip"},
+    {"name": "ND_WS_PD", "model_type": "gbc", "partial_decomposition": true, "subproblem_method": "mip"},
+    {"name": "ND_WS_PD_BS", "model_type": "gbc", "partial_decomposition": true, "subproblem_method": "blc_jump", "big_m_mode": "fixed_network_path"},
+    {"name": "ND_WS_ASTAR", "model_type": "gbc", "partial_decomposition": false, "subproblem_method": "astar"},
+    {"name": "BlD", "model_type": "blc", "subproblem_method": "mip", "big_m_mode": "fixed_network_path"}
+  ]
+}
