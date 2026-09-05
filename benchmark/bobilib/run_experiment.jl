@@ -5,7 +5,7 @@ using CodecZlib
 
 const ROOT = @__DIR__
 const INSTANCE_ROOT = normpath(joinpath(ROOT, "..", "..", "examples", "BOBILib", "instances", "benchmark-set", "benchmark-sets"))
-const OUTPUT = joinpath(ROOT, "results.csv")
+const OUTPUT = get(ENV, "JUBIC_BOBILIB_OUTPUT", joinpath(ROOT, "results.csv"))
 const WORK_ROOT = mktempdir()
 const TIME_LIMIT = 3600.0
 const MAX_INSTANCES = parse(Int, get(ENV, "JUBIC_BOBILIB_MAX_INSTANCES", "0"))
