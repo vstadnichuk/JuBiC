@@ -2,8 +2,28 @@
 using JuMP
 using BenchmarkTools
 using CSV
+using JSON
 import MathOptInterface as MOI
 using Base.Threads
+
+function _write_numerical_diagnostic(param, err::NumericalIssueException, bt)
+    # Keep ordinary runs lightweight: write a structured diagnostic only when
+    # numerical instability aborts the GBC solve.
+    try
+        diagnostic = Dict{String,Any}(
+            "exception_type" => string(typeof(err)),
+            "status" => err.status,
+            "message" => err.message,
+            "context" => err.context,
+            "stacktrace" => string.(bt),
+        )
+        open(joinpath(param.output_folder_path, "numeric_termination.json"), "w") do io
+            write(io, JSON.json(diagnostic, 2))
+        end
+    catch diagnostic_error
+        @warn "Could not write numerical termination diagnostics: $(diagnostic_error)"
+    end
+end
 
 
 """
@@ -129,8 +149,19 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             param.stats.data["Opt_status_override"] = "Timeout_Submodel"
         elseif (e isa NumericalIssueException)
             @error "GBCSolver stopped due to a detected numerical issue: $(e.message)"
-            param.stats.data["GBCStatus"] = e.status
-            param.stats.data["Opt_status_override"] = e.status
+            # A status ending in _Numerics is already the final, qualified
+            # status. Otherwise retain the solver's eventual base status and
+            # let set_optimization_status_stats append the numerical marker.
+            if endswith(e.status, "_Numerics")
+                param.stats.data["GBCStatus"] = e.status
+                param.stats.data["Opt_status_override"] = e.status
+            else
+                param.stats.data["GBCStatus"] = "Numerics"
+                param.stats.data["Opt_status_override"] = "Numerics"
+            end
+            if get(param.stats.data, "GBCStatus", "") == "Terminate_Numerics"
+                _write_numerical_diagnostic(param, e, catch_backtrace())
+            end
         else
             @error "GBCsolver suffered an error: $e"
             @error stacktrace(catch_backtrace())

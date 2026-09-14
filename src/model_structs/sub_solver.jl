@@ -19,7 +19,10 @@ Base.showerror(io::IO, err::TimeoutException) = print(io, err.message)
 struct NumericalIssueException <: Exception
     message::String
     status::String
+    context::Dict{String,Any}
 end
+NumericalIssueException(message::String, status::String) =
+    NumericalIssueException(message, status, Dict{String,Any}())
 Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)
 
 struct MibSFailureException <: Exception

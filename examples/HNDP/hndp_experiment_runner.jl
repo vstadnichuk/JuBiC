@@ -30,6 +30,7 @@ function run_hndp_experiments!(
     param_config_path::AbstractString;
     output_root::AbstractString,
     resume::Bool=true,
+    model_filter::Function=(generated_network, model_spec) -> true,
 )
     instance_cfg = load_hndp_network_generation_config(String(instance_config_path))
     model_cfg = JSON.parsefile(String(model_config_path))
@@ -55,6 +56,11 @@ function run_hndp_experiments!(
         instance_name = String(instance_metadata["name"])
 
         for model_spec in models
+            if !model_filter(generated_network, model_spec)
+                model_label = String(get(model_spec, "name", "model"))
+                @info "Skipping model $(model_label) for instance $(instance_name) because the benchmark filter marked it ineligible."
+                continue
+            end
             for param_spec in params
                 experiment_id = _hndp_experiment_id(instance_name, model_spec, param_spec)
                 if experiment_id in completed_ids

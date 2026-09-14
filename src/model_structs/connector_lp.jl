@@ -260,7 +260,16 @@ function _sanitize_nonnegative_opt_cut_coefficient(
         @debug "ConnectorLP $(name(subLP.sub_solver)) rounds the $(coeff_name) coefficient $(numeric_value) up to 0.0 within numerical tolerance $(tol)."
         return 0.0
     end
-    throw(ArgumentError("The $(coeff_name) coefficient $(numeric_value) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
+    throw(NumericalIssueException(
+        "The $(coeff_name) coefficient $(numeric_value) used in ConnectorLP $(name(subLP.sub_solver)) is negative!",
+        "Terminate_Numerics",
+        Dict{String,Any}(
+            "type" => "NegativeOptimalityCutCoefficient",
+            "coefficient" => coeff_name,
+            "value" => Float64(numeric_value),
+            "connector" => name(subLP.sub_solver),
+        ),
+    ))
 end
 
 function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gval, kvals, x_vals)
@@ -271,7 +280,18 @@ function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gva
         end
     end
     @debug "ConnectorLP $(name(subLP.sub_solver)) uses bound coefficient xi=$(bound_value) with s=$(sval), optL2=$(optL2), g=$(gval), and lower_bound=$(subLP.lower_bound_obj_contribution)."
-    return _sanitize_nonnegative_opt_cut_coefficient(bound_value, "bound / xi", subLP)
+    try
+        return _sanitize_nonnegative_opt_cut_coefficient(bound_value, "bound / xi", subLP)
+    catch err
+        if err isa NumericalIssueException
+            err.context["s"] = Float64(sval)
+            err.context["optL2"] = Float64(optL2)
+            err.context["g"] = Float64(gval)
+            err.context["lower_bound_obj_contribution"] = Float64(subLP.lower_bound_obj_contribution)
+            err.context["xi"] = Float64(bound_value)
+        end
+        rethrow()
+    end
 end
 
 function _compute_opt_cut_k_coefficients(
@@ -611,13 +631,25 @@ function check_solution_status_LP(me::ConnectorLP)
         else
             @error "The IIS was not computed succesfully??? Most likely numerics??"
         end
-        error("ConnectorLP $(name(me)) was infeasible. Computed IIS but stopping solution process (as it is clearly a bug). Most likely, it was caused by numerical issues.")
+        throw(NumericalIssueException(
+            "ConnectorLP $(name(me)) was infeasible. Computed IIS but stopping solution process (as it is clearly a bug). Most likely, it was caused by numerical issues.",
+            "Terminate_Numerics",
+            Dict{String,Any}("type" => "InfeasibleConnectorLP", "connector" => name(me)),
+        ))
     elseif status == MOI.DUAL_INFEASIBLE
-        error("The ConnectorLP $(name(me)) was unbounded what violates the way we handle its. Because we add significantly large bounds, we avoid unboundnes; so, this should not have happended.")
+        throw(NumericalIssueException(
+            "The ConnectorLP $(name(me)) was unbounded what violates the way we handle its. Because we add significantly large bounds, we avoid unboundnes; so, this should not have happended.",
+            "Terminate_Numerics",
+            Dict{String,Any}("type" => "UnboundedConnectorLP", "connector" => name(me)),
+        ))
     end
 
     if !(status == MOI.OPTIMAL)
-        error("ConnectorLP $(name(me)) could not be solver to optimality but terminated with status $(status). Connot continue as this is undefined behavior.")
+        throw(NumericalIssueException(
+            "ConnectorLP $(name(me)) could not be solver to optimality but terminated with status $(status). Connot continue as this is undefined behavior.",
+            "Terminate_Numerics",
+            Dict{String,Any}("type" => "UnexpectedConnectorLPStatus", "connector" => name(me), "solver_status" => string(status)),
+        ))
     end
 end
 
@@ -636,7 +668,7 @@ function _duplicate_connector_cut_error(
         "The current connector-LP value is s=$(sval), while the follower still certifies a value of $(opt_obj). " *
         "To avoid cycling on numerically unstable cuts, JuBiC stops here. " *
         "For this cut to be considered non-violated, the connector-LP would need to bring s below approximately $(target) (using tolerance $(tolerance)).",
-        "NumericalIssue_DuplicateCut",
+        "Terminate_Numerics",
     )
 end
 
