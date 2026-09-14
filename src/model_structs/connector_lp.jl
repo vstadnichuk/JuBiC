@@ -64,6 +64,25 @@ function _snapshot_s(subLP::ConnectorLP)
 end
 
 function _snapshot_g(subLP::ConnectorLP)
+    # A repeated-cut fallback may temporarily increase g to certify that the
+    # already-known cut is satisfied. Option A keeps the original g for the
+    # complete subsequent optimality-cut construction, so that the cut does
+    # not mix the fallback value with its coefficient calculations.
+    if get(subLP.numeric_state, :accepted_numerically, false) &&
+       haskey(subLP.numeric_state, :original_g)
+        return subLP.numeric_state[:original_g]
+    end
+    if haskey(subLP.numeric_state, :g_override)
+        return subLP.numeric_state[:g_override]
+    end
+    snapshot = get(subLP.numeric_state, :cut_solution_snapshot, nothing)
+    return isnothing(snapshot) ? value(subLP.lp[:g]) : snapshot[:g]
+end
+
+function _snapshot_g_for_cut(subLP::ConnectorLP)
+    # Experimental mixed fallback: retain the rounded value for the cut
+    # right-hand side, while allowing the bound coefficient xi to use the
+    # original value.
     if haskey(subLP.numeric_state, :g_override)
         return subLP.numeric_state[:g_override]
     end
@@ -239,11 +258,47 @@ function _record_opt_cut_validation!(
     return nothing
 end
 
-function _round_cut_component(value::Real, params::GBCparam)
-    if params.integer_obj
-        return Float64(ceil(value))
+function _integerized_nonnegative_coefficient(
+    value::Real,
+    params::GBCparam,
+    subLP::ConnectorLP,
+    description::AbstractString,
+)
+    coefficient = Float64(value)
+    integerized = params.integer_obj ? Float64(ceil(coefficient)) : coefficient
+    if params.integer_obj && integerized != coefficient
+        @debug "ConnectorLP $(name(subLP.sub_solver)) integerizes $(description): $(coefficient) -> $(integerized)."
     end
-    return Float64(value)
+    return integerized
+end
+
+function _add_integerized_linking_term!(
+    cut::JuMP.GenericAffExpr,
+    coefficient::Real,
+    variable::JuMP.VariableRef,
+    params::GBCparam,
+    subLP::ConnectorLP,
+    description::AbstractString,
+)
+    integerized = _integerized_nonnegative_coefficient(coefficient, params, subLP, description)
+    JuMP.add_to_expression!(cut, -integerized, variable)
+    return integerized
+end
+
+function _add_integerized_paired_term!(
+    cut::JuMP.GenericAffExpr,
+    coefficient::Real,
+    variable::JuMP.VariableRef,
+    params::GBCparam,
+    subLP::ConnectorLP,
+    description::AbstractString,
+)
+    # Add q*(1-x) as a pair using one rounded q. This keeps the term exactly
+    # zero when x=1, including after integerization.
+    integerized = _integerized_nonnegative_coefficient(coefficient, params, subLP, description)
+    JuMP.add_to_expression!(cut, -integerized)
+    JuMP.add_to_expression!(cut, integerized, variable)
+    return integerized
 end
 
 function _sanitize_nonnegative_opt_cut_coefficient(
@@ -306,10 +361,7 @@ function _compute_opt_cut_k_coefficients(
         if params.trim_coeff
             raw_value = min(raw_value, Float64(bound_value))
         end
-        coeffs[a] = _round_cut_component(
-            _sanitize_nonnegative_opt_cut_coefficient(raw_value, "k[$(a)]", subLP),
-            params,
-        )
+        coeffs[a] = _sanitize_nonnegative_opt_cut_coefficient(raw_value, "k[$(a)]", subLP)
     end
     return coeffs
 end
@@ -328,17 +380,14 @@ function _compute_opt_cut_blc_g_coefficients(
         if params.trim_coeff
             raw_value = min(raw_value, Float64(bound_value))
         end
-        coeffs[a] = _round_cut_component(
-            _sanitize_nonnegative_opt_cut_coefficient(raw_value, "g[$(a)]", subLP),
-            params,
-        )
+        coeffs[a] = _sanitize_nonnegative_opt_cut_coefficient(raw_value, "g[$(a)]", subLP)
     end
     return coeffs
 end
 
 function _rounded_binary_y_values(subLP::ConnectorLP, y_vals)
     rounded = Dict{Any,Float64}()
-    warned = false
+    nonbinary_steps = String[]
     for a in subLP.A
         raw = Float64(y_vals[a])
         if abs(raw) <= 1e-8
@@ -346,12 +395,13 @@ function _rounded_binary_y_values(subLP::ConnectorLP, y_vals)
         elseif abs(raw - 1.0) <= 1e-8
             rounded[a] = 1.0
         else
-            rounded[a] = min(max(Float64(ceil(raw)), 0.0), 1.0)
-            if !warned
-                @warn "ConnectorLP $(name(subLP.sub_solver)) received non-binary follower y-values when generating an optimality cut. JuBiC rounded them up to binary values for numerical stabilization."
-                warned = true
-            end
+            rounded_value = min(max(Float64(ceil(raw)), 0.0), 1.0)
+            rounded[a] = rounded_value
+            push!(nonbinary_steps, "y[$(a)]=$(raw) -> $(rounded_value)")
         end
+    end
+    if !isempty(nonbinary_steps)
+        @warn "ConnectorLP $(name(subLP.sub_solver)) received non-binary follower y-values when generating an optimality cut. JuBiC rounded these values for numerical stabilization: $(join(nonbinary_steps, "; "))."
     end
     return rounded
 end
@@ -463,7 +513,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         end
 
         # build the usual optimality cut. In the numerical fallback path this uses
-        # the stabilized g-value stored in subLP.numeric_state[:g_override].
+        # the original g-value after a numerically accepted repeated cut.
         cut, bigMcut = build_opt_cut(subLP, optL2, optL2_risk, y_vals, link_vals, params, time_limit_build_cut)
     end
 
@@ -509,24 +559,45 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     rounded_x_vals = _rounded_binary_x_values(subLP, x_vals, params)
 
     # g term of the cut
-    gval = _snapshot_g(subLP)
+    gval = _snapshot_g_for_cut(subLP)
 
     # s term of the cut
     sval = _snapshot_s(subLP)
     cut_rhs = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP, params)
-    cut = cut_rhs
-    incumbent_cut_value = Float64(cut)
+    # Keep the cut as an affine expression from the first assembled term so
+    # integerized coefficients are added locally and transparently.
+    cut = JuMP.AffExpr(Float64(cut_rhs))
+    incumbent_cut_value = Float64(cut_rhs)
     incumbent_reference_value = Float64(cut_rhs)
 
     kvals = _snapshot_k(subLP)
-    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, optL2, gval, kvals, x_vals)
+    bound_gval = if get(subLP.numeric_state, :original_g_for_bound, false) &&
+                    haskey(subLP.numeric_state, :original_g)
+        subLP.numeric_state[:original_g]
+    else
+        gval
+    end
+    if bound_gval != gval
+        @debug "ConnectorLP $(name(subLP.sub_solver)) uses original g=$(bound_gval) only for xi bound generation and rounded g=$(gval) for the cut."
+    end
+    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, optL2, bound_gval, kvals, x_vals)
     k_coeffs = _compute_opt_cut_k_coefficients(subLP, kvals, bound_value, params)
+    integerized_k_coeffs = Dict{Any,Float64}()
+    for a in subLP.A
+        integerized_k = _add_integerized_linking_term!(
+            cut,
+            k_coeffs[a],
+            master_vars[a],
+            params,
+            subLP,
+            "k[$(a)]",
+        )
+        integerized_k_coeffs[a] = integerized_k
+        incumbent_cut_value -= integerized_k * rounded_x_vals[a]
+        incumbent_reference_value -= integerized_k * rounded_x_vals[a]
+    end
 
-    cut -= sum(k_coeffs[a] * master_vars[a] for a in subLP.A)
-    incumbent_cut_value -= sum(k_coeffs[a] * rounded_x_vals[a] for a in subLP.A)
-    incumbent_reference_value -= sum(k_coeffs[a] * rounded_x_vals[a] for a in subLP.A)
-
-    @debug "ConnectorLP $(name(subLP.sub_solver)) uses k-coefficients $(k_coeffs) and base g-coefficient xi=$(bound_value) for this optimality cut."
+    @debug "ConnectorLP $(name(subLP.sub_solver)) uses assembled k-coefficients $(integerized_k_coeffs) (raw values $(k_coeffs)) and base g-coefficient xi=$(bound_value)."
 
     ## generate cut from bound or by solving Lagrangian dual for BlC
     blc_subroutine = params.bigMwithLC && gval > 0 
@@ -541,10 +612,17 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         @debug "The big M values computed from Lagrangian dual now used in BlC are: $cutcoeff_BlC and optL2 * gval=$(ceil(Int, optL2 * gval))"
         blc_g_coeffs = _compute_opt_cut_blc_g_coefficients(subLP, cutcoeff_BlC, gval, bound_value, params)
         for a in keys(blc_g_coeffs) 
-            rounded_coef = blc_g_coeffs[a]
+            raw_coef = blc_g_coeffs[a]
             # we do not multiply the big M with yvals as there can exist multiple equivalent solutions of L2 with same objective, leeding to different BlC 
-            cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
-            incumbent_cut_value -= rounded_coef * (1 - rounded_x_vals[a])
+            integerized_coef = _add_integerized_paired_term!(
+                cut,
+                raw_coef,
+                master_vars[a],
+                params,
+                subLP,
+                "BlC g[$(a)]",
+            )
+            incumbent_cut_value -= integerized_coef * (1 - rounded_x_vals[a])
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
 
@@ -562,9 +640,22 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     else
         if gval > 0
             rounded_y_vals = _rounded_binary_y_values(subLP, y_vals)
-            theta_xXg = sum(bound_value * (1 - master_vars[a]) * rounded_y_vals[a] for a in subLP.A)
-            cut -= theta_xXg
-            incumbent_cut_value -= sum(bound_value * (1 - rounded_x_vals[a]) * rounded_y_vals[a] for a in subLP.A)
+            integerized_xi = Dict{Any,Float64}()
+            for a in subLP.A
+                if rounded_y_vals[a] > 0
+                    raw_xi = bound_value * rounded_y_vals[a]
+                    integerized_xi[a] = _add_integerized_paired_term!(
+                        cut,
+                        raw_xi,
+                        master_vars[a],
+                        params,
+                        subLP,
+                        "xi[$(a)]",
+                    )
+                    incumbent_cut_value -= integerized_xi[a] * (1 - rounded_x_vals[a])
+                end
+            end
+            @debug "ConnectorLP $(name(subLP.sub_solver)) uses assembled xi-coefficients $(integerized_xi) (base xi=$(bound_value))."
 
             # Overlap between k and the y-pattern can occur on numerically
             # delicate instances. We continue, but flag the run.
@@ -762,7 +853,9 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
                     )
                     @warn warning_msg
                     subLP.numeric_state[:accepted_numerically] = true
+                    subLP.numeric_state[:original_g] = g_current
                     subLP.numeric_state[:g_override] = g_rounded
+                    subLP.numeric_state[:original_g_for_bound] = true
                     params.stats.data["Opt_status_override"] = "Numerics"
                     params.stats.data["GBCStatus"] = "Numerics"
                     violated_cut = false

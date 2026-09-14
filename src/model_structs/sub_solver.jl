@@ -21,6 +21,47 @@ struct NumericalIssueException <: Exception
     status::String
     context::Dict{String,Any}
 end
+
+"""
+    _round_y_values_and_objectives(sol, y_vals, optL2, optL1)
+
+Convert numerically non-binary follower linking variables to binary values and
+re-evaluate both objective expressions with those rounded values.  This keeps
+the returned follower solution and objective values consistent when a solver
+returns a tiny fractional value for a binary variable.
+"""
+function _round_y_values_and_objectives(sol, y_vals, optL2, optL1)
+    rounded = Dict(a => Float64(y_vals[a]) for a in keys(y_vals))
+    steps = String[]
+    for a in keys(rounded)
+        raw = rounded[a]
+        if abs(raw) <= 1e-8
+            rounded[a] = 0.0
+        elseif abs(raw - 1.0) <= 1e-8
+            rounded[a] = 1.0
+        else
+            rounded_value = min(max(Float64(ceil(raw)), 0.0), 1.0)
+            rounded[a] = rounded_value
+            push!(steps, "y[$(a)]=$(raw) -> $(rounded_value)")
+        end
+    end
+
+    isempty(steps) && return y_vals, optL2, optL1
+
+    @warn "Subsolver $(name(sol)) returned non-binary follower y-values. Rounded values: $(join(steps, "; ")). Re-evaluating both follower objective expressions on the rounded y-values."
+
+    y_by_variable = Dict(sol.y_vars[a] => rounded[a] for a in keys(rounded))
+    evaluate_with_rounded_y(expr) = JuMP.constant(expr) + sum(
+        coefficient * get(y_by_variable, variable, Float64(value(variable)))
+        for (coefficient, variable) in JuMP.linear_terms(expr);
+        init=0.0,
+    )
+
+    rounded_optL2 = evaluate_with_rounded_y(sol.c_objterm)
+    rounded_optL1 = evaluate_with_rounded_y(sol.r_objterm)
+    @debug "Subsolver $(name(sol)) changed follower objective values after y-rounding: optL2 $(optL2) -> $(rounded_optL2), optL1 $(optL1) -> $(rounded_optL1)."
+    return rounded, rounded_optL2, rounded_optL1
+end
 NumericalIssueException(message::String, status::String) =
     NumericalIssueException(message, status, Dict{String,Any}())
 Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)

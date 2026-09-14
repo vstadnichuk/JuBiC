@@ -420,6 +420,8 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
         # evaluate first-level objective
         osol_L1 = value(sol.r_objterm)
 
+        y_vals, osol, osol_L1 = _round_y_values_and_objectives(sol, y_vals, osol, osol_L1)
+
         # return found solution
         return true, osol, osol_L1, y_vals
     finally
@@ -462,6 +464,7 @@ function verify_sub_for_x_optimistic(sol::SubSolverJuMP, xvals, params::SolverPa
 
         y_vals = sol.y_vars isa AbstractDict ? Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) : value.(sol.y_vars)
         osol_L1 = value(sol.r_objterm)
+        y_vals, opt_cost, osol_L1 = _round_y_values_and_objectives(sol, y_vals, opt_cost, osol_L1)
         return true, opt_cost, osol_L1, y_vals
     finally
         if !isnothing(tie_constraint)

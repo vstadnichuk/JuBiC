@@ -298,6 +298,7 @@ function solve_sub_for_x(sol::SubSolverBlCJuMP, xvals, params::SolverParam, time
             value.(sol.y_vars)
         osol = value(sol.c_objterm)
         osol_L1 = value(sol.r_objterm)
+        y_vals, osol, osol_L1 = _round_y_values_and_objectives(sol, y_vals, osol, osol_L1)
         @debug "We found a bilevel-feasible solution for subproblem $(sol.name) with value $(osol)."
         return true, osol, osol_L1, y_vals
     finally
@@ -341,6 +342,7 @@ function verify_sub_for_x_optimistic(sol::SubSolverBlCJuMP, xvals, params::Solve
             Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) :
             value.(sol.y_vars)
         osol_L1 = value(sol.r_objterm)
+        y_vals, opt_cost, osol_L1 = _round_y_values_and_objectives(sol, y_vals, opt_cost, osol_L1)
         return true, opt_cost, osol_L1, y_vals
     finally
         if !isnothing(tie_constraint)

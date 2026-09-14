@@ -1,192 +1,140 @@
 # Numerics and Status Codes
 
-JuBiC's decomposition algorithms generate lazy cuts from auxiliary optimization
-problems. This creates numerical challenges that are less visible in a single
-compact MIP solve:
+JuBiC's decomposition solvers generate cuts from connector LPs and follower
+subproblems. The master solver, connector LPs, follower solvers, and optional
+Pareto refinements therefore exchange values that may be affected by solver
+tolerances. Hence, numerical handling is essential and part of the normal solve pipeline.
 
-- master solutions that should be binary may arrive from the solver with small fractional noise,
-- follower and connector objectives are compared across several models,
-- repeated cuts can occur when a connector problem is numerically close to a previously generated solution,
-- Pareto refinement can fail even when the non-Pareto connector solution is usable,
-- and external solvers such as MiBS can fail or time out independently of the master MIP.
+## Current GBC pipeline
 
-JuBiC addresses these issues with explicit rounding, coefficient validation,
-fallbacks, duplicate-cut handling, and status propagation. The main mechanisms
-are summarized below.
+For each integer master solution, GBC performs the following operations:
 
-## Binary Rounding and Cut Validation
+1. Master linking-variable values are rounded to binary values before they are
+   passed to follower separation.
+2. Each follower subsolver is solved for the current master solution. Follower
+   `y`-values are expected to be binary.
+3. If a returned `y`-value is not within `10^-8` of zero or one, JuBiC rounds the value to a binary value and
+   reevaluates both follower objective expressions using the rounded vector.
+   The returned `y`-values and objective values are consequently consistent.
+4. The connector LP is solved iteratively. A violated follower solution adds a
+   connector constraint of the form
 
-Some cut-generation routines need binary master or follower patterns even though
-the solver may return values such as `0.999999999` or `1e-9`.
+   ```math
+   s-\sum_{a\in A'}k_a-\alpha g\le r,
+   ```
 
-JuBiC rounds such values to the integer values they are intended to represent
-before using them in cut construction. When `GBCparam.integer_obj=true`, JuBiC
-also treats follower risk objectives as integer-valued and rounds generated cut
-constants and coefficients consistently with that assumption.
+   where `A'` is the resource pattern of the follower solution, `alpha` is its
+   follower-objective value, and `r` is its first-level contribution.
+5. The connector solution is used to construct an optimality or feasibility
+   cut. Master and follower binary patterns are rounded for the cut. When
+   `integer_obj=true`, coefficients are integerized as they are inserted into
+   the cut.
+6. If Pareto refinement is enabled, it is performed after the initial
+   connector solve. The pre-Pareto connector snapshot is retained so that the
+   standard cut can still be constructed if refinement fails.
 
-If validation detects a material inconsistency, JuBiC throws
-`NumericalIssueException(..., "Terminate_Numerics")`.
+GBC callback entry is serialized with a global callback lock because Gurobi may
+invoke callbacks from multiple master threads. Distinct follower connector
+separations may still run in parallel inside one callback. Each parallel
+connector uses the configured connector/subsolver thread count; with parallel
+separation enabled, connector solver calls use one thread.
 
-## Coefficient Safeguards
+## Coefficient and cut checks
 
-Generated cut coefficients are expected to satisfy sign conditions. JuBiC checks
-these assumptions before accepting a cut. Very small sign violations caused by
-numerical noise may be snapped to zero, while material violations terminate the
-current solve path.
+Optimality-cut coefficients are expected to be nonnegative where required by
+the formulation. Very small negative values caused by floating-point noise may
+be treated as zero. A material sign violation raises
+`NumericalIssueException` with status `Terminate_Numerics`.
 
-## Duplicate-Cut Handling
+JuBiC also checks whether a generated cut reproduces the incumbent reference
+value implied by its construction. A discrepancy is recorded as a numerical
+warning and contributes to the numerical status of the run.
 
-JuBiC stores generated connector cuts. If a newly separated cut was already
-generated before, JuBiC checks whether the repetition can be explained by
-admissible numerical movement in the connector variables.
+The same resource can occur in more than one optimality-cut term, for example
+in both a `k`-term and a `y`- or BlC-based term. Such overlap is retained as
+part of the current cut-generation procedure but is reported as a warning for
+inspection.
 
-A repeated connector cut means that the separation oracle returns the same
-resource pattern and objective coefficients although the corresponding connector
-constraint was already added. Conceptually, the repeated constraint has the
-form
+Note that all these situations can occur in a correct run, and are 
+on their own no indicators for a false results. Hence, we only throw a warning.
 
-```math
-s - \sum_{a \in A'} k_a - \alpha g \le r,
-```
+## Repeated connector cuts
 
-where `A'` is the resource pattern of the repeated subproblem solution, `r` is
-its first-level contribution, and ``\alpha`` is its follower-objective value.
+Generated connector cuts are retained when connector warm starts are enabled.
+If separation returns a resource pattern and objective pair already present in
+the connector, JuBiC checks whether the repetition can be explained by solver
+tolerances.
 
-For ``\alpha > 0``, JuBiC computes the value of ``g`` that would make this cut just
-nonviolated:
-
-```math
-g_{\mathrm{req}} =
-\frac{s - \sum_{a \in A'} k_a - r}{\alpha}.
-```
-
-It then estimates how much ``g`` may move because of connector and subsolver
-tolerances. First, JuBiC defines a row scale
-
-```math
-R =
-\max\left\{
-1,\ |s|,\ \sum_{a \in A} |k_a|,\ |\alpha g|,\ |r|
-\right\}.
-```
-
-The connector-side tolerance is
+For `alpha > 0`, the required value of `g` for the repeated constraint to be
+nonviolated is
 
 ```math
-\Delta g_{\mathrm{con}} =
-\frac{10^{-6} R}{|\alpha|}.
+g_{\mathrm{req}}=
+\frac{s-\sum_{a\in A'}k_a-r}{\alpha}.
 ```
 
-The subsolver-side tolerance uses the absolute and relative optimality
-tolerances of the subsolver. If `opt` is the objective value returned by the
-subsolver, then
+JuBiC estimates connector-side and follower-subsolver-side tolerances from the
+scale of the connector row and the subsolver's absolute and relative MIP
+tolerances. The larger estimate is used as the admissible `g`-movement. If the
+current `g` plus this tolerance reaches `g_req`, the repetition is accepted as
+numerically explainable, the duplicate constraint is not added again, and the
+run receives a numerical status. If it cannot be explained, JuBiC raises a
+numerical exception to prevent unresolved cycling.
 
-```math
-\Delta g_{\mathrm{sub}} =
-\frac{
-\max\{\varepsilon_{\mathrm{abs}},
-      \varepsilon_{\mathrm{rel}}\max(1,|\text{opt}|)\}
-}{|\alpha|}.
-```
+## Pareto-refinement fallback
 
-JuBiC uses
+Pareto refinement constrains the connector's original objective to remain in a
+tolerance band around the value obtained before refinement. If the refined
+connector becomes infeasible or otherwise fails, JuBiC restores the retained
+pre-Pareto snapshot and constructs the standard cut. The run is marked as
+numerically affected even when the master solver subsequently reaches an
+optimal solution.
 
-```math
-\Delta g =
-\max\{\Delta g_{\mathrm{con}}, \Delta g_{\mathrm{sub}}\}.
-```
+## Status reporting
 
-If
+The final high-level result is stored in `Opt_status`. Solver-specific fields
+such as `GBCStatus`, `BlCStatus`, `BlCLagStatus`, and `MibSStatus` provide the
+corresponding method-level status.
 
-```math
-g + \Delta g \ge g_{\mathrm{req}},
-```
+The principal numerical statuses are:
 
-then the repeated cut can be explained by numerical tolerance. JuBiC accepts the
-connector solution with the stabilized value ``g + \Delta g`` and marks the run
-with numerical status. Otherwise, JuBiC treats the repetition as unresolved
-cycling and throws
-`NumericalIssueException(..., "NumericalIssue_DuplicateCut")`.
+- `Opt_Numerics`: an optimal master result was reached after numerical fallback
+  or numerical warnings.
+- `Timelimit_Numerics`: the runtime limit was reached after numerical fallback
+  or numerical warnings.
+- `Terminate_Numerics`: the solve terminated because a numerical condition was
+  considered unsafe, such as an unexplained duplicate connector cut, an
+  infeasible connector LP, or a material coefficient violation.
 
-## Pareto Fallbacks
+Ordinary statuses such as `Optimal`, `Timelimit`, and `Terminate` remain
+available when no numerical annotation applies. A numerical annotation does
+not by itself prove that the returned point is invalid; it indicates that the
+result passed through a condition requiring numerical fallback or additional
+verification.
 
-After solving a connector LP, JuBiC may run Pareto refinement to strengthen a
-generated cut. Pareto refinement keeps the original connector objective fixed
-within a tolerance band while optimizing a secondary criterion:
+## Diagnostics and logs
 
-```math
-\text{current\_obj} - \epsilon
-\le
-\text{lp\_obj}
-\le
-\text{current\_obj} + \epsilon.
-```
+Primary numerical diagnostics are written to the Julia log associated with the
+run. Warnings for binary rounding include the affected resource and the exact
+conversion, for example `y[(i,j)]=2.0e-6 -> 1.0`, together with a statement
+that the objective expressions were reevaluated.
 
-The relevant tolerances are `GBCparam.pareto_band_tolerance`,
-`GBCparam.blc_pareto_band_tolerance`, and
-`BlCLagparam.blc_pareto_band_tolerance`.
+When a numerical termination is caught, JuBiC may additionally write a
+`numeric_termination.json` record containing the exception type, status,
+message, solver context, and accumulated statistics. This file is intended for
+cases where the log alone is insufficient.
 
-If Pareto refinement fails, JuBiC restores the pre-Pareto connector solution,
-continues with the standard cut, and marks the run with numerical status
-(`Opt_Numerics` when the underlying master solve is otherwise optimal).
+## Exception types
 
-## Cut-Overlap Warnings
+The subsolver and connector layers use the following exception types:
 
-In `GBC`, symmetric connector solutions can create unintuitive cuts where the
-same resource appears in several cut terms. These cuts are not necessarily
-wrong, but they can indicate that the algorithm is not behaving as intended on
-that instance. JuBiC marks these runs with a warning for later inspection.
+- `TimeoutException`: an oracle, connector, subsolver, or external solver
+  reached its available time limit.
+- `NumericalIssueException`: cut generation or connector processing encountered
+  a numerical condition represented by a numerical status.
+- `MibSFailureException`: a MiBS-based solve failed or did not return the
+  required solution.
 
-## MiBS Failure and Timeout Propagation
-
-`SubSolverMiBS` and the direct MiBS wrapper distinguish between:
-
-- timeout,
-- MiBS execution failure,
-- and successful completion.
-
-Timeouts raise `TimeoutException`. MiBS stderr failures raise
-`MibSFailureException`. The surrounding solver driver catches these exceptions
-and records the corresponding status.
-
-## Status Fields
-
-JuBiC writes the final high-level solve status into:
-
-- `Opt_status`
-
-Solver families may also write more specific status keys:
-
-- `GBCStatus`
-- `BlCStatus`
-- `BlCLagStatus`
-- `MibSStatus`
-
-The most relevant reported statuses are:
-
-- `Optimal`: the solver reports an optimal solution.
-- `Opt_Numerics`: the solver reports an optimal solution after using an explicit numerical fallback.
-- `Timelimit`: the solver reached the runtime limit.
-- `Timelimit_Numerics`: the solver reached the runtime limit after numerical fallback handling.
-
-Other values indicate that the run terminated through a specific solver-side
-condition or exception. Current values include:
-
-- `Timeout_Submodel`: a submodel or follower evaluation timed out.
-- `Timeout_Subsolver`: a bilevel-capable subsolver timed out.
-- `Terminate`: the solver terminated after an unexpected internal error.
-- `Terminate_MibS`: MiBS failed inside a subsolver call.
-- `Terminate_Numerics`: numerical validation failed in a way JuBiC treats as unsafe.
-- `OptimizeNotCalled`: the master optimization was not called or did not start normally.
-- `NumericalIssue_DuplicateCut`: duplicate-cut analysis found an unexplained repeated connector cut.
-
-## Exception Types
-
-The subsolver layer defines custom exception types used for status propagation:
-
-- `TimeoutException`: an oracle, connector, subsolver, or external solver reached the available time limit.
-- `NumericalIssueException`: cut generation detected a numerical issue that is represented as a solver status.
-- `MibSFailureException`: a MiBS-based solve failed or did not return the required solution.
-
-Solver drivers catch these exceptions and translate them into the status fields
-above.
+Solver drivers catch these exceptions, preserve the underlying message and
+context in the logs or diagnostic record, and propagate the corresponding
+status to the result statistics.
