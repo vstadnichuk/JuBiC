@@ -132,9 +132,21 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
     msol_cuts_mapping_blc = Dict()  # a mapping of master solution to found lazy blc constraints. They are only generated if BlC coef. are automatically computed in subroutine
     msol_subobj_mapping = Dict()  # for each master solution, store per subproblem which subObj values were already separated
+    callback_lock = ReentrantLock()
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
-        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param))
+        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> begin
+            # Gurobi may invoke callbacks from multiple master threads. The
+            # callback owns shared cut caches and mutable ConnectorLP objects;
+            # serialize callback entry while retaining parallel separation of
+            # distinct connectors inside one callback.
+            lock(callback_lock)
+            try
+                gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param)
+            finally
+                unlock(callback_lock)
+            end
+        end)
     else
         @debug "We do not add any callbacks to GBCSolver as we run into a time out during the preprocessing."
         new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")

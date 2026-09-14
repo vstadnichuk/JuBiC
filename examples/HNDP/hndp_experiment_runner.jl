@@ -107,6 +107,16 @@ function run_hndp_experiments!(
 
                     if !write_run_logs
                         try
+                            diagnostic_path = joinpath(run_output_path, "numeric_termination.json")
+                            if isfile(diagnostic_path)
+                                diagnostic_dir = joinpath(output_root, "results", "numeric_termination")
+                                mkpath(diagnostic_dir)
+                                cp(
+                                    diagnostic_path,
+                                    joinpath(diagnostic_dir, "$(experiment_id).json");
+                                    force=true,
+                                )
+                            end
                             rm(run_output_path; recursive=true, force=true, allow_delayed_delete=true)
                         catch err
                             @warn "Could not immediately remove transient HNDP run folder $(run_output_path). Continuing. Error: $(sprint(showerror, err))"
