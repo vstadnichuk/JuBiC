@@ -53,12 +53,14 @@ function ConnectorLP_BlC(solver, infinity_num::Number, A::AbstractVector, link_v
     )
 end
 
-function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict{<:Any, VariableRef}, sub_solver::SubSolver)
+function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict{<:Any, VariableRef}, sub_solver::SubSolver;
+    optimizer_factory=nothing)
     solver = params.solver
     infinity_num = params.infinity_num
     T = eltype(A)
     # build LP
-    myLP = Model(() -> get_next_optimizer(solver))
+    factory = isnothing(optimizer_factory) ? (() -> get_next_optimizer(solver)) : optimizer_factory
+    myLP = Model(factory)
     @variable(myLP, infinity_num >= s >= -infinity_num)
     @variable(myLP, k[sub_solver.A] >= 0)
     connector_threads = (

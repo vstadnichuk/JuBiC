@@ -67,6 +67,15 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     if param.parallel_separation
         parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
         new_stat!(param.stats, "parallel_connector_workers_used", parallel_workers)
+    else
+        parallel_workers = 1
+    end
+
+    # Gurobi environments are not thread-safe.  Initialize the complete pool
+    # before any callback can spawn separation workers; the connector models
+    # are then assigned to these environments during construction below.
+    if param.solver isa GurobiSolver
+        ensure_worker_envs!(param.solver, parallel_workers)
     end
 
     # do some initail checks for master and sub solvers
@@ -87,21 +96,36 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         master.partial_decomposition(master.model, subObj)
     end
 
-    # configure solver logging before preprocessing and final export
+    # Use one absolute deadline for preprocessing, master optimization, and
+    # all callback-side separation calls.  A callback may be entered many
+    # times, so passing `param.runtime` directly to each callback would reset
+    # the effective time limit on every master incumbent.
+    deadline = time() + param.runtime
+
+    # build the sub LPs for Benders subroutine
+    clps, runtime_init = init_connectorLPs(subs, master.link_vars, subObj, param)
+    new_stat!(param.stats, "runtime_preprocessingGBC", runtime_init)
+
+    # Models supplied by callers may have been created with Gurobi's default
+    # environment.  Rebind the master and follower models before optimization
+    # so that the master has its own environment and each connector's complete
+    # worker-side model set uses the connector's assigned worker environment.
+    if param.solver isa GurobiSolver
+        _assign_gurobi_worker_models!(master, subs, clps, param.solver, parallel_workers)
+    end
+
+    # Configure logging after any optimizer rebinding, since replacing a
+    # JuMP optimizer clears optimizer-specific attributes such as LogFile.
     if should_write_output_logs(param)
         try
             set_silent(master.model)
             set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/gbc_mip_log.txt")
-        catch err 
+        catch err
             @error "Could not set log file for folder $(param.output_folder_path). Error is $err"
         end
     else
         set_silent(master.model)
     end
-
-    # build the sub LPs for Benders subroutine 
-    clps, runtime_init = init_connectorLPs(subs, master.link_vars, subObj, param) 
-    new_stat!(param.stats, "runtime_preprocessingGBC", runtime_init)
 
     # debug output: export the master only after preprocessing so stored subObj bounds match the live model
     if should_write_output_logs(param)
@@ -116,7 +140,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     end
 
     # set time limit and number of threads
-    true_runtime = param.runtime - runtime_init
+    true_runtime = max(0.0, deadline - time())
     set_time_limit_sec(master.model, true_runtime)
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
@@ -133,6 +157,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     msol_cuts_mapping_blc = Dict()  # a mapping of master solution to found lazy blc constraints. They are only generated if BlC coef. are automatically computed in subroutine
     msol_subobj_mapping = Dict()  # for each master solution, store per subproblem which subObj values were already separated
     callback_lock = ReentrantLock()
+    worker_locks = [ReentrantLock() for _ in 1:parallel_workers]
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
         set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> begin
@@ -142,7 +167,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             # distinct connectors inside one callback.
             lock(callback_lock)
             try
-                gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param)
+                gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param, deadline, worker_locks)
             finally
                 unlock(callback_lock)
             end
@@ -273,9 +298,11 @@ function init_connectorLPs(subs, link_vars, subObjs, param::GBCparam)
     timelimit_inner = param.runtime
     connectors = []
     try 
-        for s in subs
+        for (idx, s) in enumerate(subs)
             time_s = @elapsed begin
-                con = build_connectorLP(s, link_vars, subObjs[name(s)], param, timelimit_inner)
+                worker_id = param.solver isa GurobiSolver ?
+                    mod1(idx, max(1, get(param.stats.data, "parallel_connector_workers_used", 1))) : 1
+                con = build_connectorLP(s, link_vars, subObjs[name(s)], param, timelimit_inner, worker_id)
                 push!(connectors, con)
             end
             timelimit_inner = timelimit_inner - time_s
@@ -310,13 +337,16 @@ Generate the ConnectorLP objects that form the Benders subproblems within our hi
 # Returns
 - 'lp::ConnectorLP': The LP
 """
-function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, parameter::GBCparam, timelimit)
+function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, parameter::GBCparam, timelimit, worker_id::Integer=1)
     # Generate the ConnectorLP for the passed sub_problem
     @debug "Starting building of ConnectorLP for subpoblem $(name(sub))."
 
     # Construct LP (no objective or constraints)
     # Note that we use upper bounds to prevent unbounded solutions, see the ConnectorLP implimentation
-    myLP = Model(() -> get_next_optimizer(parameter.solver))
+    optimizer_factory = parameter.solver isa GurobiSolver ?
+        (() -> get_worker_optimizer(parameter.solver, worker_id)) :
+        (() -> get_next_optimizer(parameter.solver))
+    myLP = Model(optimizer_factory)
     @variable(myLP, s <= parameter.infinity_num)
     @variable(myLP, k[sub.A] >= 0)
     @variable(myLP, 0 <= g <= parameter.infinity_num)
@@ -346,11 +376,29 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     # add generator for BlC cuts if better cuts are requested
     blc_generator = nothing
     if parameter.bigMwithLC
-        blc_generator = ConnectorLP_BlC(parameter, sub.A, link_vars_master, sub)
+        blc_generator = ConnectorLP_BlC(parameter, sub.A, link_vars_master, sub;
+            optimizer_factory=optimizer_factory)
     end
 
     # build ConnectorLP obj
     return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}(), parameter.g_round_digit, Dict{Symbol,Any}())
+end
+
+"""Rebind worker-side models before the first threaded callback invocation."""
+function _assign_gurobi_worker_models!(master, subs, clps, solver::GurobiSolver, nworkers::Integer)
+    set_optimizer(master.model, () -> Gurobi.Optimizer(solver.env))
+    for (idx, con) in enumerate(clps)
+        worker_id = mod1(idx, nworkers)
+        worker_factory = () -> get_worker_optimizer(solver, worker_id)
+        # The ConnectorLP itself is constructed with this factory.  Rebinding
+        # here also handles models constructed by an older/custom constructor.
+        set_optimizer(con.lp, worker_factory)
+        set_optimizer(con.sub_solver.mip_model, worker_factory)
+        if !isnothing(con.blc_cut_generator)
+            set_optimizer(con.blc_cut_generator.lp, worker_factory)
+        end
+    end
+    return nothing
 end
 
 
@@ -371,7 +419,7 @@ function _connector_thread_count(params::GBCparam)
     return params.parallel_separation ? 1 : used_nthreads(params.stats, "threads_sub_con")
 end
 
-function _local_gbc_param(params::GBCparam)
+function _local_gbc_param(params::GBCparam; runtime=params.runtime)
     local_stats = RunStats()
     new_stat!(local_stats, "threads_master_used", get(params.stats.data, "threads_master_used", 1))
     new_stat!(local_stats, "threads_sub_con_used", get(params.stats.data, "threads_sub_con_used", 1))
@@ -385,7 +433,7 @@ function _local_gbc_param(params::GBCparam)
         params.output_folder_path,
         params.file_format_output,
         local_stats,
-        params.runtime,
+        runtime,
         params.seed,
         params.threads_master,
         params.threads_sub_con,
@@ -453,7 +501,7 @@ function _has_cached_subobj_value(mapping::Dict, msolkey, subname, value)
     return _normalize_subobj_cache_value(value) in per_sub[subname]
 end
 
-function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam)
+function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam, deadline::Real, worker_locks)
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
 
@@ -508,14 +556,18 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
             fill!(task_errors, nothing)
             if parameter.parallel_separation && length(pending) > 1
                 sem = Base.Semaphore(get(parameter.stats.data, "parallel_connector_workers_used", 1))
-                @sync for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
+                @sync for (res_idx, (connector_idx, con, subname, current_subobj)) in enumerate(pending)
                     Threads.@spawn begin
                         Base.acquire(sem)
+                        worker_id = mod1(connector_idx, length(worker_locks))
+                        lock(worker_locks[worker_id])
                         try
-                            local_param = _local_gbc_param(parameter)
+                            remaining_time = deadline - time()
+                            remaining_time <= 0 && throw(TimeoutException("GBC global time limit reached before separating connector $(subname)."))
+                            local_param = _local_gbc_param(parameter; runtime=remaining_time)
                             result_ref = Ref{Any}(nothing)
                             cuttime = @elapsed begin
-                                feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                                feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, remaining_time)
                                 result_ref[] = (
                                     subname=subname,
                                     current_subobj=current_subobj,
@@ -536,6 +588,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                                 bt=stacktrace(catch_backtrace()),
                             )
                         finally
+                            unlock(worker_locks[worker_id])
                             Base.release(sem)
                         end
                     end
@@ -550,10 +603,12 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                 end
             else
                 for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
-                    local_param = parameter.parallel_separation ? _local_gbc_param(parameter) : parameter
+                    remaining_time = deadline - time()
+                    remaining_time <= 0 && throw(TimeoutException("GBC global time limit reached before separating connector $(subname)."))
+                    local_param = parameter.parallel_separation ? _local_gbc_param(parameter; runtime=remaining_time) : parameter
                     result_ref = Ref{Any}(nothing)
                     cuttime = @elapsed begin
-                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, remaining_time)
                         result_ref[] = (
                             subname=subname,
                             current_subobj=current_subobj,
