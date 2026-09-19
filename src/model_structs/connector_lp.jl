@@ -776,9 +776,14 @@ In case the separation takes longer that the set time limit, throw an exception.
     The time it required to execute this function
 """
 function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
-    # this part of the solver can run into quite some nasty infinity loops. To prevent the software just freezing (or seeming to freeze for the user),
-    ## we stop the separation process in case we reach the timelimit set in the parameters (what still can take long, but at least the user is expected to wait this long) 
-    current_time = time()
+    # This part of the solver can run into nasty iteration loops.  Use a
+    # deadline local to this call; the caller supplies the remaining global
+    # GBC time, so repeated master callbacks cannot reset the full run limit.
+    start_time = time()
+    deadline = start_time + max(0.0, Float64(time_limit))
+    if deadline <= time()
+        throw(TimeoutException("We reached the time limit before solving ConnectorLP $(name(subLP.sub_solver))."))
+    end
 
     if !haskey(params.stats.data, "ConnectorLPIterations")
         new_stat!(params.stats, "ConnectorLPIterations", 0)
@@ -793,6 +798,10 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
         add_stat!(params.stats, "ConnectorLPIterations", 1)
+        remaining_time = deadline - time()
+        if remaining_time <= 0
+            throw(TimeoutException("We reached the time limit before resolving ConnectorLP $(name(subLP.sub_solver))."))
+        end
         # solve the sub_problem iteratively (but first debbug output)
         if params.debbug_out
             write_to_file(
@@ -803,6 +812,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # first, solve the LP
         #@debug subLP.lp # this debug output is not helpfull
+        set_time_limit_sec(subLP.lp, remaining_time)
         lp_time = @elapsed optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
         add_stat!(params.stats, "ConnectorLPTimeLP", lp_time)
         check_solution_status_LP(subLP)  
@@ -811,13 +821,15 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
         @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
         pricing_time = @elapsed begin
+            remaining_time = deadline - time()
+            remaining_time <= 0 && throw(TimeoutException("We reached the time limit before pricing ConnectorLP $(name(subLP.sub_solver))."))
             sub_solver = separation!(
                 subLP.sub_solver,
                 value(subLP.lp[:s]),
                 value(subLP.lp[:g]),
                 kvals,
                 params,
-                time_limit
+                remaining_time
             )
             subLP.numeric_state[:last_sub_solver_solution] = sub_solver
         end
@@ -877,7 +889,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
             push!(subLP.my_subsolutions, csc)
 
             # check for time limit
-            if current_time + params.runtime < time() 
+            if deadline < time()
                 @error "We reached the time limit when solving ConnectorLP $(name(subLP.sub_solver)). Terminating cut generation process."
                 throw(TimeoutException("We reached the time limit when solving ConnectorLP $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
             end
@@ -890,7 +902,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
         end
     end
 
-    return time() - current_time # return how long the process took
+    return time() - start_time # return how long the process took
 end
 
 

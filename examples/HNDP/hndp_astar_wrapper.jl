@@ -16,6 +16,16 @@ import JuBiC: reconstract_path
 import JuBiC: dominate_w
 import JuBiC: validate_nonnegative_arc_costs
 
+const HNDP_ASTAR_NUMERIC_COST_TOLERANCE = 1e-4
+
+function _hndp_clamp_tiny_negative_cost(cost::Real)
+    value = Float64(cost)
+    if value < 0.0 && value >= -HNDP_ASTAR_NUMERIC_COST_TOLERANCE
+        return 0.0
+    end
+    return value
+end
+
 """
     HNDPAStarLabel
 
@@ -95,7 +105,7 @@ function cost_w(current::HNDPAStarLabel, neighbour::HNDPAStarLabel, structure::H
     reduced_cost =
         structure.mcost[current.node, neighbour.node] * cs.gval +
         structure.mrisk[current.node, neighbour.node]
-    return reduced_cost + get(cs.kvals, (current.node, neighbour.node), 0.0)
+    return _hndp_clamp_tiny_negative_cost(reduced_cost + get(cs.kvals, (current.node, neighbour.node), 0.0))
 end
 
 function isgoal_w(state::HNDPAStarLabel, goal::HNDPAStarLabel, params::SolverParam)
@@ -198,6 +208,12 @@ function _hndp_calculate_shortest_matrix(structure::HNDPAStarStructure, cs::Cost
         adaptive_costs[a...] += cs.kvals[a]
     end
 
+    # Keep the heuristic consistent with cost_w: tiny negative values caused
+    # by ConnectorLP bound tolerances are treated as zero.
+    for i in 1:size(adaptive_costs, 1), j in 1:size(adaptive_costs, 2)
+        adaptive_costs[i, j] = _hndp_clamp_tiny_negative_cost(adaptive_costs[i, j])
+    end
+
     apsp = floyd_warshall_shortest_paths(structure.graph, adaptive_costs)
     return apsp.dists
 end
@@ -222,7 +238,10 @@ function validate_nonnegative_arc_costs(sol::AStarSolver, xmapping, cs::CostStru
                 structure.mcost[arc...] * cs.gval + structure.mrisk[arc...] + get(cs.kvals, arc, 0.0)
             end
 
-            if arc_cost < 0
+            if arc_cost < 0 && arc_cost >= -HNDP_ASTAR_NUMERIC_COST_TOLERANCE
+                @warn "The A*-based HNDP subsolver encountered a numerically insignificant negative connector arc cost; treating it as zero. Subproblem=$(sol.name), arc=$(arc), raw_cost=$(arc_cost), tolerance=$(HNDP_ASTAR_NUMERIC_COST_TOLERANCE)."
+                continue
+            elseif arc_cost < 0
                 throw(ArgumentError(
                     "The A*-based HNDP subsolver does not support negative arc costs for the active objective. " *
                     "Found arc $(arc) with cost $(arc_cost) in cost state $(cs.cost_state) for subproblem $(sol.name).",

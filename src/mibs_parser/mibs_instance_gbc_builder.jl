@@ -10,6 +10,7 @@ Builds an instance from the given MPS and AUX files.
 function get_GBC_instance(mps_file_path::String, aux_file_path::String, optimizer; partial_decomposition::Bool=true, preprocessing::Bool=true, stats::Union{Nothing,RunStats}=nothing)
     mps_data = _read_mps(mps_file_path)
     aux_data = _read_aux(aux_file_path)
+    _validate_supported_instance_format(mps_data, aux_data)
 
     obj_bias = preprocessing ? _preprocess_model(mps_data, aux_data) : 0.0
 
