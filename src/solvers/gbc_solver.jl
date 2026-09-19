@@ -393,7 +393,12 @@ function _assign_gurobi_worker_models!(master, subs, clps, solver::GurobiSolver,
         # The ConnectorLP itself is constructed with this factory.  Rebinding
         # here also handles models constructed by an older/custom constructor.
         set_optimizer(con.lp, worker_factory)
-        set_optimizer(con.sub_solver.mip_model, worker_factory)
+        # MIP-based follower subsolvers own a JuMP model that must be rebound
+        # to the worker environment. Algorithmic subsolvers such as AStarSolver
+        # do not own a mip_model; their connector LP is still rebound above.
+        if hasproperty(con.sub_solver, :mip_model)
+            set_optimizer(con.sub_solver.mip_model, worker_factory)
+        end
         if !isnothing(con.blc_cut_generator)
             set_optimizer(con.blc_cut_generator.lp, worker_factory)
         end

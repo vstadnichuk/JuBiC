@@ -16,8 +16,13 @@ Gurobi-based implementation of `SolverWrapper`.
 The wrapper stores a `Gurobi.Env` and creates `Gurobi.Optimizer` objects through
 `get_next_optimizer`.
 """
-struct GurobiSolver <: SolverWrapper
-    env::Any  # The enviroment for the currernt solver 
+mutable struct GurobiSolver <: SolverWrapper
+    # The environment used by the master/default model factory.
+    env::Any
+    # Worker environments are created before threaded separation starts.  A
+    # model assigned to a worker must keep using that worker's environment.
+    worker_envs::Vector{Any}
+    silent::Bool
 end
 
 """
@@ -40,7 +45,27 @@ messages for end users.
 """
 function GurobiSolver(; silent::Bool=true)
     env = silent ? silent_gurobi_env() : Gurobi.Env()
-    return GurobiSolver(env)
+    return GurobiSolver(env, Any[], silent)
+end
+
+# Preserve the historical one-argument constructor used by client code.
+GurobiSolver(env) = GurobiSolver(env, Any[], false)
+
+"""Create `n` worker environments on the calling (initialization) thread."""
+function ensure_worker_envs!(s::GurobiSolver, n::Integer)
+    n >= 1 || throw(ArgumentError("The number of Gurobi worker environments must be positive."))
+    while length(s.worker_envs) < n
+        env = s.silent ? silent_gurobi_env() : Gurobi.Env()
+        push!(s.worker_envs, env)
+    end
+    return s.worker_envs
+end
+
+"""Return an optimizer bound to the requested pre-created worker environment."""
+function get_worker_optimizer(s::GurobiSolver, worker_id::Integer)
+    1 <= worker_id <= length(s.worker_envs) ||
+        throw(ArgumentError("Worker environment $(worker_id) has not been initialized."))
+    return Gurobi.Optimizer(s.worker_envs[worker_id])
 end
 
 
