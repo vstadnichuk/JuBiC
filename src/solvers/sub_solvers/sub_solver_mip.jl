@@ -158,6 +158,7 @@ function extra_cuts_benderslike_JuMP(jump::JuMP.Model, sub::JuMP.Model, A, oL2, 
         delete(jump, fixc[a])
     end
     unregister(jump, :fixc)
+    _flush_model_updates!(jump)
 
     # check if cut is needed to be added
     @debug "Solved helper MIP and found solution with value $subopt while current master solution is $current_L2solution_sub"
@@ -353,30 +354,35 @@ function set_singlethread(sol::SubSolverJuMP)
 end
 
 function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_limit)
-    # set original objective function (just to make sure)
-    @objective(sol.mip_model, Min, sol.c_objterm)
-
-    # fix values for linking variables
-    @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))  # TODO: The rounding seems to help with numerics
-    #@constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == xvals[a])
-
-    # solve adjusted sub (and write to file in debbug mode)
+    # Keep the temporary fixing constraints inside the protected scope.  In
+    # particular, solve_mip can throw a TimeoutException before returning; the
+    # old layout entered the finally block only afterwards and consequently
+    # left fixc constraints in the persistent worker model.
+    fix_constraints = nothing
     try
-        if should_debbug_print(params)
-            write_to_file(
-                sol.mip_model,
-                "$(params.output_folder_path)/subfix_$(sol.name).$(params.file_format_output)",
-            )
+        # set original objective function (just to make sure)
+        @objective(sol.mip_model, Min, sol.c_objterm)
+
+        # fix values for linking variables
+        fix_constraints = @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))  # TODO: The rounding seems to help with numerics
+        #@constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == xvals[a])
+
+        # solve adjusted sub (and write to file in debbug mode)
+        try
+            if should_debbug_print(params)
+                write_to_file(
+                    sol.mip_model,
+                    "$(params.output_folder_path)/subfix_$(sol.name).$(params.file_format_output)",
+                )
+            end
+        catch err
+            @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
         end
-    catch err
-        @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
-    end
 
-    # set adjusted time limit
-    @debug "Subproblem $(sol.name) MIP was adjusted. Start MIP solver to solve it. "
-    solve_mip(sol, params, time_limit)
+        # set adjusted time limit
+        @debug "Subproblem $(sol.name) MIP was adjusted. Start MIP solver to solve it. "
+        solve_mip(sol, params, time_limit)
 
-    try
         # here, we can have infeasible solutions due to wrong first-level decision. Catch this case
         status = termination_status(sol.mip_model)
         if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
@@ -426,10 +432,13 @@ function solve_sub_for_x(sol::SubSolverJuMP, xvals, params::SolverParam, time_li
         return true, osol, osol_L1, y_vals
     finally
         # cleanup
-        for a in sol.A # TODO: can we implement this faster?
-            delete(sol.mip_model, fixc[a])
+        if !isnothing(fix_constraints)
+            for a in sol.A # TODO: can we implement this faster?
+                delete(sol.mip_model, fix_constraints[a])
+            end
+            unregister(sol.mip_model, :fixc)
+            _flush_model_updates!(sol.mip_model)
         end
-        unregister(sol.mip_model, :fixc)
     end
 end
 
@@ -474,6 +483,7 @@ function verify_sub_for_x_optimistic(sol::SubSolverJuMP, xvals, params::SolverPa
             delete(sol.mip_model, fixc[a])
         end
         unregister(sol.mip_model, :fixc)
+        _flush_model_updates!(sol.mip_model)
     end
 end
 

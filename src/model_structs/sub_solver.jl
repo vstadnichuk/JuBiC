@@ -71,6 +71,39 @@ struct MibSFailureException <: Exception
 end
 Base.showerror(io::IO, err::MibSFailureException) = print(io, err.message)
 
+"""
+    _flush_model_updates!(model)
+
+Flush pending model modifications after a batch of temporary constraints has
+been deleted. JuMP normally flushes these changes at the next `optimize!`, but
+the Gurobi wrapper maintains additional bookkeeping for deleted columns and
+constraints. Calling its internal update routine here keeps that bookkeeping
+and Gurobi's native model synchronized before the persistent model is reused.
+
+For non-Gurobi models, or models without an attached optimizer, this is a
+no-op.
+"""
+function _flush_model_updates!(model)
+    try
+        optimizer = JuMP.unsafe_backend(model)
+        if optimizer isa Gurobi.Optimizer
+            # Use Gurobi.jl's update path rather than calling GRBupdatemodel
+            # directly: the wrapper also adjusts its internal indices after
+            # deletions and resets its pending-change flags.
+            Gurobi._update_if_necessary(optimizer; force=true)
+        end
+    catch err
+        # Some auxiliary model types (notably BilevelJuMP models) do not expose
+        # a JuMP optimizer backend directly. They are flushed by their own
+        # solver interface, so leave those models untouched here.
+        if err isa MethodError || err isa UndefRefError
+            return nothing
+        end
+        rethrow()
+    end
+    return nothing
+end
+
 ############ Functions you have to implement yourself for your subsolver ############
 """
     capacity_linking(sub_solver::SubSolver, a, params::SolverParam)

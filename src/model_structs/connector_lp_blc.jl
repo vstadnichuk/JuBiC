@@ -168,46 +168,56 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
     if !foundfeas
         throw(ErrorException("Found infeasible second-level when generating big M coef. for BlC cuts using Lagrangian dual. The master values are: $link_vals"))
     end
-    fixs_c = @constraint(subLP.lp, subLP.lp[:s] == optL2, base_name="Fix_s")  # TODO: "=" to force structure of BlC 
+    # Both Fix_s and the Pareto-band constraints are temporary.  ConnectorLP_BlC
+    # is persistent across callback calls, so cleanup must also happen when
+    # separation, Pareto refinement, or cut construction throws.
+    fixs_c = nothing
+    try
+        fixs_c = @constraint(subLP.lp, subLP.lp[:s] == optL2, base_name="Fix_s")  # TODO: "=" to force structure of BlC
 
-    # solve sub LP for new master
-    @debug "Start iterative solution procedure for ConnectorLP_BlC $(name(subLP.sub_solver))."
-    time_iterate = iterate_subsolver_BlC(subLP, params, time_limit)
-    pobj = value(new_obj)
+        # solve sub LP for new master
+        @debug "Start iterative solution procedure for ConnectorLP_BlC $(name(subLP.sub_solver))."
+        time_iterate = iterate_subsolver_BlC(subLP, params, time_limit)
+        pobj = value(new_obj)
 
-    # pareto optimality step for optimality cuts
-    if params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
-        time_limit_pareto = time_limit - time_iterate
-        pareto_snapshot = _connector_solution_snapshot(subLP)
-        try
-            @debug "Start pareto-optimal Benders cut generation procedure for ConnectorLP_BlC $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-            pareto_optimal_decomposition_BlC(subLP, new_obj, params, time_limit_pareto)
-            pobj = value(new_obj)
-        catch err
-            @warn "Pareto-optimal cut generation failed for ConnectorLP_BlC $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
-            _set_pareto_numerics_status!(params)
-            subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
+        # pareto optimality step for optimality cuts
+        if params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
+            time_limit_pareto = time_limit - time_iterate
+            pareto_snapshot = _connector_solution_snapshot(subLP)
+            try
+                @debug "Start pareto-optimal Benders cut generation procedure for ConnectorLP_BlC $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
+                pareto_optimal_decomposition_BlC(subLP, new_obj, params, time_limit_pareto)
+                pobj = value(new_obj)
+            catch err
+                @warn "Pareto-optimal cut generation failed for ConnectorLP_BlC $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
+                _set_pareto_numerics_status!(params)
+                subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
+            end
         end
-    end
 
-    #build opt cut
-    cut, cutcoeff = build_opt_cut_BlC(subLP, params)
-
-    # clean up and return
-    pareto_optimal_decomposition_cleanup(subLP)
-    delete(subLP.lp, fixs_c) 
-    unregister(subLP.lp, :fixs_c) 
-    if !params.warmstart
-        # okay, I understand that these tests are kind of interesting, BUT I never felt so stupid implementing a feature
-        @debug "As requested cleaning up ConnectorLP_BlC $(name(subLP.sub_solver)) by removing all generated constraints."
-        for cref in all_constraints(subLP.lp; include_variable_in_set_constraints=false)
-            @debug "Now deleting constraint $cref from ConnectorLP_BlC $(name(subLP.sub_solver))."
-            delete(subLP.lp, cref)
+        # build opt cut
+        cut, cutcoeff = build_opt_cut_BlC(subLP, params)
+        return cut, pobj, cutcoeff
+    finally
+        # Remove Pareto constraints first, then the temporary Fix_s constraint.
+        # The helper is idempotent and also removes a partially created Pareto
+        # band if Pareto separation failed midway through.
+        pareto_optimal_decomposition_cleanup(subLP)
+        if !isnothing(fixs_c)
+            delete(subLP.lp, fixs_c)
+            unregister(subLP.lp, :fixs_c)
         end
+        if !params.warmstart
+            @debug "As requested cleaning up ConnectorLP_BlC $(name(subLP.sub_solver)) by removing all generated constraints."
+            for cref in all_constraints(subLP.lp; include_variable_in_set_constraints=false)
+                @debug "Now deleting constraint $cref from ConnectorLP_BlC $(name(subLP.sub_solver))."
+                delete(subLP.lp, cref)
+            end
+        end
+        _flush_model_updates!(subLP.lp)
+        @debug "Finished solving ConnectorLP_BlC $(name(subLP.sub_solver))."
+        _reset_numeric_state!(subLP)
     end
-    @debug "Finished solving ConnectorLP_BlC $(name(subLP.sub_solver))."
-    _reset_numeric_state!(subLP)
-    return cut, pobj, cutcoeff
 end
 
 

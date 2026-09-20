@@ -407,6 +407,7 @@ function _build_competition_generated_network(
     base_graph = _load_named_base_graph(topology_id)
     graph = base_graph
     decision_arcs = _sample_decision_arcs(graph, parameter_seed, decision_arc_count)
+    negative_risk = Bool(get(spec, "negative_risk", false))
 
     users, minweights = if single_layer_arc_mode == "competition"
         _build_single_layer_competition_users(
@@ -421,6 +422,7 @@ function _build_competition_generated_network(
             decision_arcs,
             competitor_cost_factor,
             user_parameter_mode,
+            negative_risk=negative_risk,
         )
     else
         _build_single_layer_decision_only_users(
@@ -440,12 +442,13 @@ function _build_competition_generated_network(
     instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
     metadata = Dict{String,Any}(
-        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction, single_layer_arc_mode=single_layer_arc_mode),
+        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction, single_layer_arc_mode=single_layer_arc_mode, negative_risk=negative_risk),
         "instance_type" => "competition",
         "topology_family" => topology_id,
         "base_topology_family" => topology_id,
         "competition_graph_style" => "single_layer_k_" * single_layer_arc_mode,
         "single_layer_arc_mode" => single_layer_arc_mode,
+        "negative_risk" => negative_risk,
         "layered_instance" => false,
         "nusers" => nusers,
         "parameter_seed" => parameter_seed,
@@ -771,6 +774,8 @@ function _build_single_layer_competition_users(
     decision_arcs,
     competitor_cost_factor::Float64,
     user_parameter_mode::String,
+    ;
+    negative_risk::Bool=false,
 )
     rng = MersenneTwister(seed)
     users = User[]
@@ -784,7 +789,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=negative_risk,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
@@ -806,7 +811,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=negative_risk,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
@@ -1196,6 +1201,7 @@ function _generated_name(
     decision_arc_count=nothing,
     availability_budget_fraction=nothing,
     single_layer_arc_mode=nothing,
+    negative_risk=false,
 )
     parts = [
         base_name,
@@ -1211,6 +1217,7 @@ function _generated_name(
         push!(parts, single_layer_arc_mode == "competition" ? "KCOMP" : "KDEC")
     end
     availability_budget_fraction !== nothing && push!(parts, "B$(availability_budget_fraction)")
+    negative_risk && push!(parts, "RNEG")
     two_stage !== nothing && push!(parts, two_stage ? "coop" : "bilevel")
     user_parameter_mode !== nothing && push!(parts, user_parameter_mode == "shared" ? "shared" : "peruser")
     return join(parts, "_")

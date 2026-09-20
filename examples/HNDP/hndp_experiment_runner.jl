@@ -335,6 +335,11 @@ function _resolve_hndp_param_config(
 )
     resolved = deepcopy(param_spec)
     resolved["solver"] = solver_name
+    # HNDP follower-risk objectives are integer-valued by construction. Use
+    # integerized GBC/BlC cuts by default, while preserving an explicit override.
+    if solver_name in ("GBC", "BLC") && !haskey(resolved, "integer_obj")
+        resolved["integer_obj"] = true
+    end
     resolved["output_folder_path"] = String(run_output_path)
     resolved["enable_output_logs"] = write_run_logs
     if haskey(model_metadata, "runtime_override")

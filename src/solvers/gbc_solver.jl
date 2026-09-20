@@ -6,6 +6,18 @@ using JSON
 import MathOptInterface as MOI
 using Base.Threads
 
+const GBC_CONNECTOR_TIMEOUT_BUFFER = 1.0
+
+function _request_gurobi_master_termination!(cb_data, reason::AbstractString)
+    try
+        Gurobi.GRBterminate(cb_data.model)
+        @debug "Requested native Gurobi master termination: $(reason)"
+    catch err
+        @error "Could not request native Gurobi master termination after $(reason)" exception=(err, catch_backtrace())
+    end
+    return nothing
+end
+
 function _write_numerical_diagnostic(param, err::NumericalIssueException, bt)
     # Keep ordinary runs lightweight: write a structured diagnostic only when
     # numerical instability aborts the GBC solve.
@@ -142,6 +154,13 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     # set time limit and number of threads
     true_runtime = max(0.0, deadline - time())
     set_time_limit_sec(master.model, true_runtime)
+    # Reserve a small margin for callback unwinding and model cleanup.  The
+    # callback will request native termination if it is entered in this
+    # buffer, and no ConnectorLP separation will be started.
+    if true_runtime <= GBC_CONNECTOR_TIMEOUT_BUFFER
+        param.stats.data["GBCStatus"] = "Timeout_Submodel"
+        param.stats.data["Opt_status_override"] = "Timeout_Submodel"
+    end
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
     for sub in subs
@@ -241,7 +260,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         # print solution and collected data
         print_collected_cuts(param, msol_cuts_mapping)
         print_collected_cuts(param, msol_cuts_mapping_blc; filename="mastercuts_blc.txt")
-        if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT
+        if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT || termination_status(master.model) == MOI.INTERRUPTED
             if primal_status(master.model) == MOI.FEASIBLE_POINT
                 try
                     mobj = objective_value(master.model)
@@ -399,6 +418,15 @@ function _assign_gurobi_worker_models!(master, subs, clps, solver::GurobiSolver,
         if hasproperty(con.sub_solver, :mip_model)
             set_optimizer(con.sub_solver.mip_model, worker_factory)
         end
+        # SubSolverBlCJuMP keeps a separate persistent oracle model created by
+        # copy_model. It must use the same worker environment as the main
+        # subsolver; otherwise oracle calls can recreate/finalize models in the
+        # shared master environment from inside a threaded callback.
+        if hasproperty(con.sub_solver, :oracle_model) &&
+           !isnothing(con.sub_solver.oracle_model)
+            set_optimizer(con.sub_solver.oracle_model, worker_factory)
+            con.sub_solver.oracle_optimizer_bound[] = true
+        end
         if !isnothing(con.blc_cut_generator)
             set_optimizer(con.blc_cut_generator.lp, worker_factory)
         end
@@ -455,10 +483,16 @@ function _local_gbc_param(params::GBCparam; runtime=params.runtime)
     )
 end
 
-function _format_parallel_gbc_task_error(subname::AbstractString, err, bt)
+function _format_parallel_gbc_task_error(subname::AbstractString, err, bt; worker_id=nothing, phase=nothing, cleanup_errors=())
     io = IOBuffer()
     print(io, "Parallel GBC separator failed for subproblem ", subname, ". ")
+    !isnothing(worker_id) && print(io, "worker=", worker_id, ". ")
+    !isnothing(phase) && print(io, "phase=", phase, ". ")
     showerror(io, err, bt)
+    for cleanup_error in cleanup_errors
+        print(io, " Cleanup failure: ")
+        showerror(io, cleanup_error.error, cleanup_error.backtrace)
+    end
     return String(take!(io))
 end
 
@@ -512,9 +546,10 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
 
     # Do not start another separation after the global deadline.  Returning
     # normally lets Gurobi terminate through its own time-limit machinery.
-    if time() >= deadline
+    if deadline - time() <= GBC_CONNECTOR_TIMEOUT_BUFFER
         parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
         parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+        _request_gurobi_master_termination!(cb_data, "the one-second connector timeout buffer was reached")
         return
     end
 
@@ -573,36 +608,58 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                 # allowed to drain; tasks waiting for a worker do not start new
                 # Gurobi work once this flag is set.
                 abort_separation = Threads.Atomic{Bool}(false)
-                @sync for (res_idx, (connector_idx, con, subname, current_subobj)) in enumerate(pending)
+                timeout_observed = Threads.Atomic{Bool}(false)
+                sync_error = nothing
+                try
+                    @sync for (res_idx, (connector_idx, con, subname, current_subobj)) in enumerate(pending)
                     Threads.@spawn begin
-                        Base.acquire(sem)
                         worker_id = mod1(connector_idx, length(worker_locks))
+                        semaphore_acquired = false
                         worker_locked = false
+                        phase = "created"
+                        primary_failure = nothing
+                        cleanup_failures = NamedTuple{(:error, :backtrace),Tuple{Any,Any}}[]
                         try
+                            phase = "acquire_semaphore"
+                            Base.acquire(sem)
+                            semaphore_acquired = true
                             if abort_separation[]
+                                phase = "cancelled_before_lock"
                                 task_errors[res_idx] = (
                                     subname=subname,
                                     current_subobj=current_subobj,
                                     err=TimeoutException("GBC separation cancelled after the global time limit was reached."),
                                     bt=nothing,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
                                 )
                                 return
                             end
+                            phase = "lock_worker"
                             lock(worker_locks[worker_id])
                             worker_locked = true
+                            phase = "check_deadline"
                             remaining_time = deadline - time()
-                            if remaining_time <= 0
-                                Threads.atomic_store!(abort_separation, true)
+                            if remaining_time <= GBC_CONNECTOR_TIMEOUT_BUFFER
+                                Threads.atomic_xchg!(abort_separation, true)
+                                Threads.atomic_xchg!(timeout_observed, true)
+                                phase = "deadline_reached"
                                 task_errors[res_idx] = (
                                     subname=subname,
                                     current_subobj=current_subobj,
                                     err=TimeoutException("GBC global time limit reached before separating connector $(subname)."),
                                     bt=nothing,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
                                 )
                                 return
                             end
+                            phase = "build_local_parameters"
                             local_param = _local_gbc_param(parameter; runtime=remaining_time)
                             result_ref = Ref{Any}(nothing)
+                            phase = "genBenders_cut"
                             cuttime = @elapsed begin
                                 feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, remaining_time)
                                 result_ref[] = (
@@ -618,45 +675,107 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             base_result = result_ref[]
                             results[res_idx] = (; base_result..., cuttime=cuttime)
                         catch err
-                            if err isa TimeoutException
-                                Threads.atomic_store!(abort_separation, true)
-                            end
-                            task_errors[res_idx] = (
-                                subname=subname,
-                                current_subobj=current_subobj,
+                            primary_failure = (
                                 err=err,
-                                bt=stacktrace(catch_backtrace()),
+                                backtrace=stacktrace(catch_backtrace()),
                             )
+                            if err isa TimeoutException
+                                Threads.atomic_xchg!(abort_separation, true)
+                                Threads.atomic_xchg!(timeout_observed, true)
+                            end
                         finally
-                            worker_locked && unlock(worker_locks[worker_id])
-                            Base.release(sem)
+                            if worker_locked
+                                phase = "unlock_worker"
+                                try
+                                    unlock(worker_locks[worker_id])
+                                catch err
+                                    push!(cleanup_failures, (error=err, backtrace=catch_backtrace()))
+                                end
+                            end
+                            if semaphore_acquired
+                                phase = "release_semaphore"
+                                try
+                                    Base.release(sem)
+                                catch err
+                                    push!(cleanup_failures, (error=err, backtrace=catch_backtrace()))
+                                end
+                            end
+                            if !isnothing(primary_failure)
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=primary_failure.err,
+                                    bt=primary_failure.backtrace,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
+                                )
+                            elseif !isempty(cleanup_failures)
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=cleanup_failures[1].error,
+                                    bt=cleanup_failures[1].backtrace,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
+                                )
+                            end
                         end
+                    end
+                    end
+                catch err
+                    sync_error = (error=err, backtrace=catch_backtrace())
+                    # A cleanup exception can mask the original
+                    # TimeoutException.  If the synchronization barrier fails
+                    # at the global deadline, preserve the timeout meaning for
+                    # status reporting and retain the composite error above as
+                    # a diagnostic.
+                    if deadline - time() <= GBC_CONNECTOR_TIMEOUT_BUFFER
+                        Threads.atomic_xchg!(timeout_observed, true)
+                    end
+                end
+
+                if !isnothing(sync_error)
+                    if timeout_observed[]
+                        @error "Parallel GBC separation raised an exception after a subsolver timeout; classifying the run as Timeout_Submodel" exception=(sync_error.error, sync_error.backtrace)
+                    else
+                        throw(sync_error.error)
                     end
                 end
 
                 failures = [failure for failure in task_errors if !isnothing(failure)]
                 timeout_failures = [failure for failure in failures if failure.err isa TimeoutException]
                 other_failures = [failure for failure in failures if !(failure.err isa TimeoutException)]
-                if !isempty(other_failures)
+                if !isempty(other_failures) && !timeout_observed[]
                     for failure in other_failures
-                        @error _format_parallel_gbc_task_error(failure.subname, failure.err, failure.bt)
+                        @error _format_parallel_gbc_task_error(
+                            failure.subname,
+                            failure.err,
+                            failure.bt;
+                            worker_id=get(failure, :worker_id, nothing),
+                            phase=get(failure, :phase, nothing),
+                            cleanup_errors=get(failure, :cleanup_errors, ()),
+                        )
                     end
                     throw(first(other_failures).err)
-                elseif !isempty(timeout_failures) || abort_separation[]
+                elseif !isempty(timeout_failures) || abort_separation[] || timeout_observed[]
                     # Never throw a timeout from inside the Gurobi callback.
                     # Partial cuts are discarded and all spawned tasks have
                     # already drained because this code follows @sync.
                     parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
                     parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
                     @debug "GBC separation reached its global time limit; connector tasks drained and no further cuts are submitted."
+                    _request_gurobi_master_termination!(cb_data, "a connector subsolver reached its time limit")
                     return
                 end
             else
                 for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
                     remaining_time = deadline - time()
-                    if remaining_time <= 0
+                    if remaining_time <= GBC_CONNECTOR_TIMEOUT_BUFFER
                         parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
                         parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+                        _request_gurobi_master_termination!(cb_data, "the one-second connector timeout buffer was reached in serial separation")
                         return
                     end
                     local_param = parameter.parallel_separation ? _local_gbc_param(parameter; runtime=remaining_time) : parameter

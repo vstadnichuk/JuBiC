@@ -441,10 +441,12 @@ Generate an general Benders (feasibility or optimality) cut.
 """
 function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
     _reset_numeric_state!(subLP)
+    subLP.numeric_state[:connector_phase] = "follower_solve"
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP $(name(subLP.sub_solver))."
 
     foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, time_limit)
+    subLP.numeric_state[:connector_phase] = "standard_lp"
     new_obj = subLP.lp[:s] - optL2 * subLP.lp[:g]
     new_obj +=
         -sum([
@@ -468,7 +470,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         fix_g_constraint = @constraint(subLP.lp, subLP.lp[:g] == 0)
 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for feasibility cut generation."
-        time_iterate = iterate_subsolver(subLP, params, time_limit)  # solve with new constraint
+        time_iterate = iterate_subsolver(subLP, params, time_limit; phase="standard")  # solve with new constraint
 
         
         # pareto optimality step for feasibility cuts
@@ -485,7 +487,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
     else
         # solve sub_problem 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for optimality cut generation."
-        time_iterate = iterate_subsolver(subLP, params, time_limit)
+        time_iterate = iterate_subsolver(subLP, params, time_limit; phase="standard")
         time_limit_build_cut = time_limit - time_iterate
         pobj = value(new_obj)
 
@@ -531,6 +533,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         end
         empty!(subLP.my_subsolutions)
     end
+    _flush_model_updates!(subLP.lp)
     @debug "Finished solving connectLP $(name(subLP.sub_solver))."
     return feas, cut, bigMcut, pobj
 end
@@ -713,19 +716,21 @@ function check_solution_status_LP(me::ConnectorLP)
 
 
     if status == MOI.INFEASIBLE
-        @error "The ConnectorLP $(name(me)) is infeasible. Starting computations of IIS. But most of the time this is implied by numerical issues."
-        compute_conflict!(me.lp)
-        @debug "IIS computed, now printing it"
-        iis_model, _ = copy_conflict(me.lp)
-        if get_attribute(me.lp, MOI.ConflictStatus()) == MOI.CONFLICT_FOUND
-            @error iis_model # printing to file just causes error...
-        else
-            @error "The IIS was not computed succesfully??? Most likely numerics??"
-        end
+        # ConnectorLP is solved from threaded GBC callback workers. Avoid
+        # constructing and copying a temporary IIS model here, since it can be
+        # finalized while the callback is still active.
+        phase = get(me.numeric_state, :connector_phase, "unknown")
+        iteration = get(me.numeric_state, :connector_iteration, missing)
+        @error "The ConnectorLP $(name(me)) is infeasible during phase=$(phase), iteration=$(iteration). IIS computation is disabled during threaded separation; this most likely indicates a numerical issue."
         throw(NumericalIssueException(
-            "ConnectorLP $(name(me)) was infeasible. Computed IIS but stopping solution process (as it is clearly a bug). Most likely, it was caused by numerical issues.",
+            "ConnectorLP $(name(me)) was infeasible during phase=$(phase), iteration=$(iteration). IIS computation was skipped during threaded separation; stopping solution process because this most likely indicates a numerical issue.",
             "Terminate_Numerics",
-            Dict{String,Any}("type" => "InfeasibleConnectorLP", "connector" => name(me)),
+            Dict{String,Any}(
+                "type" => "InfeasibleConnectorLP",
+                "connector" => name(me),
+                "phase" => phase,
+                "iteration" => iteration,
+            ),
         ))
     elseif status == MOI.DUAL_INFEASIBLE
         throw(NumericalIssueException(
@@ -775,7 +780,7 @@ In case the separation takes longer that the set time limit, throw an exception.
 # Return
     The time it required to execute this function
 """
-function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
+function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit; phase::AbstractString="standard")
     # This part of the solver can run into nasty iteration loops.  Use a
     # deadline local to this call; the caller supplies the remaining global
     # GBC time, so repeated master callbacks cannot reset the full run limit.
@@ -798,6 +803,8 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
         add_stat!(params.stats, "ConnectorLPIterations", 1)
+        subLP.numeric_state[:connector_phase] = "$(phase)_lp_solve"
+        subLP.numeric_state[:connector_iteration] = get(params.stats.data, "ConnectorLPIterations", 0)
         remaining_time = deadline - time()
         if remaining_time <= 0
             throw(TimeoutException("We reached the time limit before resolving ConnectorLP $(name(subLP.sub_solver))."))
@@ -820,6 +827,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
         @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
+        subLP.numeric_state[:connector_phase] = "$(phase)_pricing"
         pricing_time = @elapsed begin
             remaining_time = deadline - time()
             remaining_time <= 0 && throw(TimeoutException("We reached the time limit before pricing ConnectorLP $(name(subLP.sub_solver))."))
@@ -840,6 +848,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
             # add constraints
+            subLP.numeric_state[:connector_phase] = "$(phase)_add_subsolver_cut"
             @debug "For connector $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and uses resources $(sub_solver.A_sub)."
             csc = ConSubsolCut(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level)
             if csc in subLP.my_subsolutions
@@ -1001,7 +1010,7 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
     end
 
     # resolve optimization problem
-    iterate_subsolver(subLP, params, time_limit)
+    iterate_subsolver(subLP, params, time_limit; phase="pareto")
 end
 
 
