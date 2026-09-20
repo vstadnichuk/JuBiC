@@ -287,10 +287,12 @@ struct BLCparam <: SolverParam
     threads_master::Any  # number of threads used in the master MIP problem
     threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
     parallel_separation::Bool  # if true, solve per-user subproblems in parallel and force worker-side subsolvers to single thread
+    integer_obj::Bool  # if true, round follower-objective cut coefficients that are numerically close to integers
 end
 
-BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true)
-BLCparam(solver, debbug_out, output_folder_path, file_format_output) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, false)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime, integer_obj::Bool) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, integer_obj)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, false)
 
 
 function get_stats(param::BLCparam)

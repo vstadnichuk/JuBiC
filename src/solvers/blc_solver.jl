@@ -1,6 +1,33 @@
 # Basic implementation of a Benders-like cuts solver. The big M must be provided by the user.
 using Base.Threads
 
+const BLC_INTEGER_OBJECTIVE_TOL = 1e-4
+
+"""Round a BlC cut value to the nearest integer when it is numerically close.
+
+The follower objectives and the associated big-M coefficients are integer-valued
+for the HNDP instances.  Rounding is deliberately applied only to values that
+are already within the numerical tolerance, so non-integer model data is left
+unchanged.
+"""
+function _round_blc_integer_if_close(
+    value::Real,
+    parameter::BLCparam,
+    sub_name,
+    description::AbstractString,
+)
+    value_float = Float64(value)
+    parameter.integer_obj || return value_float
+    integer_value = round(value_float)
+    if abs(value_float - integer_value) <= BLC_INTEGER_OBJECTIVE_TOL
+        if value_float != integer_value
+            @debug "BlC $(sub_name) integerizes $(description): $(value_float) -> $(integer_value)."
+        end
+        return Float64(integer_value)
+    end
+    return value_float
+end
+
 function solve_with_BLC!(inst::Instance, param::BLCparam)
     blcm::BlCMaster = inst.master
 
@@ -12,6 +39,7 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     new_stat!(param.stats, "BlCuts", 0)
     new_stat!(param.stats, "SepaTime", 0)  # time spend in separator
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
+    new_stat!(param.stats, "integer_obj", param.integer_obj)
 
     # do some initial checks for master and sub solvers
     @debug "Doing some checks if master and sub were created correctly for Benders-like cuts solver."
@@ -168,15 +196,25 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
                         error("Terminate BlC solver: The passed first-level solution was not feasible for subsolver $(name(sub)). x=$x_vals")
                     end
 
+                    rounded_subopt = _round_blc_integer_if_close(
+                        result.subopt,
+                        parameter,
+                        name(sub),
+                        "follower objective",
+                    )
                     bigMterms = 0
                     for a in blcm.A
+                        bigMcoefficient = _round_blc_integer_if_close(
+                            blcm.big_m(a, name(sub)) * result.y_vals[a],
+                            parameter,
+                            name(sub),
+                            "big-M coefficient for arc $(a)",
+                        )
                         bigMterms +=
-                            blcm.big_m(a, name(sub)) *
-                            result.y_vals[a] *
-                            (1 - blcm.link_vars[a])
+                            bigMcoefficient * (1 - blcm.link_vars[a])
                     end
                     cutopt = @build_constraint(
-                        blcm.sub_objectives[name(sub)] <= result.subopt + bigMterms
+                        blcm.sub_objectives[name(sub)] <= rounded_subopt + bigMterms
                     )
                     @debug "Adding Benders-like cut $(cutopt) to the master problem for sub $(name(sub))."
                     add_stat!(parameter.stats, "BlCuts", 1)

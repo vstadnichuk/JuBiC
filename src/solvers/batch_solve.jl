@@ -543,6 +543,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
         parallel_separation = _get_bool(config, "parallel_separation", true)
+        integer_obj = _get_bool(config, "integer_obj", false)
         param = BLCparam(
             wrapper,
             debbug_out,
@@ -554,6 +555,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             threads_master,
             threads_sub_con,
             parallel_separation,
+            integer_obj,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
         return param

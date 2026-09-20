@@ -510,6 +510,14 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
 
+    # Do not start another separation after the global deadline.  Returning
+    # normally lets Gurobi terminate through its own time-limit machinery.
+    if time() >= deadline
+        parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
+        parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+        return
+    end
+
     status = callback_node_status(cb_data, master.model)
     if status == MOI.CALLBACK_NODE_STATUS_FRACTIONAL
         return
@@ -561,14 +569,38 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
             fill!(task_errors, nothing)
             if parameter.parallel_separation && length(pending) > 1
                 sem = Base.Semaphore(get(parameter.stats.data, "parallel_connector_workers_used", 1))
+                # Timeout is cooperative. Tasks already inside separation are
+                # allowed to drain; tasks waiting for a worker do not start new
+                # Gurobi work once this flag is set.
+                abort_separation = Threads.Atomic{Bool}(false)
                 @sync for (res_idx, (connector_idx, con, subname, current_subobj)) in enumerate(pending)
                     Threads.@spawn begin
                         Base.acquire(sem)
                         worker_id = mod1(connector_idx, length(worker_locks))
-                        lock(worker_locks[worker_id])
+                        worker_locked = false
                         try
+                            if abort_separation[]
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=TimeoutException("GBC separation cancelled after the global time limit was reached."),
+                                    bt=nothing,
+                                )
+                                return
+                            end
+                            lock(worker_locks[worker_id])
+                            worker_locked = true
                             remaining_time = deadline - time()
-                            remaining_time <= 0 && throw(TimeoutException("GBC global time limit reached before separating connector $(subname)."))
+                            if remaining_time <= 0
+                                Threads.atomic_store!(abort_separation, true)
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=TimeoutException("GBC global time limit reached before separating connector $(subname)."),
+                                    bt=nothing,
+                                )
+                                return
+                            end
                             local_param = _local_gbc_param(parameter; runtime=remaining_time)
                             result_ref = Ref{Any}(nothing)
                             cuttime = @elapsed begin
@@ -586,6 +618,9 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             base_result = result_ref[]
                             results[res_idx] = (; base_result..., cuttime=cuttime)
                         catch err
+                            if err isa TimeoutException
+                                Threads.atomic_store!(abort_separation, true)
+                            end
                             task_errors[res_idx] = (
                                 subname=subname,
                                 current_subobj=current_subobj,
@@ -593,23 +628,37 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                                 bt=stacktrace(catch_backtrace()),
                             )
                         finally
-                            unlock(worker_locks[worker_id])
+                            worker_locked && unlock(worker_locks[worker_id])
                             Base.release(sem)
                         end
                     end
                 end
 
                 failures = [failure for failure in task_errors if !isnothing(failure)]
-                if !isempty(failures)
-                    for failure in failures
+                timeout_failures = [failure for failure in failures if failure.err isa TimeoutException]
+                other_failures = [failure for failure in failures if !(failure.err isa TimeoutException)]
+                if !isempty(other_failures)
+                    for failure in other_failures
                         @error _format_parallel_gbc_task_error(failure.subname, failure.err, failure.bt)
                     end
-                    throw(first(failures).err)
+                    throw(first(other_failures).err)
+                elseif !isempty(timeout_failures) || abort_separation[]
+                    # Never throw a timeout from inside the Gurobi callback.
+                    # Partial cuts are discarded and all spawned tasks have
+                    # already drained because this code follows @sync.
+                    parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
+                    parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+                    @debug "GBC separation reached its global time limit; connector tasks drained and no further cuts are submitted."
+                    return
                 end
             else
                 for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
                     remaining_time = deadline - time()
-                    remaining_time <= 0 && throw(TimeoutException("GBC global time limit reached before separating connector $(subname)."))
+                    if remaining_time <= 0
+                        parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
+                        parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+                        return
+                    end
                     local_param = parameter.parallel_separation ? _local_gbc_param(parameter; runtime=remaining_time) : parameter
                     result_ref = Ref{Any}(nothing)
                     cuttime = @elapsed begin
