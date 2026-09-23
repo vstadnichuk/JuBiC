@@ -112,6 +112,7 @@ struct GBCparam <: SolverParam
     trim_coeff::Bool  # if true, use the bound on cut coefficients to also cutoff k-coeff. and big M generated from BlC-coefficients
 
     infinity_num::Any  # Number used in subroblems to add sufisticated lower and upper bounds. Set it to some positiv value that can be considered infinity in your problem
+    connector_s_bound::Any  # Optional explicit upper bound for ConnectorLP's s variable; nothing uses infinity_num
     g_round_digit::Int  # A numeric parameter for 'ConnectorLP'. See its documentation for details.
     integer_obj::Bool  # if true, the solver expects integer follower-risk objectives and integerized GBC cuts
     pareto_band_tolerance::Any  # absolute tolerance used to keep the original connector objective fixed during Pareto refinement
@@ -135,7 +136,8 @@ function GBCparam(
     trim_coeff,
     infinity_num,
     g_round_digit,
-    integer_obj::Bool=false,
+    integer_obj::Bool=false;
+    connector_s_bound=nothing,
 )
     return GBCparam(
         solver,
@@ -153,6 +155,7 @@ function GBCparam(
         bigMwithLC,
         trim_coeff,
         infinity_num,
+        connector_s_bound,
         g_round_digit,
         integer_obj,
         1e-4,
@@ -194,6 +197,7 @@ function GBCparam(
         bigMwithLC,
         trim_coeff,
         infinity_num,
+        nothing,
         g_round_digit,
         integer_obj,
         1e-4,
@@ -219,7 +223,8 @@ function GBCparam(
     g_round_digit,
     integer_obj::Bool,
     pareto_band_tolerance,
-    blc_pareto_band_tolerance,
+    blc_pareto_band_tolerance;
+    connector_s_bound=nothing,
 )
     return GBCparam(
         solver,
@@ -237,6 +242,7 @@ function GBCparam(
         bigMwithLC,
         trim_coeff,
         infinity_num,
+        connector_s_bound,
         g_round_digit,
         integer_obj,
         pareto_band_tolerance,

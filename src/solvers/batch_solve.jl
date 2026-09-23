@@ -513,6 +513,12 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         trim_coeff = _get_bool(config, "trim_coeff", false)
         integer_obj = _get_bool(config, "integer_obj", false)
         infinity_num = _get_number(config, "infinity_num", 1e9)
+        connector_s_bound = get(config, "connector_s_bound", nothing)
+        if connector_s_bound isa Number
+            connector_s_bound = Float64(connector_s_bound)
+        elseif !isnothing(connector_s_bound) && !(connector_s_bound isa AbstractString)
+            error("connector_s_bound must be numeric, \"sum_abs_arc_risk\", or null")
+        end
         g_round_digit = _get_int(config, "g_round_digit", 0)
         param = GBCparam(
             wrapper,
@@ -532,6 +538,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             infinity_num,
             g_round_digit,
             integer_obj,
+            connector_s_bound=connector_s_bound,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
         return param

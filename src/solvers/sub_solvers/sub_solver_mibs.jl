@@ -294,6 +294,7 @@ function solve_sub_for_x(sol::SubSolverMiBS, xvals, params::SolverParam, time_li
             delete(sol.bi_model, fixc[a])
         end
         unregister(sol.bi_model, :fixc)
+        _flush_model_updates!(sol.bi_model)
     end
 end
 

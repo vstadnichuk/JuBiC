@@ -66,6 +66,36 @@ NumericalIssueException(message::String, status::String) =
     NumericalIssueException(message, status, Dict{String,Any}())
 Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)
 
+"""
+    _round_integer_objective_if_close(value, parameter, sub_name, description)
+
+When `integer_obj=true`, round an objective-derived value to its nearest
+integer only if it is already within the numerical tolerance.  Objective
+values that are not close to an integer are left unchanged; integer-objective
+mode must not turn a small, genuinely fractional value into one unit.
+"""
+const INTEGER_OBJECTIVE_ROUND_TOL = 1e-4
+
+function _round_integer_objective_if_close(
+    value::Real,
+    parameter::SolverParam,
+    sub_name,
+    description::AbstractString,
+)
+    value_float = Float64(value)
+    integer_obj = hasproperty(parameter, :integer_obj) && getproperty(parameter, :integer_obj)
+    integer_obj || return value_float
+
+    integer_value = round(value_float)
+    if abs(value_float - integer_value) <= INTEGER_OBJECTIVE_ROUND_TOL
+        if value_float != integer_value
+            @debug "$(sub_name) integerizes $(description): $(value_float) -> $(integer_value)."
+        end
+        return Float64(integer_value)
+    end
+    return value_float
+end
+
 struct MibSFailureException <: Exception
     message::String
 end

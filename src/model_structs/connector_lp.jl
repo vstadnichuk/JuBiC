@@ -560,13 +560,19 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     master_vars = subLP.link_vars
     bigMcut = nothing
     rounded_x_vals = _rounded_binary_x_values(subLP, x_vals, params)
+    cut_optL2 = _round_integer_objective_if_close(
+        optL2,
+        params,
+        name(subLP.sub_solver),
+        "optimality-cut follower objective optL2",
+    )
 
     # g term of the cut
     gval = _snapshot_g_for_cut(subLP)
 
     # s term of the cut
     sval = _snapshot_s(subLP)
-    cut_rhs = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP, params)
+    cut_rhs = _adjust_optcut_constant(sval - cut_optL2 * gval, optL2_risk, subLP, params)
     # Keep the cut as an affine expression from the first assembled term so
     # integerized coefficients are added locally and transparently.
     cut = JuMP.AffExpr(Float64(cut_rhs))
@@ -583,7 +589,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     if bound_gval != gval
         @debug "ConnectorLP $(name(subLP.sub_solver)) uses original g=$(bound_gval) only for xi bound generation and rounded g=$(gval) for the cut."
     end
-    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, optL2, bound_gval, kvals, x_vals)
+    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, cut_optL2, bound_gval, kvals, x_vals)
     k_coeffs = _compute_opt_cut_k_coefficients(subLP, kvals, bound_value, params)
     integerized_k_coeffs = Dict{Any,Float64}()
     for a in subLP.A
@@ -612,7 +618,7 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         blc_cut, _, cutcoeff_BlC = genBenderslike_cut!(subLP.blc_cut_generator, x_vals, params, timelimit)  # if we get a timeout error, we just let it through
         
         # build GBC cut, i.e., Bilevel Lagrangian cut, coefficients for theta terms
-        @debug "The big M values computed from Lagrangian dual now used in BlC are: $cutcoeff_BlC and optL2 * gval=$(ceil(Int, optL2 * gval))"
+        @debug "The big M values computed from Lagrangian dual now used in BlC are: $cutcoeff_BlC and optL2 * gval=$(ceil(Int, cut_optL2 * gval))"
         blc_g_coeffs = _compute_opt_cut_blc_g_coefficients(subLP, cutcoeff_BlC, gval, bound_value, params)
         for a in keys(blc_g_coeffs) 
             raw_coef = blc_g_coeffs[a]
@@ -990,6 +996,12 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
         error(
             "We got a negative big_m in ConnectorLP $(name(subLP)) because s=$(cssol), g=$(cgsol), gcoef=$(g_obj_coef), and bound=$(subLP.lower_bound_obj_contribution).",
         )
+    end
+    if params.integer_obj
+        # The Pareto coefficient is an objective-side big-M.  When the
+        # objective is integer-valued, round it upward so the Pareto phase
+        # cannot lose the incumbent objective cell through underestimation.
+        bigMterm = ceil(bigMterm)
     end
 
     # build adjusted model

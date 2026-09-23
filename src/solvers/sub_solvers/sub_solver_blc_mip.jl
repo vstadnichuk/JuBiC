@@ -441,9 +441,31 @@ function solve_mip(sol::SubSolverBlCJuMP, params::SolverParam, time_limit)
             return
         end
 
-        rhs = oracle.optL2 + sum(sol.big_m(a) * oracle.y_vals[a] * (1 - sol.link_varsC[a]) for a in sol.A)
+        # Keep the persistent BlC cut consistent with the standalone BlC
+        # solver when integer follower objectives are requested.  The
+        # product is rounded as one coefficient, before it is multiplied by
+        # the symbolic linking term, so small solver noise cannot create a
+        # fractional integer-valued cut coefficient.
+        rounded_optL2 = _round_integer_objective_if_close(
+            oracle.optL2,
+            params,
+            sol.name,
+            "persistent cut follower objective",
+        )
+        rounded_big_m_terms = Dict(
+            a => _round_integer_objective_if_close(
+                sol.big_m(a) * oracle.y_vals[a],
+                params,
+                sol.name,
+                "persistent cut big-M coefficient for arc $(a)",
+            ) for a in sol.A
+        )
+        rhs = rounded_optL2 + sum(
+            rounded_big_m_terms[a] * (1 - sol.link_varsC[a]) for a in sol.A;
+            init=0.0,
+        )
         cut = @constraint(sol.mip_model, sol.c_objterm <= rhs)
-        @debug "Added persistent BlC cut $(cut) for subsolver $(sol.name) at x=$(x_vals), candidate c=$(current_c), oracle c=$(oracle.optL2)."
+        @debug "Added persistent BlC cut $(cut) for subsolver $(sol.name) at x=$(x_vals), candidate c=$(current_c), oracle c=$(oracle.optL2), rounded rhs constant=$(rounded_optL2), rounded coefficients=$(rounded_big_m_terms)."
     end
 end
 

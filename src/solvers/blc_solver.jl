@@ -1,33 +1,6 @@
 # Basic implementation of a Benders-like cuts solver. The big M must be provided by the user.
 using Base.Threads
 
-const BLC_INTEGER_OBJECTIVE_TOL = 1e-4
-
-"""Round a BlC cut value to the nearest integer when it is numerically close.
-
-The follower objectives and the associated big-M coefficients are integer-valued
-for the HNDP instances.  Rounding is deliberately applied only to values that
-are already within the numerical tolerance, so non-integer model data is left
-unchanged.
-"""
-function _round_blc_integer_if_close(
-    value::Real,
-    parameter::BLCparam,
-    sub_name,
-    description::AbstractString,
-)
-    value_float = Float64(value)
-    parameter.integer_obj || return value_float
-    integer_value = round(value_float)
-    if abs(value_float - integer_value) <= BLC_INTEGER_OBJECTIVE_TOL
-        if value_float != integer_value
-            @debug "BlC $(sub_name) integerizes $(description): $(value_float) -> $(integer_value)."
-        end
-        return Float64(integer_value)
-    end
-    return value_float
-end
-
 function solve_with_BLC!(inst::Instance, param::BLCparam)
     blcm::BlCMaster = inst.master
 
@@ -196,7 +169,7 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
                         error("Terminate BlC solver: The passed first-level solution was not feasible for subsolver $(name(sub)). x=$x_vals")
                     end
 
-                    rounded_subopt = _round_blc_integer_if_close(
+                    rounded_subopt = _round_integer_objective_if_close(
                         result.subopt,
                         parameter,
                         name(sub),
@@ -204,7 +177,7 @@ function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::D
                     )
                     bigMterms = 0
                     for a in blcm.A
-                        bigMcoefficient = _round_blc_integer_if_close(
+                        bigMcoefficient = _round_integer_objective_if_close(
                             blcm.big_m(a, name(sub)) * result.y_vals[a],
                             parameter,
                             name(sub),

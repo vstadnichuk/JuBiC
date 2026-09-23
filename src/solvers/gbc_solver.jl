@@ -193,7 +193,11 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         end)
     else
         @debug "We do not add any callbacks to GBCSolver as we run into a time out during the preprocessing."
-        new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
+        # Preprocessing may already have recorded a status.  Do not attempt
+        # to register the same statistic a second time; this used to turn a
+        # legitimate preprocessing timeout into a runner-level ArgumentError.
+        param.stats.data["GBCStatus"] = "Timeout_Submodel"
+        param.stats.data["Opt_status_override"] = "Timeout_Submodel"
     end
 
     try 
@@ -366,7 +370,16 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
         (() -> get_worker_optimizer(parameter.solver, worker_id)) :
         (() -> get_next_optimizer(parameter.solver))
     myLP = Model(optimizer_factory)
-    @variable(myLP, s <= parameter.infinity_num)
+    s_bound = if isnothing(parameter.connector_s_bound)
+        parameter.infinity_num
+    elseif parameter.connector_s_bound == "sum_abs_arc_risk"
+        sum(abs(Float64(coefficient)) for (coefficient, _) in JuMP.linear_terms(sub.r_objterm); init=0.0)
+    else
+        parameter.connector_s_bound
+    end
+    s_bound > 0 || error("ConnectorLP s-bound must be positive, got $(s_bound) for subproblem $(name(sub)).")
+    @debug "Using ConnectorLP s upper bound $(s_bound) for subproblem $(name(sub))."
+    @variable(myLP, s <= s_bound)
     @variable(myLP, k[sub.A] >= 0)
     @variable(myLP, 0 <= g <= parameter.infinity_num)
 
@@ -476,6 +489,7 @@ function _local_gbc_param(params::GBCparam; runtime=params.runtime)
         params.bigMwithLC,
         params.trim_coeff,
         params.infinity_num,
+        params.connector_s_bound,
         params.g_round_digit,
         params.integer_obj,
         params.pareto_band_tolerance,
