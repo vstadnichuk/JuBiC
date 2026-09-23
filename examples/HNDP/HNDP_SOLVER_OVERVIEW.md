@@ -153,6 +153,10 @@ Important fields:
 - `seed`
 - `threads_master`
 - `threads_sub_con`
+- `integer_obj`: if enabled, objective-derived values that are within `10^-4`
+  of an integer are rounded to the nearest integer. Nonnegative cut
+  coefficients use the conservative coefficient-rounding rule; values that
+  are not close to integers are retained.
 - `pareto`
   One of:
   - `PARETO_NONE`
@@ -207,6 +211,10 @@ Important fields:
 - `seed`
 - `threads_master`
 - `threads_sub_con`
+- `integer_obj`: if enabled, objective-derived values that are within `10^-4`
+  of an integer are rounded to the nearest integer. Nonnegative cut
+  coefficients use the conservative coefficient-rounding rule; values that
+  are not close to integers are retained.
 - `pareto`
 - `warmstart`
 - `infinity_num`

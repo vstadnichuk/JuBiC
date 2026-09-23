@@ -1,9 +1,7 @@
 # Numerics and Status Codes
 
-JuBiC's decomposition solvers generate cuts from connector LPs and follower
-subproblems. The master solver, connector LPs, follower solvers, and optional
-Pareto refinements therefore exchange values that may be affected by solver
-tolerances. Hence, numerical handling is essential and part of the normal solve pipeline.
+The GBC solver route proved to be highly numerical unsatble, and JuBiC contains a variaty of 
+prevention steps that detect potential numerical instability and try to medigate the negative effects. 
 
 ## Current GBC pipeline
 
@@ -13,7 +11,7 @@ For each integer master solution, GBC performs the following operations:
    passed to follower separation.
 2. Each follower subsolver is solved for the current master solution. Follower
    `y`-values are expected to be binary.
-3. If a returned `y`-value is not within `10^-8` of zero or one, JuBiC rounds the value to a binary value and
+3. If a returned `y`-value is not within `10^-8` of zero or one, JuBiC default MIP subsolver rounds the value to a binary value and
    reevaluates both follower objective expressions using the rounded vector.
    The returned `y`-values and objective values are consequently consistent.
 4. The connector LP is solved iteratively. A violated follower solution adds a
@@ -27,11 +25,23 @@ For each integer master solution, GBC performs the following operations:
    follower-objective value, and `r` is its first-level contribution.
 5. The connector solution is used to construct an optimality or feasibility
    cut. Master and follower binary patterns are rounded for the cut. When
-   `integer_obj=true`, coefficients are integerized as they are inserted into
-   the cut.
+   `integer_obj=true`, objective-derived values are rounded to the nearest
+   integer only when they are within `10^-4` of that integer. Coefficients are
+   integerized as they are inserted into the cut using the conservative rules
+   described below.
 6. If Pareto refinement is enabled, it is performed after the initial
    connector solve. The pre-Pareto connector snapshot is retained so that the
    standard cut can still be constructed if refinement fails.
+
+For HNDP A* separation, connector-based transition costs are checked before
+the labeling search. A negative value with magnitude at most `10^-4` is
+treated as zero. This tolerance covers insignificant negative values caused by
+the numerical solution of the nonnegative ConnectorLP `k` variables. The same
+clamping is applied to the transition-cost evaluation and its shortest-path
+heuristic. A negative value below `-10^-4` remains an error because A* requires
+nonnegative transition costs.
+
+## Parallel Callback Calls
 
 GBC callback entry is serialized with a global callback lock because Gurobi may
 invoke callbacks from multiple master threads. Distinct follower connector
@@ -39,7 +49,53 @@ separations may still run in parallel inside one callback. Each parallel
 connector uses the configured connector/subsolver thread count; with parallel
 separation enabled, connector solver calls use one thread.
 
-## Coefficient and cut checks
+## Custom ConnectorLP bounds
+
+The GBC solver provides the optional parameter `connector_s_bound` to replace
+the generic `infinity_num` upper bound on the ConnectorLP variable `s`. A
+problem-specific bound should be supplied whenever a valid bound is available.
+For example:
+
+```json
+"connector_s_bound": 2366
+```
+
+The special value
+
+```json
+"connector_s_bound": "sum_abs_arc_risk"
+```
+
+sets the bound to the sum of the absolute first-level objective coefficients
+of the follower arcs. 
+
+The bound must cover the complete feasible follower set. 
+Tighter valid bounds improve numerical conditioning by avoiding the very large values of `s` and 
+its associated dual variables that arise with a generic
+bound which is currently set as `10^9`. 
+
+## Integer-objective mode
+
+`integer_obj=true` expresses a modeling assumption that objective values used in
+the relevant cuts are integer-valued. Hence, fractional values close to integer 
+can be safely rounded to closest integer.
+
+The rule is applied to follower objective values (`optL2`) before they enter
+connector optimality cuts, and to objective values and associated big-M terms
+in the standalone and persistent BlC subsolver cuts. 
+
+This objective rounding is separate from coefficient integerization. For
+nonnegative cut coefficients such as `k`, `xi`, and BlC terms, the cut builder
+uses upward rounding when `integer_obj=true`. Paired terms are assembled before the
+master expression is finalized so that the cancellation in a term of the form
+`q(1-x)` is preserved. 
+
+The final integerized optimality-cut constant is rounded to the nearest
+integer by `_adjust_optcut_constant` function inside `ConnectorLP`. If the resulting
+cut cannot be reconciled with the current connector solution, the run receives
+the corresponding numerical warning or numerical status:
+
+## More Numerical Warnings 
 
 Optimality-cut coefficients are expected to be nonnegative where required by
 the formulation. Very small negative values caused by floating-point noise may
@@ -112,6 +168,11 @@ not by itself prove that the returned point is invalid; it indicates that the
 result passed through a condition requiring numerical fallback or additional
 verification.
 
+For GBC, `Timeout` means that the global GBC runtime was exhausted, including
+the safety buffer used to stop starting new connector separations. The status
+`Timeout_Submodel` is reserved for a connector or follower subsolver that
+actually reaches its own time limit before the global GBC deadline is exhausted.
+
 ## Diagnostics and logs
 
 Primary numerical diagnostics are written to the Julia log associated with the
@@ -121,8 +182,7 @@ that the objective expressions were reevaluated.
 
 When a numerical termination is caught, JuBiC may additionally write a
 `numeric_termination.json` record containing the exception type, status,
-message, solver context, and accumulated statistics. This file is intended for
-cases where the log alone is insufficient.
+message, solver context, and accumulated statistics.
 
 ## Exception types
 
@@ -133,8 +193,4 @@ The subsolver and connector layers use the following exception types:
 - `NumericalIssueException`: cut generation or connector processing encountered
   a numerical condition represented by a numerical status.
 - `MibSFailureException`: a MiBS-based solve failed or did not return the
-  required solution.
-
-Solver drivers catch these exceptions, preserve the underlying message and
-context in the logs or diagnostic record, and propagate the corresponding
-status to the result statistics.
+  required solution (due to some MibS internal process, check MibS log for details then).

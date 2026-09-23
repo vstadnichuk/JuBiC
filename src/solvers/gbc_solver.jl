@@ -18,6 +18,19 @@ function _request_gurobi_master_termination!(cb_data, reason::AbstractString)
     return nothing
 end
 
+function _set_gbc_timeout_status!(stats, status::AbstractString)
+    stats.data["GBCStatus"] = status
+    stats.data["Opt_status_override"] = status
+    return nothing
+end
+
+function _is_global_gbc_timeout(failure)
+    failure.err isa TimeoutException || return false
+    message = failure.err.message
+    return occursin("GBC global time limit", message) ||
+           occursin("GBC separation cancelled after the global time limit", message)
+end
+
 function _write_numerical_diagnostic(param, err::NumericalIssueException, bt)
     # Keep ordinary runs lightweight: write a structured diagnostic only when
     # numerical instability aborts the GBC solve.
@@ -158,8 +171,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     # callback will request native termination if it is entered in this
     # buffer, and no ConnectorLP separation will be started.
     if true_runtime <= GBC_CONNECTOR_TIMEOUT_BUFFER
-        param.stats.data["GBCStatus"] = "Timeout_Submodel"
-        param.stats.data["Opt_status_override"] = "Timeout_Submodel"
+        _set_gbc_timeout_status!(param.stats, "Timeout")
     end
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
@@ -196,8 +208,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         # Preprocessing may already have recorded a status.  Do not attempt
         # to register the same statistic a second time; this used to turn a
         # legitimate preprocessing timeout into a runner-level ArgumentError.
-        param.stats.data["GBCStatus"] = "Timeout_Submodel"
-        param.stats.data["Opt_status_override"] = "Timeout_Submodel"
+        _set_gbc_timeout_status!(param.stats, "Timeout")
     end
 
     try 
@@ -561,8 +572,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
     # Do not start another separation after the global deadline.  Returning
     # normally lets Gurobi terminate through its own time-limit machinery.
     if deadline - time() <= GBC_CONNECTOR_TIMEOUT_BUFFER
-        parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
-        parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+        _set_gbc_timeout_status!(parameter.stats, "Timeout")
         _request_gurobi_master_termination!(cb_data, "the one-second connector timeout buffer was reached")
         return
     end
@@ -752,7 +762,8 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
 
                 if !isnothing(sync_error)
                     if timeout_observed[]
-                        @error "Parallel GBC separation raised an exception after a subsolver timeout; classifying the run as Timeout_Submodel" exception=(sync_error.error, sync_error.backtrace)
+                        @error "Parallel GBC separation raised an exception after a timeout; classifying the run as Timeout" exception=(sync_error.error, sync_error.backtrace)
+                        _set_gbc_timeout_status!(parameter.stats, "Timeout")
                     else
                         throw(sync_error.error)
                     end
@@ -760,6 +771,7 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
 
                 failures = [failure for failure in task_errors if !isnothing(failure)]
                 timeout_failures = [failure for failure in failures if failure.err isa TimeoutException]
+                submodel_timeout_failures = [failure for failure in timeout_failures if !_is_global_gbc_timeout(failure)]
                 other_failures = [failure for failure in failures if !(failure.err isa TimeoutException)]
                 if !isempty(other_failures) && !timeout_observed[]
                     for failure in other_failures
@@ -777,18 +789,17 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                     # Never throw a timeout from inside the Gurobi callback.
                     # Partial cuts are discarded and all spawned tasks have
                     # already drained because this code follows @sync.
-                    parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
-                    parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+                    timeout_status = isempty(submodel_timeout_failures) ? "Timeout" : "Timeout_Submodel"
+                    _set_gbc_timeout_status!(parameter.stats, timeout_status)
                     @debug "GBC separation reached its global time limit; connector tasks drained and no further cuts are submitted."
-                    _request_gurobi_master_termination!(cb_data, "a connector subsolver reached its time limit")
+                    _request_gurobi_master_termination!(cb_data, "the global GBC time limit was reached after connector separation")
                     return
                 end
             else
                 for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
                     remaining_time = deadline - time()
                     if remaining_time <= GBC_CONNECTOR_TIMEOUT_BUFFER
-                        parameter.stats.data["GBCStatus"] = "Timeout_Submodel"
-                        parameter.stats.data["Opt_status_override"] = "Timeout_Submodel"
+                        _set_gbc_timeout_status!(parameter.stats, "Timeout")
                         _request_gurobi_master_termination!(cb_data, "the one-second connector timeout buffer was reached in serial separation")
                         return
                     end
