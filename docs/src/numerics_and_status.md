@@ -49,30 +49,16 @@ separations may still run in parallel inside one callback. Each parallel
 connector uses the configured connector/subsolver thread count; with parallel
 separation enabled, connector solver calls use one thread.
 
-## Custom ConnectorLP bounds
+## ConnectorLP bound
 
-The GBC solver provides the optional parameter `connector_s_bound` to replace
-the generic `infinity_num` upper bound on the ConnectorLP variable `s`. A
-problem-specific bound should be supplied whenever a valid bound is available.
-For example:
+The GBC solver accepts an optional numeric `connector_s_bound` parameter for
+the upper bound of the ConnectorLP variable `s`:
 
 ```json
-"connector_s_bound": 2366
+"connector_s_bound": 1000000
 ```
 
-The special value
-
-```json
-"connector_s_bound": "sum_abs_arc_risk"
-```
-
-sets the bound to the sum of the absolute first-level objective coefficients
-of the follower arcs. 
-
-The bound must cover the complete feasible follower set. 
-Tighter valid bounds improve numerical conditioning by avoiding the very large values of `s` and 
-its associated dual variables that arise with a generic
-bound which is currently set as `10^9`. 
+If the parameter is omitted, the configured generic numerical bound is used.
 
 ## Integer-objective mode
 

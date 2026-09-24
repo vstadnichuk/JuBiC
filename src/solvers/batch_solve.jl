@@ -516,8 +516,8 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         connector_s_bound = get(config, "connector_s_bound", nothing)
         if connector_s_bound isa Number
             connector_s_bound = Float64(connector_s_bound)
-        elseif !isnothing(connector_s_bound) && !(connector_s_bound isa AbstractString)
-            error("connector_s_bound must be numeric, \"sum_abs_arc_risk\", or null")
+        elseif !isnothing(connector_s_bound)
+            error("connector_s_bound must be numeric or null")
         end
         g_round_digit = _get_int(config, "g_round_digit", 0)
         param = GBCparam(

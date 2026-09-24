@@ -381,13 +381,8 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
         (() -> get_worker_optimizer(parameter.solver, worker_id)) :
         (() -> get_next_optimizer(parameter.solver))
     myLP = Model(optimizer_factory)
-    s_bound = if isnothing(parameter.connector_s_bound)
-        parameter.infinity_num
-    elseif parameter.connector_s_bound == "sum_abs_arc_risk"
-        sum(abs(Float64(coefficient)) for (coefficient, _) in JuMP.linear_terms(sub.r_objterm); init=0.0)
-    else
-        parameter.connector_s_bound
-    end
+    s_bound = isnothing(parameter.connector_s_bound) ?
+        parameter.infinity_num : parameter.connector_s_bound
     s_bound > 0 || error("ConnectorLP s-bound must be positive, got $(s_bound) for subproblem $(name(sub)).")
     @debug "Using ConnectorLP s upper bound $(s_bound) for subproblem $(name(sub))."
     @variable(myLP, s <= s_bound)
