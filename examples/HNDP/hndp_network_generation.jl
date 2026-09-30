@@ -423,6 +423,8 @@ function _build_competition_generated_network(
             competitor_cost_factor,
             user_parameter_mode,
             negative_risk=negative_risk,
+            od_pair_mode=String(get(spec, "od_pair_mode", "random")),
+            od_pair_seed=Int(get(spec, "od_pair_seed", parameter_seed)),
         )
     else
         _build_single_layer_decision_only_users(
@@ -776,6 +778,8 @@ function _build_single_layer_competition_users(
     user_parameter_mode::String,
     ;
     negative_risk::Bool=false,
+    od_pair_mode::String="random",
+    od_pair_seed::Int=seed,
 )
     rng = MersenneTwister(seed)
     users = User[]
@@ -794,8 +798,18 @@ function _build_single_layer_competition_users(
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
         minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        selected_pairs = if od_pair_mode == "shuffled_complete"
+            pairs = [(origin, destination) for origin in 1:nv(graph) for destination in 1:nv(graph) if origin != destination]
+            pair_rng = MersenneTwister(od_pair_seed)
+            shuffle!(pair_rng, pairs)
+            length(pairs) >= nusers || throw(ArgumentError("Requested $nusers OD pairs, but the complete non-self OD set contains only $(length(pairs)) pairs."))
+            pairs[1:nusers]
+        else
+            nothing
+        end
         for user_id in 1:nusers
-            origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+            origin, destination = isnothing(selected_pairs) ?
+                _sample_feasible_od_pair(rng, feasible_targets) : selected_pairs[user_id]
             bound = _compute_weight_bound(minweights, origin, destination, length_slack, nv(graph) * max_weight)
             push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
         end

@@ -61,6 +61,7 @@ function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict
     # build LP
     factory = isnothing(optimizer_factory) ? (() -> get_next_optimizer(solver)) : optimizer_factory
     myLP = Model(factory)
+    set_seed!(myLP, params.solver, get_seed(params))
     @variable(myLP, infinity_num >= s >= -infinity_num)
     @variable(myLP, k[sub_solver.A] >= 0)
     connector_threads = (

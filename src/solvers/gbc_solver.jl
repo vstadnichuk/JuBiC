@@ -136,7 +136,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     # so that the master has its own environment and each connector's complete
     # worker-side model set uses the connector's assigned worker environment.
     if param.solver isa GurobiSolver
-        _assign_gurobi_worker_models!(master, subs, clps, param.solver, parallel_workers)
+        _assign_gurobi_worker_models!(master, subs, clps, param.solver, parallel_workers, get_seed(param))
     end
 
     # Configure logging after any optimizer rebinding, since replacing a
@@ -381,6 +381,7 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
         (() -> get_worker_optimizer(parameter.solver, worker_id)) :
         (() -> get_next_optimizer(parameter.solver))
     myLP = Model(optimizer_factory)
+    set_seed!(myLP, parameter.solver, get_seed(parameter))
     s_bound = isnothing(parameter.connector_s_bound) ?
         parameter.infinity_num : parameter.connector_s_bound
     s_bound > 0 || error("ConnectorLP s-bound must be positive, got $(s_bound) for subproblem $(name(sub)).")
@@ -423,19 +424,22 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
 end
 
 """Rebind worker-side models before the first threaded callback invocation."""
-function _assign_gurobi_worker_models!(master, subs, clps, solver::GurobiSolver, nworkers::Integer)
+function _assign_gurobi_worker_models!(master, subs, clps, solver::GurobiSolver, nworkers::Integer, seed::Integer)
     set_optimizer(master.model, () -> Gurobi.Optimizer(solver.env))
+    set_seed!(master.model, solver, seed)
     for (idx, con) in enumerate(clps)
         worker_id = mod1(idx, nworkers)
         worker_factory = () -> get_worker_optimizer(solver, worker_id)
         # The ConnectorLP itself is constructed with this factory.  Rebinding
         # here also handles models constructed by an older/custom constructor.
         set_optimizer(con.lp, worker_factory)
+        set_seed!(con.lp, solver, seed)
         # MIP-based follower subsolvers own a JuMP model that must be rebound
         # to the worker environment. Algorithmic subsolvers such as AStarSolver
         # do not own a mip_model; their connector LP is still rebound above.
         if hasproperty(con.sub_solver, :mip_model)
             set_optimizer(con.sub_solver.mip_model, worker_factory)
+            set_seed!(con.sub_solver.mip_model, solver, seed)
         end
         # SubSolverBlCJuMP keeps a separate persistent oracle model created by
         # copy_model. It must use the same worker environment as the main
@@ -444,10 +448,12 @@ function _assign_gurobi_worker_models!(master, subs, clps, solver::GurobiSolver,
         if hasproperty(con.sub_solver, :oracle_model) &&
            !isnothing(con.sub_solver.oracle_model)
             set_optimizer(con.sub_solver.oracle_model, worker_factory)
+            set_seed!(con.sub_solver.oracle_model, solver, seed)
             con.sub_solver.oracle_optimizer_bound[] = true
         end
         if !isnothing(con.blc_cut_generator)
             set_optimizer(con.blc_cut_generator.lp, worker_factory)
+            set_seed!(con.blc_cut_generator.lp, solver, seed)
         end
     end
     return nothing

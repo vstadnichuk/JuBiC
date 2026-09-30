@@ -176,6 +176,9 @@ function _run_hndp_experiment(
         model_spec,
         param_spec,
     )
+    if haskey(model_spec, "warmstart")
+        model_metadata["warmstart"] = Bool(model_spec["warmstart"])
+    end
 
     solver_name = JuBiC._infer_solver_name(model_instance)
     resolved_param_config = _resolve_hndp_param_config(
@@ -342,6 +345,12 @@ function _resolve_hndp_param_config(
     end
     resolved["output_folder_path"] = String(run_output_path)
     resolved["enable_output_logs"] = write_run_logs
+    # Allow a model specification to override the batch-wide warm-start
+    # setting. This is needed when comparing the plain ND variant against
+    # warm-started GBC variants in one streamed benchmark.
+    if haskey(model_metadata, "warmstart")
+        resolved["warmstart"] = Bool(model_metadata["warmstart"])
+    end
     if haskey(model_metadata, "runtime_override")
         resolved["runtime"] = model_metadata["runtime_override"]
     end
