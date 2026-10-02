@@ -34,19 +34,25 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     # set runtime and number of threads
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
-    if param.parallel_separation
-        parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
-        new_stat!(param.stats, "parallel_subsolver_workers_used", parallel_workers)
+    parallel_workers = param.parallel_separation ?
+        _resolve_parallel_workers!(
+            param.stats,
+            param.parallel_subsolvers;
+            master_threads=master_threads,
+            sub_threads=sub_threads,
+            connector_threads=1,
+            context="BlC follower separation",
+        ) : 1
+    new_stat!(param.stats, "parallel_subsolver_workers_used", parallel_workers)
+    if param.solver isa GurobiSolver
+        ensure_worker_envs!(param.solver, parallel_workers)
+        _assign_gurobi_blc_worker_models!(blcm, inst.subproblems, param.solver, parallel_workers, get_seed(param))
     end
     set_time_limit_sec(blcm.hpr, param.runtime)
     set_attribute(blcm.hpr, MOI.NumberOfThreads(), master_threads)
     set_seed!(blcm.hpr, param.solver, get_seed(param))
     for sub in inst.subproblems
-        if param.parallel_separation
-            set_singlethread(sub)
-        else
-            set_nthreads(sub, sub_threads)
-        end
+        set_nthreads(sub, sub_threads)
     end
 
     # add callback to master and solve 
@@ -103,6 +109,27 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
         end
     end
 
+end
+
+function _assign_gurobi_blc_worker_models!(blcm, subs, solver::GurobiSolver, nworkers::Integer, seed::Integer)
+    set_optimizer(blcm.hpr, () -> Gurobi.Optimizer(solver.env))
+    set_seed!(blcm.hpr, solver, seed)
+    for (idx, sub) in enumerate(subs)
+        worker_id = mod1(idx, nworkers)
+        factory = () -> get_worker_optimizer(solver, worker_id)
+        if hasproperty(sub, :mip_model)
+            set_optimizer(sub.mip_model, factory)
+            set_seed!(sub.mip_model, solver, seed)
+        end
+        if hasproperty(sub, :oracle_model) && !isnothing(sub.oracle_model)
+            set_optimizer(sub.oracle_model, factory)
+            set_seed!(sub.oracle_model, solver, seed)
+            if hasproperty(sub, :oracle_optimizer_bound)
+                sub.oracle_optimizer_bound[] = true
+            end
+        end
+    end
+    return nothing
 end
 
 function gbc_callback_function_blc(cb_data, inst::Instance, msol_cuts_mapping::Dict, parameter::BLCparam)

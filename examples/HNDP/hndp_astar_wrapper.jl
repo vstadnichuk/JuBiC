@@ -91,7 +91,11 @@ function neighbours_w(state::HNDPAStarLabel, xsol, structure::HNDPAStarStructure
 end
 
 function heuristic_w(state::HNDPAStarLabel, goal::HNDPAStarLabel, xsol, structure::HNDPAStarStructure, cs::CostStructure, params::SolverParam)
-    return structure.shortest_adaptive[state.node, goal.node]
+    adaptive = structure.shortest_adaptive
+    # The normal weighted/ConnectorLP path uses a node-to-current-sink vector;
+    # the compatibility fallback for negative adaptive costs is an all-pairs
+    # matrix.
+    return ndims(adaptive) == 1 ? adaptive[state.node] : adaptive[state.node, goal.node]
 end
 
 function cost_w(current::HNDPAStarLabel, neighbour::HNDPAStarLabel, structure::HNDPAStarStructure, cs::CostStructure, params::SolverParam)
@@ -175,12 +179,23 @@ Build an `AStarSolver` wrapper for one HNDP follower. The resulting subsolver is
 compatible with `BlCSolver` via the standard `solve_sub_for_x` interface.
 """
 function build_hndp_astar_user(user::User, hndp::HNDPwC, decision_arcs)
-    cost_apsp = floyd_warshall_shortest_paths(hndp.mygraph, user.mcost)
-    risk_apsp = floyd_warshall_shortest_paths(hndp.mygraph, user.mrisk)
-
-    weight_matrix = isnothing(user.weighlimit) ? zeros(Float64, nv(hndp.mygraph), nv(hndp.mygraph)) : Float64.(user.mweight)
-    weight_apsp = floyd_warshall_shortest_paths(hndp.mygraph, weight_matrix)
-    max_weight = isnothing(user.weighlimit) ? Inf : Float64(user.weighlimit)
+    has_weight_limit = !isnothing(user.weighlimit)
+    n = nv(hndp.mygraph)
+    weight_matrix = has_weight_limit ? Float64.(user.mweight) : zeros(Float64, n, n)
+    # These matrices are only used as admissible heuristics.  For an
+    # unweighted user, leave them empty and let the labeling routine run as
+    # ordinary Dijkstra (zero heuristic).  In particular, do not run an
+    # unnecessary all-pairs shortest-path computation for every user.
+    # Keep the static master/subproblem heuristic representation unchanged;
+    # the single-sink optimization below is specifically for the adaptive
+    # ConnectorLP objective.  For an unweighted user these are never read.
+    cost_heuristic = floyd_warshall_shortest_paths(hndp.mygraph, Float64.(user.mcost)).dists
+    risk_heuristic = floyd_warshall_shortest_paths(hndp.mygraph, Float64.(user.mrisk)).dists
+    # Unlike the objective heuristic, resource feasibility needs the minimum
+    # weight between every intermediate node and the destination. Keep this
+    # one all-pairs matrix; it is not recomputed during connector separation.
+    weight_heuristic = has_weight_limit ? floyd_warshall_shortest_paths(hndp.mygraph, weight_matrix).dists : zeros(Float64, n, n)
+    max_weight = has_weight_limit ? Float64(user.weighlimit) : Inf
 
     structure = HNDPAStarStructure(
         hndp.mygraph,
@@ -191,10 +206,10 @@ function build_hndp_astar_user(user::User, hndp::HNDPwC, decision_arcs)
         user.mrisk,
         user.mcost,
         weight_matrix,
-        cost_apsp.dists,
-        risk_apsp.dists,
-        weight_apsp.dists,
-        cost_apsp.dists,
+        cost_heuristic,
+        risk_heuristic,
+        weight_heuristic,
+        cost_heuristic,
     )
 
     capacities = Dict(a => 1 for a in decision_arcs)
@@ -214,8 +229,59 @@ function _hndp_calculate_shortest_matrix(structure::HNDPAStarStructure, cs::Cost
         adaptive_costs[i, j] = _hndp_clamp_tiny_negative_cost(adaptive_costs[i, j])
     end
 
-    apsp = floyd_warshall_shortest_paths(structure.graph, adaptive_costs)
-    return apsp.dists
+    # Dijkstra is valid only after all active transition costs have been
+    # screened as nonnegative.  Keep the legacy Floyd-Warshall fallback for a
+    # negative adaptive objective: this is not an A* mode, but it avoids
+    # turning a caller-side validation/fallback path into an inadmissible
+    # zero-heuristic search.
+    for edge in edges(structure.graph)
+        if adaptive_costs[src(edge), dst(edge)] < 0.0
+            return floyd_warshall_shortest_paths(structure.graph, adaptive_costs).dists
+        end
+    end
+    # Unweighted connector searches retain the established all-pairs fallback
+    # because connector costs may be signed even when the static arc data are
+    # nonnegative. The resource-constrained case uses the single-sink vector.
+    isinf(structure.max_weight) &&
+        return floyd_warshall_shortest_paths(structure.graph, adaptive_costs).dists
+    return _hndp_distances_to_sink(structure.graph, adaptive_costs, structure.destination)
+end
+
+function _hndp_matrix_nonnegative_on_graph(graph::DiGraph, matrix::AbstractMatrix)
+    return all(matrix[src(edge), dst(edge)] >= 0.0 for edge in edges(graph))
+end
+
+"""Return shortest distances from every node to `sink` in a directed graph."""
+function _hndp_distances_to_sink(graph::DiGraph, costs::AbstractMatrix, sink::Int)
+    n = nv(graph)
+    distances = fill(Inf, n)
+    settled = falses(n)
+    distances[sink] = 0.0
+
+    # This is the reverse-graph equivalent of a multi-source/single-sink
+    # Dijkstra call.  The small O(n²) implementation avoids an extra graph
+    # allocation and is adequate for the HNDP graph sizes.
+    for _ in 1:n
+        current = 0
+        current_distance = Inf
+        for node in 1:n
+            if !settled[node] && distances[node] < current_distance
+                current = node
+                current_distance = distances[node]
+            end
+        end
+        current == 0 && break
+        settled[current] = true
+
+        for predecessor in inneighbors(graph, current)
+            settled[predecessor] && continue
+            candidate = current_distance + costs[predecessor, current]
+            if candidate < distances[predecessor]
+                distances[predecessor] = candidate
+            end
+        end
+    end
+    return distances
 end
 
 function validate_nonnegative_arc_costs(sol::AStarSolver, xmapping, cs::CostStructure, params::SolverParam)

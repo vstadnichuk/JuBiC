@@ -126,7 +126,26 @@ For GBC, BlC, and BlCLag, JuBiC distinguishes:
   Threads for the master MIP
 
 - `threads_sub_con`
-  Threads for JuMP-based follower subproblems and connector LP routines
+  Gurobi threads assigned to each follower subproblem. For GBC, ConnectorLP
+  models always use one Gurobi thread; this setting controls the follower
+  subsolver. BlC and BlCLag use this setting for their follower subsolver.
+
+- `parallel_subsolvers`
+  Number of follower separation workers allowed to run concurrently. Each
+  worker owns one follower subsolver and its ConnectorLP. The worker uses the
+  configured `threads_sub_con` threads for the follower subsolver. ConnectorLP
+  uses one thread in parallel GBC separation and shares the worker's thread
+  budget because it and the follower subsolver are not solved simultaneously.
+
+- `parallel_separation`
+  If `true`, follower workers are scheduled concurrently. If `false`, one
+  follower is separated at a time. The configured follower thread count is
+  still used; GBC ConnectorLP remains fixed at one thread.
+
+The requested budget for parallel separation is calculated as
+`threads_master + parallel_subsolvers * max(threads_sub_con, connector_threads)`.
+If this exceeds the Julia thread count, JuBiC emits a warning with the
+calculation but preserves the requested solver and worker settings.
 
 For `MIPparam`, only `threads_master` is relevant because the model is solved as a single MIP.
 

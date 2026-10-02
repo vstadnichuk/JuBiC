@@ -34,7 +34,7 @@ include("solvers/sub_solvers/labeling.jl")
 include("solvers/sub_solvers/a_star_search.jl")
 
 
-export Master, Instance, SubSolverJuMP, SubSolverBlCJuMP, SubSolverMiBS, BlCMaster, BlCLagMaster, MIPMaster, MibSMaster
+export Master, Instance, SubSolverJuMP, SubSolverBlCJuMP, SubSolverMiBS, BlCMaster, BlCLagMaster, MIPMaster, MibSMaster, max_threads
 export extra_cuts_benderslike_JuMP
 export build_strong_duality_mip_instance
 export GBCparam, BLCparam, BlCLagparam, MIPparam, MibSparam, SolverParam, CostStructure, AStarSolver, get_next_optimizer, new_stat!, add_stat!, get_stats, output_file_path, should_debbug_print

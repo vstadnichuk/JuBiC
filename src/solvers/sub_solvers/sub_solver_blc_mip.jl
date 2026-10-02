@@ -63,12 +63,7 @@ function _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
         set_seed!(oracle_model, params.solver, get_seed(params))
 
         if haskey(params.stats.data, "threads_sub_con_used")
-            oracle_threads =
-                (
-                    (params isa GBCparam && params.parallel_separation) ||
-                    (params isa BlCLagparam && params.parallel_separation)
-                ) ? 1 :
-                used_nthreads(params.stats, "threads_sub_con")
+            oracle_threads = used_nthreads(params.stats, "threads_sub_con")
             set_attribute(oracle_model, MOI.NumberOfThreads(), oracle_threads)
         end
 
@@ -279,7 +274,8 @@ function separation_BlC!(sol::SubSolverBlCJuMP, sval, kvals::Dict, params::Solve
 end
 
 function set_nthreads(sol::SubSolverBlCJuMP, n)
-    set_attribute(sol.mip_model, MOI.NumberOfThreads(), capped_nthreads(n))
+    warn_if_excess_threads(sol, n)
+    set_attribute(sol.mip_model, MOI.NumberOfThreads(), max(1, Int(n)))
 end
 
 function set_singlethread(sol::SubSolverBlCJuMP)

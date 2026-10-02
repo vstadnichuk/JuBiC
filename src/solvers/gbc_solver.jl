@@ -89,12 +89,16 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
-    if param.parallel_separation
-        parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
-        new_stat!(param.stats, "parallel_connector_workers_used", parallel_workers)
-    else
-        parallel_workers = 1
-    end
+    parallel_workers = param.parallel_separation ?
+        _resolve_parallel_workers!(
+            param.stats,
+            param.parallel_subsolvers;
+            master_threads=master_threads,
+            sub_threads=sub_threads,
+            connector_threads=1,
+            context="GBC connector/subsolver separation",
+        ) : 1
+    new_stat!(param.stats, "parallel_connector_workers_used", parallel_workers)
 
     # Gurobi environments are not thread-safe.  Initialize the complete pool
     # before any callback can spawn separation workers; the connector models
@@ -176,11 +180,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
     for sub in subs
-        if param.parallel_separation
-            set_singlethread(sub)
-        else
-            set_nthreads(sub, sub_threads)
-        end
+        set_nthreads(sub, sub_threads)
     end
 
     # add callback to master and solve 
@@ -465,16 +465,28 @@ function _normalize_subobj_cache_value(v::Real)
     return round(Float64(v), digits=6)
 end
 
-function _resolve_parallel_workers!(stats::RunStats, requested_workers::Integer)
-    used = min(max(1, Int(requested_workers)), max(1, Threads.nthreads()))
-    if used < requested_workers
-        @warn "Requested $(requested_workers) parallel connector workers, but the Julia process only has $(Threads.nthreads()) thread(s). JuBiC will use $(used) worker(s) for parallel connector separation."
+function _resolve_parallel_workers!(
+    stats::RunStats,
+    requested_workers::Integer;
+    master_threads::Integer=1,
+    sub_threads::Integer=1,
+    connector_threads::Integer=1,
+    context="parallel separation",
+)
+    workers = max(1, Int(requested_workers))
+    per_worker = max(Int(sub_threads), Int(connector_threads))
+    requested_total = max(1, Int(master_threads)) + workers * per_worker
+    available = max(1, Threads.nthreads())
+    new_stat!(stats, "parallel_subsolvers_requested", workers)
+    new_stat!(stats, "parallel_thread_budget_requested", requested_total)
+    if requested_total > available
+        @warn "Requested thread budget for $(context) is $(requested_total), calculated as master=$(master_threads) + workers=$(workers) * max(subsolver=$(sub_threads), connector=$(connector_threads)); Julia provides $(available) thread(s). JuBiC will still enforce the requested worker and solver-thread settings, so the runtime scheduler may oversubscribe available Julia threads."
     end
-    return used
+    return workers
 end
 
 function _connector_thread_count(params::GBCparam)
-    return params.parallel_separation ? 1 : used_nthreads(params.stats, "threads_sub_con")
+    return 1
 end
 
 function _local_gbc_param(params::GBCparam; runtime=params.runtime)
@@ -506,6 +518,7 @@ function _local_gbc_param(params::GBCparam; runtime=params.runtime)
         params.integer_obj,
         params.pareto_band_tolerance,
         params.blc_pareto_band_tolerance,
+        params.parallel_subsolvers,
     )
 end
 

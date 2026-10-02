@@ -64,10 +64,8 @@ function ConnectorLP_BlC(params::SolverParam, A::AbstractVector, link_vars::Dict
     set_seed!(myLP, params.solver, get_seed(params))
     @variable(myLP, infinity_num >= s >= -infinity_num)
     @variable(myLP, k[sub_solver.A] >= 0)
-    connector_threads = (
-        (params isa GBCparam && params.parallel_separation) ||
-        (params isa BlCLagparam && params.parallel_separation)
-    ) ? 1 : used_nthreads(params.stats, "threads_sub_con")
+    connector_threads = params isa GBCparam ? 1 :
+        (params isa BlCLagparam && params.parallel_separation ? 1 : used_nthreads(params.stats, "threads_sub_con"))
     set_attribute(myLP, MOI.NumberOfThreads(), connector_threads)
 
     # TODO: This parameter combination seems to fix some numeric issues. Seems to have only neglectable impact on runtime

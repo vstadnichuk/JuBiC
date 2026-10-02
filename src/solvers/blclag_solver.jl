@@ -26,10 +26,16 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
-    if param.parallel_separation
-        parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
-        new_stat!(param.stats, "parallel_subsolver_workers_used", parallel_workers)
-    end
+    parallel_workers = param.parallel_separation ?
+        _resolve_parallel_workers!(
+            param.stats,
+            param.parallel_subsolvers;
+            master_threads=master_threads,
+            sub_threads=sub_threads,
+            connector_threads=1,
+            context="BlCLag follower separation",
+        ) : 1
+    new_stat!(param.stats, "parallel_subsolver_workers_used", parallel_workers)
 
     # do some initail checks for master and sub solvers
     @debug "Doing some checks if master and sub were created correctly."
@@ -74,11 +80,7 @@ function solve_with_BlCLag!(inst::Instance, param::BlCLagparam)
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
     for sub in subs
-        if param.parallel_separation
-            set_singlethread(sub)
-        else
-            set_nthreads(sub, sub_threads)
-        end
+        set_nthreads(sub, sub_threads)
     end
 
     # add callback to master and solve 

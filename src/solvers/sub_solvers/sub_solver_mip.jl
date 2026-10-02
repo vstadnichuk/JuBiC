@@ -346,7 +346,8 @@ function separation_BlC!(sub_solver::SubSolverJuMP, sval, kvals::Dict, params::S
 end
 
 function set_nthreads(sol::SubSolverJuMP, n)
-    set_attribute(sol.mip_model, MOI.NumberOfThreads(), capped_nthreads(n))
+    warn_if_excess_threads(sol, n)
+    set_attribute(sol.mip_model, MOI.NumberOfThreads(), max(1, Int(n)))
 end
 
 function set_singlethread(sol::SubSolverJuMP)

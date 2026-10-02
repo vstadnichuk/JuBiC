@@ -10,6 +10,12 @@ const HNDP_TEST_TIME_LIMIT = 60
 const TOY_TWO_USER_OPT = -7.0
 const TOY_ALL_DECISION_OPT = -7.0
 const TOY_WEIGHTED_OPT = -4.0
+# These are the optima after the GBC regression tests convert the toy risks
+# to nonnegative values. They were checked by enumerating every feasible
+# leader decision pattern and each follower path.
+const TOY_TWO_USER_GBC_OPT = 0.0
+const TOY_ALL_DECISION_GBC_OPT = 22.0
+const TOY_WEIGHTED_GBC_OPT = 0.0
 
 _hndp_test_tempdir() = JuBiC.repo_local_tempdir("tests", "hndp_model_generation"; prefix="hndp_test")
 const mktempdir = _hndp_test_tempdir
@@ -718,7 +724,7 @@ function _run_hndp_astar_negative_master_cost_guard_test()
     subsolver = build_hndp_astar_user(hndp.users[1], hndp, hndp.edgeA)
     params = GBCparam(GurobiSolver(), false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true)
 
-    @test_throws ArgumentError compute_lower_bound_master_contribution(subsolver, params, HNDP_TEST_TIME_LIMIT)
+    @test_throws ArgumentError JuBiC.compute_lower_bound_master_contribution(subsolver, params, HNDP_TEST_TIME_LIMIT)
 end
 
 function build_toy_hndp_many_paths_user()
@@ -866,9 +872,9 @@ end
     end
 
     @testset "GBC Models" begin
-        _run_hndp_gbc_subsolver_triplet_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_two_users()), HNDP_BIGM_FIXED_NETWORK_PATH, 7.0)
-        _run_hndp_gbc_subsolver_triplet_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_two_users_all_decision_arcs()), HNDP_BIGM_N_MINUS_ONE, 7.0)
-        _run_hndp_gbc_weighted_subsolver_pair_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_weighted_user()), 4.0)
+        _run_hndp_gbc_subsolver_triplet_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_two_users()), HNDP_BIGM_FIXED_NETWORK_PATH, TOY_TWO_USER_GBC_OPT)
+        _run_hndp_gbc_subsolver_triplet_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_two_users_all_decision_arcs()), HNDP_BIGM_N_MINUS_ONE, TOY_ALL_DECISION_GBC_OPT)
+        _run_hndp_gbc_weighted_subsolver_pair_test(_copy_hndp_with_nonnegative_risk(build_toy_hndp_weighted_user()), TOY_WEIGHTED_GBC_OPT)
         _run_hndp_astar_negative_master_cost_guard_test()
     end
 

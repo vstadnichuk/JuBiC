@@ -2,6 +2,25 @@ using JuMP
 
 abstract type SubSolver end
 
+"""
+    max_threads(sub_solver::SubSolver)
+
+Return the maximum number of threads the subsolver is designed to use. A
+return value of `-1` means that JuBiC does not impose a solver-specific
+recommendation. This is advisory only: requested thread counts are still
+passed to the subsolver.
+"""
+max_threads(::SubSolver) = -1
+
+function warn_if_excess_threads(sub_solver::SubSolver, requested_threads)
+    requested = max(1, Int(requested_threads))
+    limit = max_threads(sub_solver)
+    if limit >= 0 && requested > limit
+        @warn "Subsolver $(name(sub_solver)) is designed for at most $(limit) thread(s), but $(requested) were requested. The requested setting will still be assigned."
+    end
+    return nothing
+end
+
 struct SubSolution
     vio::Bool  # vio=true iff we found a new violated constraint
     obj_first_level::Number  # The first level obj. value (of the solution)

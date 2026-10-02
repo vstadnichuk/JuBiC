@@ -103,8 +103,8 @@ struct GBCparam <: SolverParam
     runtime::Number  # the maximal runtime of the master MIP (in seconds)
     seed::Integer  # random seed passed to the underlying MIP solver
     threads_master::Integer # number of threads used in the master MIP problem
-    threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
-    parallel_separation::Bool  # if true, solve per-user connector separations in parallel and force connector/subsolver workers to single thread
+    threads_sub_con::Any  # number of threads assigned to each follower subsolver worker
+    parallel_separation::Bool  # if true, solve follower separations concurrently
 
     pareto::ParetoCut  # setting for pareto optimality cuts
     warmstart::Bool  # if false, reset ConnectorLP after each iteration
@@ -117,6 +117,7 @@ struct GBCparam <: SolverParam
     integer_obj::Bool  # if true, the solver expects integer follower-risk objectives and integerized GBC cuts
     pareto_band_tolerance::Any  # absolute tolerance used to keep the original connector objective fixed during Pareto refinement
     blc_pareto_band_tolerance::Any  # absolute tolerance used to keep the original ConnectorLP_BlC objective fixed during Pareto refinement
+    parallel_subsolvers::Integer  # number of follower workers allowed to run concurrently
 end
 
 function GBCparam(
@@ -138,6 +139,7 @@ function GBCparam(
     g_round_digit,
     integer_obj::Bool=false;
     connector_s_bound=nothing,
+    parallel_subsolvers=1,
 )
     return GBCparam(
         solver,
@@ -160,6 +162,7 @@ function GBCparam(
         integer_obj,
         1e-4,
         1e-4,
+        parallel_subsolvers,
     )
 end
 
@@ -202,6 +205,7 @@ function GBCparam(
         integer_obj,
         1e-4,
         1e-4,
+        1,
     )
 end
 
@@ -225,6 +229,7 @@ function GBCparam(
     pareto_band_tolerance,
     blc_pareto_band_tolerance;
     connector_s_bound=nothing,
+    parallel_subsolvers=1,
 )
     return GBCparam(
         solver,
@@ -247,6 +252,7 @@ function GBCparam(
         integer_obj,
         pareto_band_tolerance,
         blc_pareto_band_tolerance,
+        parallel_subsolvers,
     )
 end
 
@@ -272,6 +278,7 @@ function GBCparam(
     integer_obj::Bool,
     pareto_band_tolerance,
     blc_pareto_band_tolerance,
+    parallel_subsolvers=1,
 )
     return GBCparam(
         solver,
@@ -294,15 +301,16 @@ function GBCparam(
         integer_obj,
         pareto_band_tolerance,
         blc_pareto_band_tolerance,
+        parallel_subsolvers,
     )
 end
 
-GBCparam(solver, debbug_out, output_folder_path, file_format_output) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, PARETO_OPTIMALITY_ONLY, true, false, true, 1e9, nothing, 0, false, 1e-4, 1e-4)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, pareto, true, false, true, 1e9, nothing, 0, false, 1e-4, 1e-4)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, nothing, 0, false, 1e-4, 1e-4)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, nothing, 0, integer_obj, 1e-4, 1e-4)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, nothing, 0, false, 1e-4, 1e-4)
-GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, nothing, 0, integer_obj, 1e-4, 1e-4)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, PARETO_OPTIMALITY_ONLY, true, false, true, 1e9, nothing, 0, false, 1e-4, 1e-4, 1)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, pareto, true, false, true, 1e9, nothing, 0, false, 1e-4, 1e-4, 1)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, nothing, 0, false, 1e-4, 1e-4, 1)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, true, false, true, 1e9, nothing, 0, integer_obj, 1e-4, 1e-4, 1)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, nothing, 0, false, 1e-4, 1e-4, 1)
+GBCparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, bigMwithLC, trim_coeff, runtime, integer_obj::Bool) = GBCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, pareto, warmstart, bigMwithLC, trim_coeff, 1e9, nothing, 0, integer_obj, 1e-4, 1e-4, 1)
 
 function get_stats(param::GBCparam)
     return param.stats
@@ -338,14 +346,15 @@ struct BLCparam <: SolverParam
     runtime::Any  # the maximal runtime of the master MIP (in seconds)
     seed::Integer  # random seed passed to the underlying MIP solver
     threads_master::Any  # number of threads used in the master MIP problem
-    threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
-    parallel_separation::Bool  # if true, solve per-user subproblems in parallel and force worker-side subsolvers to single thread
+    threads_sub_con::Any  # number of threads assigned to each follower subsolver worker
+    parallel_separation::Bool  # if true, solve follower subproblems concurrently
     integer_obj::Bool  # if true, round follower-objective cut coefficients that are numerically close to integers
+    parallel_subsolvers::Integer  # number of follower workers allowed to run concurrently
 end
 
-BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, false)
-BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime, integer_obj::Bool) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, integer_obj)
-BLCparam(solver, debbug_out, output_folder_path, file_format_output) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, false)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime; parallel_subsolvers=1) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, false, parallel_subsolvers)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime, integer_obj::Bool; parallel_subsolvers=1) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, integer_obj, parallel_subsolvers)
+BLCparam(solver, debbug_out, output_folder_path, file_format_output; parallel_subsolvers=1) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, false, parallel_subsolvers)
 
 
 function get_stats(param::BLCparam)
@@ -384,14 +393,15 @@ struct BlCLagparam <: SolverParam
     runtime::Number  # the maximal runtime of the master MIP (in seconds)
     seed::Integer  # random seed passed to the underlying MIP solver
     threads_master::Integer # number of threads used in the master MIP problem
-    threads_sub_con::Any  # number of threads used for LP solver in ConnectorLP. Suggested number of threads for sub_problem solver (but depends on solver if supported)
-    parallel_separation::Bool  # if true, solve per-user connectors in parallel and force connector/subsolver workers to single thread
+    threads_sub_con::Any  # number of threads assigned to each follower subsolver worker
+    parallel_separation::Bool  # if true, solve follower separations concurrently
 
     pareto::ParetoCut  # setting for pareto optimality cuts
     warmstart::Bool  # if false, reset ConnectorLP after each iteration
 
     infinity_num::Any  # Number used in subroblems to add sufisticated lower and upper bounds. Set it to some positiv value that can be considered infinity in your problem
     blc_pareto_band_tolerance::Any  # absolute tolerance used to keep the original ConnectorLP_BlC objective fixed during Pareto refinement
+    parallel_subsolvers::Integer  # number of follower workers allowed to run concurrently
 end
 
 function BlCLagparam(
@@ -407,7 +417,8 @@ function BlCLagparam(
     parallel_separation,
     pareto,
     warmstart,
-    infinity_num,
+    infinity_num;
+    parallel_subsolvers=1,
 )
     return BlCLagparam(
         solver,
@@ -424,6 +435,7 @@ function BlCLagparam(
         warmstart,
         infinity_num,
         1e-4,
+        parallel_subsolvers,
     )
 end
 
@@ -439,7 +451,8 @@ function BlCLagparam(
     threads_sub_con,
     pareto,
     warmstart,
-    infinity_num,
+    infinity_num;
+    parallel_subsolvers=1,
 )
     return BlCLagparam(
         solver,
@@ -456,12 +469,13 @@ function BlCLagparam(
         warmstart,
         infinity_num,
         1e-4,
+        parallel_subsolvers,
     )
 end
 
-BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, PARETO_OPTIMALITY_ONLY, true, 1e9, 1e-4)
-BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, pareto, true, 1e9, 1e-4)
-BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, pareto, warmstart, 1e9, 1e-4)
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, PARETO_OPTIMALITY_ONLY, true, 1e9, 1e-4, 1)
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, pareto, true, 1e9, 1e-4, 1)
+BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, pareto, warmstart, 1e9, 1e-4, 1)
 
 
 function get_stats(param::BlCLagparam)

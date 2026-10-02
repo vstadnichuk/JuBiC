@@ -101,9 +101,9 @@ end
 """
     resolve_nthreads!(stats::RunStats, stat_prefix::String, requested_threads; context=stat_prefix)
 
-Resolve the effective number of threads to use on the current machine, store the
-used value in the run statistics, and emit a warning if the request had to be
-capped.
+Record the requested number of solver threads and emit a warning when it
+exceeds the available Julia thread count. Solver backends such as Gurobi own
+their native thread pools, so the requested value is intentionally not capped.
 """
 function resolve_nthreads!(
     stats::RunStats,
@@ -112,11 +112,12 @@ function resolve_nthreads!(
     context=stat_prefix,
 )
     requested = max(1, Int(requested_threads))
-    used = capped_nthreads(requested)
+    used = requested
     new_stat!(stats, "$(stat_prefix)_used", used)
 
-    if used < requested
-        @warn "Requested $(requested) threads for $(context), but only $(used) thread(s) are available on this machine. JuBiC will use $(used) thread(s) instead."
+    available = max(1, Threads.nthreads())
+    if requested > available
+        @warn "Requested $(requested) threads for $(context), while Julia provides $(available) thread(s). JuBiC will still pass the requested value to the solver backend."
     end
 
     return used

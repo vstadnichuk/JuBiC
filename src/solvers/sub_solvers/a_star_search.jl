@@ -353,11 +353,17 @@ function separation_BlC!(sub_solver::AStarSolver, sval, kvals::Dict, param::Solv
     error("The A-Star search currently does not support separation of BlC as we cannot efficiently address negative cycles. ")
 end
 
+max_threads(::AStarSolver) = 1
+
 function set_nthreads(sol::AStarSolver, n)
-    printstyled(
-        "Currently, multi-thread is not supported for A*-search algorithm within sub_problem $(name(sol)). \n ";
-        color=:cyan,
-    )
+    warn_if_excess_threads(sol, n)
+    if Int(n) > max_threads(sol)
+        printstyled(
+            "Currently, multi-thread is not supported for A*-search algorithm within sub_problem $(name(sol)). Requested setting is retained.\n";
+            color=:cyan,
+        )
+    end
+    return nothing
 end
 
 function set_singlethread(sol::AStarSolver)

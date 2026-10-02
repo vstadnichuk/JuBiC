@@ -51,9 +51,19 @@ function run_hndp_experiments!(
     completed_ids = resume ? JuBiC._read_completed_batch_ids(summary_csv_path) : Set{String}()
     results = Dict{String,JuBiC.RunStats}()
 
-    visit_hndp_networks(instance_cfg, generated_network -> begin
+    visit_function = haskey(instance_cfg, "saved_instances") ?
+        (visitor -> visit_hndp_saved_instances(instance_cfg, visitor)) :
+        (visitor -> visit_hndp_networks(instance_cfg, visitor))
+
+    visit_function(generated_network -> begin
         instance_metadata = deepcopy(generated_network.metadata)
         instance_name = String(instance_metadata["name"])
+        instance_file = get(instance_metadata, "instance_file", nothing)
+        if isnothing(instance_file)
+            @info "Using generated HNDP graph instance $(instance_name)."
+        else
+            @info "Using saved HNDP graph instance $(instance_name) from $(instance_file)."
+        end
 
         for model_spec in models
             if !model_filter(generated_network, model_spec)
