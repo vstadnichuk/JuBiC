@@ -85,6 +85,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "ConnectorLPTimeLP", 0.0)  # time spent solving the connector LP relaxation
     new_stat!(param.stats, "ConnectorLPTimePricing", 0.0)  # time spent in subsolver pricing / separation calls
     new_stat!(param.stats, "ConnectorLPTimePareto", 0.0)  # time spent in pareto refinement inside connectors
+    new_stat!(param.stats, "ConnectorLPTimeTotal", 0.0)  # disjoint sum of LP, pricing, and Pareto connector time
     new_stat!(param.stats, "ConnectorLPIterations", 0)  # number of connector LP resolve/pricing iterations
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
@@ -496,6 +497,7 @@ function _local_gbc_param(params::GBCparam; runtime=params.runtime)
     new_stat!(local_stats, "ConnectorLPTimeLP", 0.0)
     new_stat!(local_stats, "ConnectorLPTimePricing", 0.0)
     new_stat!(local_stats, "ConnectorLPTimePareto", 0.0)
+    new_stat!(local_stats, "ConnectorLPTimeTotal", 0.0)
     new_stat!(local_stats, "ConnectorLPIterations", 0)
     return GBCparam(
         params.solver,
@@ -536,7 +538,7 @@ function _format_parallel_gbc_task_error(subname::AbstractString, err, bt; worke
 end
 
 function _merge_parallel_gbc_stats!(target::RunStats, local_stats::RunStats)
-    for key in ("ConnectorLPTimeLP", "ConnectorLPTimePricing", "ConnectorLPTimePareto", "ConnectorLPIterations")
+    for key in ("ConnectorLPTimeLP", "ConnectorLPTimePricing", "ConnectorLPTimePareto", "ConnectorLPTimeTotal", "ConnectorLPIterations")
         if haskey(local_stats.data, key)
             add_stat!(target, key, local_stats.data[key])
         end

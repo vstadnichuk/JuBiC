@@ -176,18 +176,21 @@ function genBenderslike_cut!(subLP::ConnectorLP_BlC{T}, link_vals::Dict{T,Float6
 
         # solve sub LP for new master
         @debug "Start iterative solution procedure for ConnectorLP_BlC $(name(subLP.sub_solver))."
-        time_iterate = iterate_subsolver_BlC(subLP, params, time_limit)
+        time_iterate = iterate_subsolver_BlC(subLP, params, time_limit; phase="standard")
         pobj = value(new_obj)
 
         # pareto optimality step for optimality cuts
         if params.pareto == PARETO_OPTIMALITY_AND_FEASIBILITY || params.pareto == PARETO_OPTIMALITY_ONLY
             time_limit_pareto = time_limit - time_iterate
             pareto_snapshot = _connector_solution_snapshot(subLP)
+            pareto_start = time()
             try
                 @debug "Start pareto-optimal Benders cut generation procedure for ConnectorLP_BlC $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
                 pareto_optimal_decomposition_BlC(subLP, new_obj, params, time_limit_pareto)
+                _add_connector_time!(params.stats, "ConnectorLPTimePareto", time() - pareto_start)
                 pobj = value(new_obj)
             catch err
+                _add_connector_time!(params.stats, "ConnectorLPTimePareto", time() - pareto_start)
                 @warn "Pareto-optimal cut generation failed for ConnectorLP_BlC $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
                 _set_pareto_numerics_status!(params)
                 subLP.numeric_state[:cut_solution_snapshot] = pareto_snapshot
@@ -257,7 +260,7 @@ In case the separation takes longer that the set time limit, throw an exception.
 # Return
     The time it required to execute this function
 """
-function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLagparam}, time_limit)
+function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, BlCLagparam}, time_limit; phase::AbstractString="standard")
     # this part of the solver can run into quite some nasty infinity loops. To prevent the software just freezing (or seeming to freeze for the user),
     ## we stop the separation process in case we reach the timelimit set in the parameters (what still can take long, but at least the user is expected to wait this long) 
     current_time = time()
@@ -274,19 +277,24 @@ function iterate_subsolver_BlC(subLP::ConnectorLP_BlC, params::Union{GBCparam, B
 
         # first, solve the LP
         #@debug subLP.lp # this debug output is not helpfull
-        optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
+        _ensure_connector_time_stats!(params.stats)
+        lp_time = @elapsed optimize!(subLP.lp)
+        phase == "pareto" || _add_connector_time!(params.stats, "ConnectorLPTimeLP", lp_time)
         check_solution_status_LP(subLP)  
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A) 
         @debug "The found sub_problem ConnectorLP_BlC solution is s=$(value(subLP.lp[:s])) and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0))"
-        sub_solver = separation_BlC!(
-            subLP.sub_solver,
-            value(subLP.lp[:s]),
-            kvals,
-            params,
-            time_limit
-        )
+        pricing_time = @elapsed begin
+            sub_solver = separation_BlC!(
+                subLP.sub_solver,
+                value(subLP.lp[:s]),
+                kvals,
+                params,
+                time_limit
+            )
+        end
+        phase == "pareto" || _add_connector_time!(params.stats, "ConnectorLPTimePricing", pricing_time)
 
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
@@ -345,7 +353,7 @@ function pareto_optimal_decomposition_BlC(subLP::ConnectorLP_BlC, lp_obj, params
     end
 
     # resolve optimization problem
-    iterate_subsolver_BlC(subLP, params, time_limit)
+    iterate_subsolver_BlC(subLP, params, time_limit; phase="pareto")
 end
 
 

@@ -51,9 +51,24 @@ function run_hndp_experiments!(
     completed_ids = resume ? JuBiC._read_completed_batch_ids(summary_csv_path) : Set{String}()
     results = Dict{String,JuBiC.RunStats}()
 
-    visit_function = haskey(instance_cfg, "saved_instances") ?
-        (visitor -> visit_hndp_saved_instances(instance_cfg, visitor)) :
-        (visitor -> visit_hndp_networks(instance_cfg, visitor))
+    # For saved instances, filter completed combinations before deserializing
+    # the graph.  `read_hndp_instance` reconstructs all users and model data,
+    # so doing the resume check only inside the visitor can be expensive for a
+    # large batch.  The canonical instance name is also the saved directory
+    # name, which is sufficient to reproduce the experiment identifiers.
+    if haskey(instance_cfg, "saved_instances")
+        saved_paths = _hndp_saved_instance_paths(instance_cfg)
+        candidate_paths = _hndp_resume_candidate_paths(
+            saved_paths,
+            models,
+            params,
+            completed_ids,
+        )
+        @info "Resume scan retained $(length(candidate_paths)) of $(length(saved_paths)) saved HNDP instances for deserialization."
+        visit_function = visitor -> visit_hndp_saved_instances(candidate_paths, visitor)
+    else
+        visit_function = visitor -> visit_hndp_networks(instance_cfg, visitor)
+    end
 
     visit_function(generated_network -> begin
         instance_metadata = deepcopy(generated_network.metadata)
@@ -138,6 +153,37 @@ function run_hndp_experiments!(
     end)
 
     return results
+end
+
+function _hndp_saved_instance_paths(config::Dict{String,Any})
+    paths = get(config, "saved_instances", nothing)
+    paths === nothing && throw(ArgumentError("A saved-instance configuration requires 'saved_instances'."))
+    paths isa AbstractString && return [abspath(String(paths))]
+    return unique(abspath.(String.(paths)))
+end
+
+function _hndp_saved_instance_name(path::AbstractString)
+    # `write_hndp_generated_networks` stores each canonical instance as
+    # <instance_root>/<instance_name>/instance.json.
+    return basename(dirname(abspath(String(path))))
+end
+
+function _hndp_resume_candidate_paths(
+    paths,
+    models::Vector{Dict{String,Any}},
+    params::Vector{Dict{String,Any}},
+    completed_ids::Set{String},
+)
+    candidates = String[]
+    for path in paths
+        instance_name = _hndp_saved_instance_name(path)
+        needs_work = any(
+            _hndp_experiment_id(instance_name, model_spec, param_spec) ∉ completed_ids
+            for model_spec in models, param_spec in params
+        )
+        needs_work && push!(candidates, path)
+    end
+    return candidates
 end
 
 function _maybe_export_hndp_solver_instance!(

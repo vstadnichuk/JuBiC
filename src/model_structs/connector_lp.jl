@@ -497,16 +497,18 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
             # pareto optimality step for optimality cuts
             time_limit_pareto = time_limit - time_iterate
             pareto_snapshot = _connector_solution_snapshot(subLP)
+            pareto_start = time()
             try
                 if !haskey(params.stats.data, "ConnectorLPTimePareto")
                     new_stat!(params.stats, "ConnectorLPTimePareto", 0.0)
                 end
                 @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-                pareto_time = @elapsed pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
-                add_stat!(params.stats, "ConnectorLPTimePareto", pareto_time)
+                pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+                _add_connector_time!(params.stats, "ConnectorLPTimePareto", time() - pareto_start)
                 time_limit_build_cut = time_limit_pareto
                 pobj = value(new_obj)
             catch err
+                _add_connector_time!(params.stats, "ConnectorLPTimePareto", time() - pareto_start)
                 @warn "Pareto-optimal cut generation failed for connector $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
                 params.stats.data["Opt_status_override"] = "Numerics"
                 params.stats.data["GBCStatus"] = "Numerics"
@@ -799,12 +801,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit; pha
     if !haskey(params.stats.data, "ConnectorLPIterations")
         new_stat!(params.stats, "ConnectorLPIterations", 0)
     end
-    if !haskey(params.stats.data, "ConnectorLPTimeLP")
-        new_stat!(params.stats, "ConnectorLPTimeLP", 0.0)
-    end
-    if !haskey(params.stats.data, "ConnectorLPTimePricing")
-        new_stat!(params.stats, "ConnectorLPTimePricing", 0.0)
-    end
+    _ensure_connector_time_stats!(params.stats)
 
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
@@ -827,7 +824,9 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit; pha
         #@debug subLP.lp # this debug output is not helpfull
         set_time_limit_sec(subLP.lp, remaining_time)
         lp_time = @elapsed optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
-        add_stat!(params.stats, "ConnectorLPTimeLP", lp_time)
+        # LP and pricing work performed during Pareto refinement is included
+        # in the Pareto wall-clock component and must not be counted again.
+        phase == "pareto" || _add_connector_time!(params.stats, "ConnectorLPTimeLP", lp_time)
         check_solution_status_LP(subLP)  
 
         # solve sub_problem for found solution
@@ -847,7 +846,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit; pha
             )
             subLP.numeric_state[:last_sub_solver_solution] = sub_solver
         end
-        add_stat!(params.stats, "ConnectorLPTimePricing", pricing_time)
+        phase == "pareto" || _add_connector_time!(params.stats, "ConnectorLPTimePricing", pricing_time)
         sub_solver = subLP.numeric_state[:last_sub_solver_solution]
         delete!(subLP.numeric_state, :last_sub_solver_solution)
 
