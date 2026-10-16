@@ -543,6 +543,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             parallel_subsolvers=parallel_subsolvers,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        new_stat!(param.stats, "branching_rule", _get_string(config, "branching_rule", "default"))
         return param
     elseif solver_name == "BLC"
         wrapper = _build_mip_solver_wrapper(config)
@@ -569,6 +570,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             parallel_subsolvers,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        new_stat!(param.stats, "branching_rule", _get_string(config, "branching_rule", "default"))
         return param
     elseif solver_name == "BlCLag"
         wrapper = _build_mip_solver_wrapper(config)
@@ -599,6 +601,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             parallel_subsolvers=parallel_subsolvers,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        new_stat!(param.stats, "branching_rule", _get_string(config, "branching_rule", "default"))
         return param
     elseif solver_name == "MIP"
         wrapper = _build_mip_solver_wrapper(config)

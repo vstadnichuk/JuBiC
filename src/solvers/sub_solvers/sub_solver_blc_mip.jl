@@ -450,7 +450,7 @@ function solve_mip(sol::SubSolverBlCJuMP, params::SolverParam, time_limit)
         )
         rounded_big_m_terms = Dict(
             a => _round_integer_objective_if_close(
-                sol.big_m(a) * oracle.y_vals[a],
+                (applicable(sol.big_m, a, oracle.optL2, x_vals) ? sol.big_m(a, oracle.optL2, x_vals) : sol.big_m(a)) * oracle.y_vals[a],
                 params,
                 sol.name,
                 "persistent cut big-M coefficient for arc $(a)",
