@@ -5,7 +5,6 @@ import JuBiC: ConSubsolCut, ConnectorLP, SubSolution, SubSolver, genBenders_cut!
 
 const GBC_TEST_OBJ_ATOL = 2e-4
 _gbc_test_tempdir() = JuBiC.repo_local_tempdir("tests", "gbc"; prefix="gbc_test")
-const mktempdir = _gbc_test_tempdir
 
 mutable struct MockNumericDuplicateSubSolver <: SubSolver
     name::String
@@ -201,7 +200,7 @@ end
 
 function test_gbc_solver_instance_io_roundtrip()
     instance = generate_gbc_simple_bilevel_instance()
-    export_dir = mktempdir()
+    export_dir = _gbc_test_tempdir()
     output_GBC_solver_instance(instance, export_dir)
 
     @test isfile(joinpath(export_dir, "master.lp"))
@@ -213,7 +212,7 @@ function test_gbc_solver_instance_io_roundtrip()
     @test length(imported.subproblems) == 1
     @test imported.subproblems[1] isa SubSolverJuMP
 
-    solve_dir = mktempdir()
+    solve_dir = _gbc_test_tempdir()
     parameter = GBCparam(
         GurobiSolver(),
         true,
@@ -307,6 +306,8 @@ function test_gbc_feasibility_cuts()
     # check whether the cuts x1 >= 1 and x2 >= 1 were generated
     cuts_collection = gbc_logging_folder * "/mastercuts_collection.txt"
     cuts_content = if isfile(cuts_collection) read(cuts_collection, String) else "" end
+    # Julia may qualify the displayed types when this suite runs in a module.
+    cuts_content = replace(cuts_content, "JuMP." => "")
     @test occursin("ScalarConstraint{AffExpr, MathOptInterface.GreaterThan{Float64}}(x[1], MathOptInterface.GreaterThan{Float64}(1.0))", cuts_content)
     @test occursin("ScalarConstraint{AffExpr, MathOptInterface.GreaterThan{Float64}}(x[2], MathOptInterface.GreaterThan{Float64}(1.0))", cuts_content)
 end
@@ -340,7 +341,7 @@ The second is:
 
 The optimal solution is x1=0. 
 """
-function test_gbc_two_follower()
+function test_gbc_two_follower(; parallel_subsolvers=1)
     # common ressources
     A = [1]
 
@@ -396,19 +397,34 @@ function test_gbc_two_follower()
 
     model = Instance(master, [subS1, subS2])
 
+    outdir = logging_folder * "/gbc_two_follower_p$(parallel_subsolvers)"
     parameter = GBCparam(
         GurobiSolver(),
         true,
-        logging_folder * "/gbc_two_follower",
+        outdir,
         "lp",
+        JuBiC.RunStats(),
+        60,
+        42,
+        2,
+        1,
+        true,
         PARETO_OPTIMALITY_ONLY,
+        true,
+        false,
+        true,
+        1e9,
+        0,
+        false;
+        parallel_subsolvers=parallel_subsolvers,
     )
     parameter.stats.data["enable_output_logs"] = true
 
-    mkpath(logging_folder * "/gbc_two_follower")
+    mkpath(outdir)
     stats = solve_instance!(model, parameter)
 
     @test haskey(stats.data, "Opt") && isapprox(stats.data["Opt"], 0; atol=GBC_TEST_OBJ_ATOL)
+    return stats
 end
 
 function test_gbc_duplicate_cut_numerical_guard()
@@ -447,7 +463,7 @@ function test_gbc_duplicate_cut_numerical_guard()
     parameter = GBCparam(
         GurobiSolver(),
         false,
-        mktempdir(),
+        _gbc_test_tempdir(),
         "lp",
         PARETO_NONE,
         60.0,
@@ -499,7 +515,7 @@ function test_gbc_opt_cut_coefficient_refactor_helpers()
     parameter = GBCparam(
         GurobiSolver(),
         false,
-        mktempdir(),
+        _gbc_test_tempdir(),
         "lp",
         PARETO_NONE,
         60.0,

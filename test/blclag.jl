@@ -2,7 +2,6 @@ using JuBiC, JuMP, Gurobi, BilevelJuMP
 import JuBiC: ConnectorLP_BlC, SubSolution, SubSolver, genBenderslike_cut!
 
 _blclag_test_tempdir() = JuBiC.repo_local_tempdir("tests", "blclag"; prefix="blclag_test")
-const mktempdir = _blclag_test_tempdir
 
 mutable struct MockBlCParetoFallbackSubSolver <: SubSolver
     name::String
@@ -195,7 +194,7 @@ function test_blclag_pareto_fallback_numerical_guard()
     parameter = BlCLagparam(
         GurobiSolver(),
         false,
-        mktempdir(),
+        _blclag_test_tempdir(),
         "lp",
         PARETO_OPTIMALITY_ONLY,
         true,

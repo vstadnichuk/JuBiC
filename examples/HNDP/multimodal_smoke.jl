@@ -38,6 +38,35 @@ function multimodal_smoke(; solve::Bool=false)
     end
     for network in generated
         hndp = network.instance
+        output = JuBiC.repo_local_tempdir("tests", "multimodal"; prefix="roundtrip")
+        write_hndp_generated_networks([network], Dict{String,Any}("folder" => output))
+        saved = read_hndp_instance(joinpath(output, network.name, "instance.json"))
+        @test saved.instance.decision_groups == hndp.decision_groups
+        @test saved.instance.decision_budget == hndp.decision_budget
+        @test Set(saved.instance.edgeA) == Set(hndp.edgeA)
+        @test ne(saved.instance.mygraph) == ne(hndp.mygraph)
+        @test all(user.mweight === nothing for user in saved.instance.users)
+        # The interchange format stores real arcs, not unused matrix cells.
+        @test all(saved.instance.users[1].mcost[src(e), dst(e)] ==
+            hndp.users[1].mcost[src(e), dst(e)] for e in edges(hndp.mygraph))
+        @test all(saved.instance.users[1].mrisk[src(e), dst(e)] ==
+            hndp.users[1].mrisk[src(e), dst(e)] for e in edges(hndp.mygraph))
+        legacy_data = JSON.parsefile(joinpath(output, network.name, "instance.json"))
+        @test legacy_data["format_version"] == 2
+        legacy_data["format_version"] = 1
+        pop!(legacy_data, "decision_groups")
+        pop!(legacy_data, "decision_budget")
+        for user in legacy_data["users"]
+            pop!(user, "has_weight")
+        end
+        legacy_path = joinpath(output, "legacy.json")
+        open(legacy_path, "w") do io
+            JSON.print(io, legacy_data)
+        end
+        legacy = read_hndp_instance(legacy_path)
+        @test isnothing(legacy.instance.decision_groups)
+        @test isnothing(legacy.instance.decision_budget)
+        @test Set(legacy.instance.edgeA) == Set(hndp.edgeA)
         @test all(user.mweight === nothing for user in hndp.users)
         @test eltype(hndp.users[1].mcost) == Int
         @test eltype(hndp.users[1].mrisk) == Int

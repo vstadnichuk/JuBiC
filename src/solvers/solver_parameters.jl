@@ -356,6 +356,15 @@ BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime; pa
 BLCparam(solver, debbug_out, output_folder_path, file_format_output, runtime, integer_obj::Bool; parallel_subsolvers=1) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, true, integer_obj, parallel_subsolvers)
 BLCparam(solver, debbug_out, output_folder_path, file_format_output; parallel_subsolvers=1) = BLCparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), 3600, 42, 8, 8, true, false, parallel_subsolvers)
 
+# Preserve positional calls made before integer-objective and worker controls.
+function BLCparam(solver, debbug_out, output_folder_path, file_format_output,
+    stats::RunStats, runtime, seed, threads_master, threads_sub_con,
+    parallel_separation::Bool, integer_obj::Bool=false; parallel_subsolvers=1)
+    return BLCparam(solver, debbug_out, output_folder_path, file_format_output,
+        stats, runtime, seed, threads_master, threads_sub_con,
+        parallel_separation, integer_obj, parallel_subsolvers)
+end
+
 
 function get_stats(param::BLCparam)
     return param.stats
@@ -476,6 +485,17 @@ end
 BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, PARETO_OPTIMALITY_ONLY, true, 1e9, 1e-4, 1)
 BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, pareto, true, 1e9, 1e-4, 1)
 BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, pareto, warmstart, runtime) = BlCLagparam(solver, debbug_out, output_folder_path, file_format_output, RunStats(), runtime, 42, 8, 8, false, pareto, warmstart, 1e9, 1e-4, 1)
+
+# Preserve the former full positional constructor, including Pareto tolerance.
+function BlCLagparam(solver, debbug_out, output_folder_path, file_format_output,
+    stats::RunStats, runtime, seed, threads_master, threads_sub_con,
+    parallel_separation::Bool, pareto::ParetoCut, warmstart, infinity_num,
+    blc_pareto_band_tolerance; parallel_subsolvers=1)
+    return BlCLagparam(solver, debbug_out, output_folder_path, file_format_output,
+        stats, runtime, seed, threads_master, threads_sub_con,
+        parallel_separation, pareto, warmstart, infinity_num,
+        blc_pareto_band_tolerance, parallel_subsolvers)
+end
 
 
 function get_stats(param::BlCLagparam)

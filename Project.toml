@@ -1,6 +1,6 @@
 name = "JuBiC"
 uuid = "b2378644-93ab-4895-bfa6-88c40df57042"
-version = "0.5.0"
+version = "0.6.0"
 authors = ["Vladimir Stadnichuk <vladimir.stadnichuk@om.rwth-aachen.de>", "Cedrick Wieber <cedrick.wieber@rwth-aachen.de>"]
 
 [deps]

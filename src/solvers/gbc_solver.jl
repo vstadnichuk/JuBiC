@@ -180,6 +180,7 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     end
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
+    _apply_linking_branching_rule!(master.model, master.link_vars, param)
     for sub in subs
         set_nthreads(sub, sub_threads)
     end
@@ -270,12 +271,9 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             new_stat!(param.stats, "gap", Inf)
         end
         try
-        try
             new_stat!(param.stats, "BNodes", MOI.get(master.model, MOI.NodeCount()))
         catch
             new_stat!(param.stats, "BNodes", Inf)
-        end
-        catch
         end
     else
         # print solution and collected data

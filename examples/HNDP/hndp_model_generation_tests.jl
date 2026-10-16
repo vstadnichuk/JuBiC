@@ -18,7 +18,6 @@ const TOY_ALL_DECISION_GBC_OPT = 22.0
 const TOY_WEIGHTED_GBC_OPT = 0.0
 
 _hndp_test_tempdir() = JuBiC.repo_local_tempdir("tests", "hndp_model_generation"; prefix="hndp_test")
-const mktempdir = _hndp_test_tempdir
 
 """
     build_toy_hndp_two_users()
@@ -190,8 +189,8 @@ function _run_hndp_model_pair_test(big_m_mode::Symbol)
     blc_instance = build_hndp_blc_instance(hndp, solver; big_m_mode=big_m_mode)
     sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=big_m_mode)
 
-    blc_dir = mktempdir()
-    sd_dir = mktempdir()
+    blc_dir = _hndp_test_tempdir()
+    sd_dir = _hndp_test_tempdir()
 
     blc_param = BLCparam(solver, false, blc_dir, "lp", 60)
     sd_param = MIPparam(solver, false, sd_dir, "lp", 60)
@@ -221,8 +220,8 @@ function _run_hndp_blc_astar_pair_test(hndp::HNDPwC, big_m_mode::Symbol, expecte
         subproblem_method=HNDP_SUBPROBLEM_ASTAR,
     )
 
-    blc_mip_stats = solve_instance!(blc_mip_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
-    blc_astar_stats = solve_instance!(blc_astar_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
+    blc_mip_stats = solve_instance!(blc_mip_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    blc_astar_stats = solve_instance!(blc_astar_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test haskey(blc_mip_stats.data, "Opt")
     @test haskey(blc_astar_stats.data, "Opt")
@@ -240,9 +239,9 @@ function _run_hndp_path_model_test()
     sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH)
     path_instance, enum_runtime, path_counts = build_hndp_path_instance(hndp, solver; enumeration_time_limit=60.0)
 
-    blc_param = BLCparam(solver, false, mktempdir(), "lp", 60)
-    sd_param = MIPparam(solver, false, mktempdir(), "lp", 60)
-    path_param = MIPparam(solver, false, mktempdir(), "lp", 60)
+    blc_param = BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60)
+    sd_param = MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60)
+    path_param = MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60)
 
     blc_stats = solve_instance!(blc_instance, blc_param)
     sd_stats = solve_instance!(sd_instance, sd_param)
@@ -263,9 +262,9 @@ function _run_hndp_path_model_all_decision_arcs_test()
     sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=HNDP_BIGM_N_MINUS_ONE)
     path_instance, enum_runtime, path_counts = build_hndp_path_instance(hndp, solver; enumeration_time_limit=60.0)
 
-    blc_param = BLCparam(solver, false, mktempdir(), "lp", 60)
-    sd_param = MIPparam(solver, false, mktempdir(), "lp", 60)
-    path_param = MIPparam(solver, false, mktempdir(), "lp", 60)
+    blc_param = BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60)
+    sd_param = MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60)
+    path_param = MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60)
 
     blc_stats = solve_instance!(blc_instance, blc_param)
     sd_stats = solve_instance!(sd_instance, sd_param)
@@ -296,8 +295,8 @@ function _run_hndp_path_model_weighted_test()
     )
     path_instance, enum_runtime, path_counts = build_hndp_path_instance(hndp, solver; enumeration_time_limit=60.0)
 
-    blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
-    path_stats = solve_instance!(path_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    path_stats = solve_instance!(path_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test enum_runtime >= 0
     @test path_counts == Dict("UW" => 2)
@@ -323,8 +322,8 @@ function _run_hndp_path_parallel_equivalence_test(hndp::HNDPwC, expected_opt::Fl
         parallelize=true,
     )
 
-    seq_stats = solve_instance!(seq_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
-    par_stats = solve_instance!(par_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    seq_stats = solve_instance!(seq_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    par_stats = solve_instance!(par_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test seq_runtime >= 0
     @test par_runtime >= 0
@@ -351,8 +350,8 @@ function _run_hndp_hybrid_path_equivalence_test(hndp::HNDPwC, expected_opt::Floa
         fallback_mode=HNDP_HYBRID_FALLBACK_SD,
     )
 
-    path_stats = solve_instance!(path_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
-    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    path_stats = solve_instance!(path_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test path_runtime >= 0
     @test hybrid_runtime >= 0
@@ -377,8 +376,8 @@ function _run_hndp_hybrid_all_fallback_test(hndp::HNDPwC, big_m_mode::Symbol, ex
     )
     sd_instance = build_hndp_sd_instance(hndp, solver; big_m_mode=big_m_mode)
 
-    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
-    sd_stats = solve_instance!(sd_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
+    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    sd_stats = solve_instance!(sd_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test hybrid_runtime ≈ 0.0 atol = 1e-6
     @test isempty(hybrid_counts)
@@ -407,8 +406,8 @@ function _run_hndp_hybrid_blc_path_equivalence_test(hndp::HNDPwC, expected_opt::
         subproblem_method=HNDP_SUBPROBLEM_MIP,
     )
 
-    path_stats = solve_instance!(path_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
-    hybrid_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
+    path_stats = solve_instance!(path_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    hybrid_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test path_runtime >= 0
     @test hybrid_runtime >= 0
@@ -439,8 +438,8 @@ function _run_hndp_hybrid_blc_all_fallback_test(hndp::HNDPwC, big_m_mode::Symbol
         subproblem_method=HNDP_SUBPROBLEM_MIP,
     )
 
-    hybrid_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
-    blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
+    hybrid_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test hybrid_runtime ≈ 0.0 atol = 1e-6
     @test isempty(hybrid_counts)
@@ -486,10 +485,10 @@ function _run_hndp_hybrid_path_count_fallback_test()
     @test path_count_fallback_users == ["UM"]
     @test hybrid_blc_path_count_fallback_users == ["UM"]
 
-    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
-    sd_stats = solve_instance!(sd_instance, MIPparam(solver, false, mktempdir(), "lp", 60))
-    hybrid_blc_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
-    blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, mktempdir(), "lp", 60))
+    hybrid_stats = solve_instance!(hybrid_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    sd_stats = solve_instance!(sd_instance, MIPparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    hybrid_blc_stats = solve_instance!(hybrid_blc_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
+    blc_stats = solve_instance!(blc_instance, BLCparam(solver, false, _hndp_test_tempdir(), "lp", 60))
 
     @test isapprox(hybrid_stats.data["Opt"], sd_stats.data["Opt"]; atol=1e-6)
     @test isapprox(hybrid_blc_stats.data["Opt"], blc_stats.data["Opt"]; atol=1e-6)
@@ -520,9 +519,9 @@ function _run_hndp_gbc_subsolver_triplet_test(hndp::HNDPwC, big_m_mode::Symbol, 
         big_m_mode=big_m_mode,
     )
 
-    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
-    stats_blc = solve_instance!(gbc_blc, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
-    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_blc = solve_instance!(gbc_blc, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
 
     @test haskey(stats_mip.data, "Opt")
     @test haskey(stats_blc.data, "Opt")
@@ -548,8 +547,8 @@ function _run_hndp_gbc_weighted_subsolver_pair_test(hndp::HNDPwC, expected_opt::
         subproblem_method=HNDP_SUBPROBLEM_ASTAR,
     )
 
-    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
-    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_mip = solve_instance!(gbc_mip, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
+    stats_astar = solve_instance!(gbc_astar, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true))
 
     @test haskey(stats_mip.data, "Opt")
     @test haskey(stats_astar.data, "Opt")
@@ -606,6 +605,9 @@ function _run_hndp_mibs_sioux_test(hndp::HNDPwC)
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
     @test mibs_instance.master isa MibSMaster
     @test isnothing(mibs_instance.subproblems)
+    metadata = JuMP.object_dictionary(mibs_instance.master.model)[:hndp_model_size_metadata]
+    @test metadata["master_variable_count"] > 0
+    @test metadata["subproblem_first_level_variable_count_total"] == 0
 end
 
 """
@@ -627,8 +629,8 @@ function _run_hndp_mibs_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
-    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, _hndp_test_tempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
     @test haskey(mibs_stats.data, "Opt")
@@ -655,8 +657,8 @@ function _run_hndp_mibs_multi_follower_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
-    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, _hndp_test_tempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
     @test haskey(mibs_stats.data, "Opt")
@@ -683,8 +685,8 @@ function _run_hndp_mibs_runtime_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
-    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mktempdir(), HNDP_TEST_TIME_LIMIT))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
+    mibs_stats = solve_instance!(mibs_instance, MibSparam(false, _hndp_test_tempdir(), HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
     @test haskey(mibs_stats.data, "Opt")
@@ -696,7 +698,7 @@ end
 function _run_hndp_mibs_runtime_toy_solve_test()
     solver = GurobiSolver()
     hndp = build_toy_hndp_two_users()
-    mibs_outdir = mktempdir()
+    mibs_outdir = _hndp_test_tempdir()
 
     gbc_instance = build_hndp_gbc_instance(
         hndp,
@@ -707,7 +709,7 @@ function _run_hndp_mibs_runtime_toy_solve_test()
     )
     mibs_instance = build_hndp_mibs_instance(hndp, solver)
 
-    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
+    gbc_stats = solve_instance!(gbc_instance, GBCparam(solver, false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, HNDP_TEST_TIME_LIMIT, true))
     mibs_stats = solve_instance!(mibs_instance, MibSparam(false, mibs_outdir, HNDP_TEST_TIME_LIMIT))
 
     @test haskey(gbc_stats.data, "Opt")
@@ -722,7 +724,7 @@ end
 function _run_hndp_astar_negative_master_cost_guard_test()
     hndp = build_toy_hndp_two_users()
     subsolver = build_hndp_astar_user(hndp.users[1], hndp, hndp.edgeA)
-    params = GBCparam(GurobiSolver(), false, mktempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true)
+    params = GBCparam(GurobiSolver(), false, _hndp_test_tempdir(), "lp", PARETO_OPTIMALITY_ONLY, 60, true)
 
     @test_throws ArgumentError JuBiC.compute_lower_bound_master_contribution(subsolver, params, HNDP_TEST_TIME_LIMIT)
 end

@@ -583,7 +583,13 @@ end
 function _attach_hndp_model_size_metadata!(instance::Instance)
     master_model = _hndp_master_model(instance)
     if !isnothing(master_model)
-        master_model.ext[:hndp_model_size_metadata] = hndp_model_size_metadata(instance)
+        metadata = hndp_model_size_metadata(instance)
+        if master_model isa BilevelJuMP.BilevelModel
+            # BilevelModel implements JuMP's object dictionary, but has no ext.
+            JuMP.object_dictionary(master_model)[:hndp_model_size_metadata] = metadata
+        else
+            master_model.ext[:hndp_model_size_metadata] = metadata
+        end
     end
     return instance
 end

@@ -361,7 +361,7 @@ machine or by another language.
 """
 function read_hndp_instance(path::AbstractString)
     data = JSON.parsefile(String(path))
-    Int(get(data, "format_version", 0)) == 1 ||
+    Int(get(data, "format_version", 0)) in (1, 2) ||
         throw(ArgumentError("Unsupported HNDP instance format in $(path)."))
 
     nodes = data["nodes"]
@@ -394,7 +394,7 @@ function read_hndp_instance(path::AbstractString)
         limit = isnothing(limit) ? nothing : Float64(limit)
         push!(users, User(
             user_data["name"], Int(user_data["origin"]), Int(user_data["destination"]),
-            risk, cost, weight, limit,
+            risk, cost, get(user_data, "has_weight", true) ? weight : nothing, limit,
         ))
     end
 
@@ -404,7 +404,11 @@ function read_hndp_instance(path::AbstractString)
     if any(!isnothing(user.weighlimit) for user in users)
         minweights = floyd_warshall_shortest_paths(graph, users[1].mweight)
     end
-    instance = HNDPwC(graph, users, edgeA, edge_price, minweights)
+    raw_groups = get(data, "decision_groups", nothing)
+    groups = isnothing(raw_groups) ? nothing :
+        [[(Int(arc[1]), Int(arc[2])) for arc in group] for group in raw_groups]
+    budget = get(data, "decision_budget", nothing)
+    instance = HNDPwC(graph, users, edgeA, edge_price, minweights, groups, budget)
     metadata = Dict{String,Any}(get(data, "metadata", Dict{String,Any}()))
     name = String(get(data, "instance_name", get(metadata, "name", basename(dirname(String(path))))))
     metadata["name"] = name
@@ -519,7 +523,7 @@ function _build_competition_generated_network(
     base_graph = _load_named_base_graph(topology_id)
     graph = base_graph
     decision_arcs = _sample_decision_arcs(graph, parameter_seed, decision_arc_count)
-    negative_risk = Bool(get(spec, "negative_risk", false))
+    negative_risk = Bool(get(spec, "negative_risk", false)) || single_layer_arc_mode == "decision_only_negative"
 
     users, minweights = if single_layer_arc_mode == "competition" || single_layer_arc_mode == "decision_only_negative"
         _build_single_layer_competition_users(
@@ -1390,18 +1394,24 @@ function _write_hndp_instance_json(path::String, generated_network::HNDPGenerate
             "origin" => Int(user.origin),
             "destination" => Int(user.destination),
             "weight_limit" => user.weighlimit,
+            "has_weight" => !isnothing(user.mweight),
             "arcs" => arcs,
         ))
     end
 
     data = Dict(
         "format" => "JuBiC-HNDP-instance",
-        "format_version" => 1,
+        # Older readers must reject grouped-decision instances rather than
+        # silently dropping their additional constraints.
+        "format_version" => 2,
         "instance_name" => generated_network.name,
         "metadata" => generated_network.metadata,
         "nodes" => collect(1:nv(graph)),
         "edges" => edge_records,
         "users" => user_records,
+        "decision_groups" => isnothing(inst.decision_groups) ? nothing :
+            [[[arc[1], arc[2]] for arc in group] for group in inst.decision_groups],
+        "decision_budget" => inst.decision_budget,
     )
     open(path, "w") do io
         JSON.print(io, data, 2)

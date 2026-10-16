@@ -36,4 +36,6 @@ with_logger(logger) do
     @testset "Batch Solver Tests" begin
         include("batch.jl")
     end
+
+    include("integration_v06.jl")
 end

@@ -51,11 +51,7 @@ function solve_with_BLC!(inst::Instance, param::BLCparam)
     set_time_limit_sec(blcm.hpr, param.runtime)
     set_attribute(blcm.hpr, MOI.NumberOfThreads(), master_threads)
     set_seed!(blcm.hpr, param.solver, get_seed(param))
-    if get(param.stats.data, "branching_rule", "default") == "fixed_linking_order"
-        _set_fixed_linking_branch_priorities!(blcm.hpr, blcm.link_vars)
-    elseif get(param.stats.data, "branching_rule", "default") == "linking_first"
-        _set_linking_branch_priorities!(blcm.hpr, blcm.link_vars)
-    end
+    _apply_linking_branching_rule!(blcm.hpr, blcm.link_vars, param)
     for sub in inst.subproblems
         set_nthreads(sub, sub_threads)
     end
