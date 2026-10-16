@@ -85,9 +85,6 @@ so overlapping fixes are listed once rather than once per source commit.
   network attributes, including station selection, access costs, travel times,
   and expansion scenarios. Include additional named topology inputs and smoke
   and sweep runners.
-- **OSM/GTFS import:** add the cached Aachen data importer, city/buffered-boundary
-  variants, external-road compression, and transit-service timing support, with
-  accompanying usage documentation.
 - **Network persistence:** export/import generated networks as JSON, reuse saved
   graph inputs, and resume eligible experiment runs.
 - **Experiment configuration:** add reusable HNDP manifests and runners,
@@ -102,23 +99,28 @@ so overlapping fixes are listed once rather than once per source commit.
 | Source branch | Integrated tip | Principal contribution |
 | --- | --- | --- |
 | `automated-benders-like-cut-generation-and-its-application-to-the-bilevel-network-design-problem` | `5784c8a` | Cost-aware big-M callbacks, branching controls, EMA experiments |
-| `bilevel-feasible-paths-for-discrete-bilevel-network-design-problems` | `502b710` | Multimodal generation, OSM/GTFS pipeline, resilient statistics |
+| `bilevel-feasible-paths-for-discrete-bilevel-network-design-problems` | `502b710` | Multimodal generation, resilient statistics (OSM/GTFS import excluded) |
 | `catalog-formulations-multi-follower-discrete-bilevel-network-design` | `0a13584` | Shared HNDP paper manifests, runner, EMA topology |
 | `solving-multi-follower-mixed-integer-bilevel-problems-with-binary-linking-variables` | `963e474` | Parallelism, time limits, numerical stability, parsers, saved networks |
 
 The main README remains unchanged. Generated EMA result tables were omitted.
-`examples/HNDP/aggregated_network_model_results/` is preserved as a historical
-snapshot, including its original scripts; active HNDP changes are integrated into
-`examples/HNDP/`. Benchmark configurations and supporting feature documentation
-are retained. The working package version is now `0.6.0`; this is not a published
-release.
+OSM/GTFS network construction is excluded from version 0.6: the importers,
+pipeline guide, city-dependent benchmark entry points, and associated archived
+result tables are removed, along with the unused `OpenStreetMapX` and `CodecXz`
+direct dependencies. The historical
+`examples/HNDP/aggregated_network_model_results/` folder is omitted entirely.
+The active instance types, JSON persistence, grouped decisions, budgets, all
+solver formulations, and TNTP-based multimodal generators remain available.
+No solver implementation changes are required for this exclusion. The working
+package version is `0.6.0`; this is not a published release.
 
 ### Validation
 
-Julia syntax validation and dependency resolution passed with Julia 1.11.9.
-Validation passed with **419 assertions** across the core/integration suite
-(95), HNDP formulation and solver-equivalence suite (252), and multimodal/JSON
-compatibility checks (72). The OSM/GTFS importer also loaded successfully.
-Core and HNDP checks used two Julia threads; Gurobi 13.0.3 and the repaired
-MiBS 1.2.2 installation were used. Data-heavy paper benchmarks, live OSM/GTFS
-acquisition, and the historical snapshot scripts were not run.
+Post-removal dependency resolution and Julia syntax validation passed with
+Julia 1.11.9. **421 assertions passed**: core/integration (95), HNDP formulation
+and solver equivalence (252), and multimodal/JSON checks with solves (74).
+Both retained TNTP-based multimodal smoke instances solved to optimality:
+bike objective -18.0; expansion objective 0.0. Tests used two Julia threads,
+Gurobi 13.0.3, and the repaired MiBS 1.2.2 installation. Paper-scale benchmarks
+were not run. The active HNDP and core solver implementations are unchanged by
+the OSM/GTFS exclusion.
