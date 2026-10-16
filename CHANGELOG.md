@@ -94,6 +94,29 @@ so overlapping fixes are listed once rather than once per source commit.
   typed cost-aware callbacks combined with integer cuts, branching priorities,
   and two concurrent follower workers.
 
+### Example cleanup
+
+- Remove the StochasticMultipleKnapsack example: its entry point, compact and
+  decomposed model builders, SMPS reader, and example-specific tests are retired.
+  No active solver or package test entry point depends on these files. No
+  associated SMKP input data are present in the repository.
+- The 421-test validation below predates this example cleanup.
+- Remove legacy BOBILib example inputs and benchmark entry points, network-design
+  benchmark configurations, and the EMA reproduction launcher.
+- Remove the paper-specific HNDP seed-hunt handoff, paper manifests, and
+  fixed-order reproduction batch. Retain generic experiment and solver helpers.
+- Place `multimodal_example.json` and `network_generation_example.json` directly
+  beside the HNDP code. Consolidate the multimodal instance/model/solver settings
+  in one JSON file and let the general runner accept either that file or the
+  existing three-file directory format. Update the usage documentation.
+- Cross-check HNDP documentation against the builders and dispatch code: add
+  formulation and generator comparison tables, BlCLag and dynamic big-M options,
+  corrected topology/export lists, a local index, and runnable small examples.
+- Targeted cleanup/documentation validation: 10 assertions passed, covering all
+  five construction examples, save/reload, a direct strong-duality solve, both
+  configuration formats, and the two successful multimodal experiment results.
+  Local documentation links, builder names, and type coverage also passed.
+
 ### Integration scope and provenance
 
 | Source branch | Integrated tip | Principal contribution |
