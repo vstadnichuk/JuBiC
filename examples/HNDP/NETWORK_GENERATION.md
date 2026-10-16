@@ -30,6 +30,32 @@ the model-generation and solver pipeline.
 
 ### `instance_output`
 
+Generated instances can be persisted independently of solver runs. The
+canonical file is `instance.json`; it contains the directed graph, decision
+arcs, construction costs, every user's origin/destination, cost/risk/weight
+arc data, weight limits, and the generation metadata. Set
+`"graph_format": "json"` (the default) or `"both"` to also create the
+visualization-oriented `instance.gexf` file. The small `users.json` sidecar is
+kept for compatibility with older inspection scripts.
+
+The saved JSON is read with `read_hndp_instance(path)`. A solver run can use a
+configuration containing saved paths instead of an `instances` generation
+list:
+
+```json
+{
+  "saved_instances": [
+    "generated_hndp/sioux_falls_U250_S42/instance.json"
+  ]
+}
+```
+
+Pass that configuration as the instance configuration to
+`run_hndp_experiments!`. The runner loads each graph once, prints its path
+once, and then evaluates all selected solver/model configurations on the same
+in-memory instance. This separates random instance generation from solver
+execution and makes reruns independent of generator changes.
+
 - Type: object
 - Optional: yes
 - Meaning: controls whether generated instances are written to disk for

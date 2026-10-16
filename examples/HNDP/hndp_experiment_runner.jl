@@ -30,6 +30,7 @@ function run_hndp_experiments!(
     param_config_path::AbstractString;
     output_root::AbstractString,
     resume::Bool=true,
+    model_filter::Function=(generated_network, model_spec) -> true,
 )
     instance_cfg = load_hndp_network_generation_config(String(instance_config_path))
     model_cfg = JSON.parsefile(String(model_config_path))
@@ -50,11 +51,41 @@ function run_hndp_experiments!(
     completed_ids = resume ? JuBiC._read_completed_batch_ids(summary_csv_path) : Set{String}()
     results = Dict{String,JuBiC.RunStats}()
 
-    visit_hndp_networks(instance_cfg, generated_network -> begin
+    # For saved instances, filter completed combinations before deserializing
+    # the graph.  `read_hndp_instance` reconstructs all users and model data,
+    # so doing the resume check only inside the visitor can be expensive for a
+    # large batch.  The canonical instance name is also the saved directory
+    # name, which is sufficient to reproduce the experiment identifiers.
+    if haskey(instance_cfg, "saved_instances")
+        saved_paths = _hndp_saved_instance_paths(instance_cfg)
+        candidate_paths = _hndp_resume_candidate_paths(
+            saved_paths,
+            models,
+            params,
+            completed_ids,
+        )
+        @info "Resume scan retained $(length(candidate_paths)) of $(length(saved_paths)) saved HNDP instances for deserialization."
+        visit_function = visitor -> visit_hndp_saved_instances(candidate_paths, visitor)
+    else
+        visit_function = visitor -> visit_hndp_networks(instance_cfg, visitor)
+    end
+
+    visit_function(generated_network -> begin
         instance_metadata = deepcopy(generated_network.metadata)
         instance_name = String(instance_metadata["name"])
+        instance_file = get(instance_metadata, "instance_file", nothing)
+        if isnothing(instance_file)
+            @info "Using generated HNDP graph instance $(instance_name)."
+        else
+            @info "Using saved HNDP graph instance $(instance_name) from $(instance_file)."
+        end
 
         for model_spec in models
+            if !model_filter(generated_network, model_spec)
+                model_label = String(get(model_spec, "name", "model"))
+                @info "Skipping model $(model_label) for instance $(instance_name) because the benchmark filter marked it ineligible."
+                continue
+            end
             for param_spec in params
                 experiment_id = _hndp_experiment_id(instance_name, model_spec, param_spec)
                 if experiment_id in completed_ids
@@ -101,6 +132,16 @@ function run_hndp_experiments!(
 
                     if !write_run_logs
                         try
+                            diagnostic_path = joinpath(run_output_path, "numeric_termination.json")
+                            if isfile(diagnostic_path)
+                                diagnostic_dir = joinpath(output_root, "results", "numeric_termination")
+                                mkpath(diagnostic_dir)
+                                cp(
+                                    diagnostic_path,
+                                    joinpath(diagnostic_dir, "$(experiment_id).json");
+                                    force=true,
+                                )
+                            end
                             rm(run_output_path; recursive=true, force=true, allow_delayed_delete=true)
                         catch err
                             @warn "Could not immediately remove transient HNDP run folder $(run_output_path). Continuing. Error: $(sprint(showerror, err))"
@@ -112,6 +153,37 @@ function run_hndp_experiments!(
     end)
 
     return results
+end
+
+function _hndp_saved_instance_paths(config::Dict{String,Any})
+    paths = get(config, "saved_instances", nothing)
+    paths === nothing && throw(ArgumentError("A saved-instance configuration requires 'saved_instances'."))
+    paths isa AbstractString && return [abspath(String(paths))]
+    return unique(abspath.(String.(paths)))
+end
+
+function _hndp_saved_instance_name(path::AbstractString)
+    # `write_hndp_generated_networks` stores each canonical instance as
+    # <instance_root>/<instance_name>/instance.json.
+    return basename(dirname(abspath(String(path))))
+end
+
+function _hndp_resume_candidate_paths(
+    paths,
+    models::Vector{Dict{String,Any}},
+    params::Vector{Dict{String,Any}},
+    completed_ids::Set{String},
+)
+    candidates = String[]
+    for path in paths
+        instance_name = _hndp_saved_instance_name(path)
+        needs_work = any(
+            _hndp_experiment_id(instance_name, model_spec, param_spec) ∉ completed_ids
+            for model_spec in models, param_spec in params
+        )
+        needs_work && push!(candidates, path)
+    end
+    return candidates
 end
 
 function _maybe_export_hndp_solver_instance!(
@@ -160,6 +232,9 @@ function _run_hndp_experiment(
         model_spec,
         param_spec,
     )
+    if haskey(model_spec, "warmstart")
+        model_metadata["warmstart"] = Bool(model_spec["warmstart"])
+    end
 
     solver_name = JuBiC._infer_solver_name(model_instance)
     resolved_param_config = _resolve_hndp_param_config(
@@ -319,8 +394,19 @@ function _resolve_hndp_param_config(
 )
     resolved = deepcopy(param_spec)
     resolved["solver"] = solver_name
+    # HNDP follower-risk objectives are integer-valued by construction. Use
+    # integerized GBC/BlC cuts by default, while preserving an explicit override.
+    if solver_name in ("GBC", "BLC") && !haskey(resolved, "integer_obj")
+        resolved["integer_obj"] = true
+    end
     resolved["output_folder_path"] = String(run_output_path)
     resolved["enable_output_logs"] = write_run_logs
+    # Allow a model specification to override the batch-wide warm-start
+    # setting. This is needed when comparing the plain ND variant against
+    # warm-started GBC variants in one streamed benchmark.
+    if haskey(model_metadata, "warmstart")
+        resolved["warmstart"] = Bool(model_metadata["warmstart"])
+    end
     if haskey(model_metadata, "runtime_override")
         resolved["runtime"] = model_metadata["runtime_override"]
     end

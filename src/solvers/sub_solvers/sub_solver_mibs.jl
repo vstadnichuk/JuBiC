@@ -238,6 +238,7 @@ function separation_BlC!(sub_solver::SubSolverMiBS, sval, kvals::Dict, params::S
 end
 
 function set_nthreads(sol::SubSolverMiBS, n)
+    warn_if_excess_threads(sol, n)
     @warn "We currently do not directly support setting the number of threads for the MiBS subsolver."
 end
 
@@ -294,6 +295,7 @@ function solve_sub_for_x(sol::SubSolverMiBS, xvals, params::SolverParam, time_li
             delete(sol.bi_model, fixc[a])
         end
         unregister(sol.bi_model, :fixc)
+        _flush_model_updates!(sol.bi_model)
     end
 end
 

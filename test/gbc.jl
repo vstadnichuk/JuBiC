@@ -544,7 +544,7 @@ function test_gbc_opt_cut_coefficient_refactor_helpers()
     @test blc_g_coeffs[2] == 2.0
 
     @test _sanitize_nonnegative_opt_cut_coefficient(-1e-10, "test", connector) == 0.0
-    @test_throws ArgumentError _sanitize_nonnegative_opt_cut_coefficient(-1.0, "test", connector)
+    @test_throws JuBiC.NumericalIssueException _sanitize_nonnegative_opt_cut_coefficient(-1.0, "test", connector)
 end
 
 test_gbc_simple_bilevel()

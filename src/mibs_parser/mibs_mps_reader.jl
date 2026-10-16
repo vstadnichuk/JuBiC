@@ -32,6 +32,8 @@ function _read_mps(file_path::String)
     columns = Dict{String,Vector{Tuple{String,Number}}}()
     rhs = Dict{String,Number}()
     bounds = Dict{String,VariableBound}()
+    integer_variables = Set{String}()
+    integer_mode = false
 
     current_section = ""
     open(file_path, "r") do file
@@ -72,10 +74,20 @@ function _read_mps(file_path::String)
                         end
                     end
                 elseif current_section == "COLUMNS"
-                    if parts[1] in ("MARK0000", "MARK0001")
+                    # MPS integer markers are control records, not column
+                    # coefficients. Marker numbering is not fixed, so accept
+                    # all standard MARKxxxx records.
+                    if startswith(parts[1], "MARK") && length(parts) >= 3 && parts[2] == "'MARKER'"
+                        marker = replace(parts[3], "'" => "")
+                        if marker == "INTORG"
+                            integer_mode = true
+                        elseif marker == "INTEND"
+                            integer_mode = false
+                        end
                         continue
                     end
                     var_name = parts[1]
+                    integer_mode && push!(integer_variables, var_name)
                     row_name = parts[2]
                     coeff = parse(Float64, parts[3])
                     if !haskey(columns, row_name)
@@ -141,6 +153,24 @@ function _read_mps(file_path::String)
             catch e
                 error("Error parsing line in section $current_section: $line\n$e")
             end
+        end
+    end
+
+    # MPS permits variables to have no BOUNDS record.  Such variables still
+    # occur in COLUMNS and use the default lower bound 0.  Preserve integer
+    # marker information for these variables so builders do not silently drop
+    # them from the model.
+    column_variables = Set{String}()
+    for entries in values(columns)
+        for (var_name, _) in entries
+            push!(column_variables, var_name)
+        end
+    end
+    for var_name in column_variables
+        if !haskey(bounds, var_name)
+            bounds[var_name] = VariableBound(false, var_name in integer_variables, 0.0, nothing)
+        elseif var_name in integer_variables
+            bounds[var_name].is_integer = true
         end
     end
 

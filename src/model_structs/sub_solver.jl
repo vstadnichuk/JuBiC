@@ -2,6 +2,25 @@ using JuMP
 
 abstract type SubSolver end
 
+"""
+    max_threads(sub_solver::SubSolver)
+
+Return the maximum number of threads the subsolver is designed to use. A
+return value of `-1` means that JuBiC does not impose a solver-specific
+recommendation. This is advisory only: requested thread counts are still
+passed to the subsolver.
+"""
+max_threads(::SubSolver) = -1
+
+function warn_if_excess_threads(sub_solver::SubSolver, requested_threads)
+    requested = max(1, Int(requested_threads))
+    limit = max_threads(sub_solver)
+    if limit >= 0 && requested > limit
+        @warn "Subsolver $(name(sub_solver)) is designed for at most $(limit) thread(s), but $(requested) were requested. The requested setting will still be assigned."
+    end
+    return nothing
+end
+
 struct SubSolution
     vio::Bool  # vio=true iff we found a new violated constraint
     obj_first_level::Number  # The first level obj. value (of the solution)
@@ -19,13 +38,120 @@ Base.showerror(io::IO, err::TimeoutException) = print(io, err.message)
 struct NumericalIssueException <: Exception
     message::String
     status::String
+    context::Dict{String,Any}
 end
+
+"""
+    _round_y_values_and_objectives(sol, y_vals, optL2, optL1)
+
+Convert numerically non-binary follower linking variables to binary values and
+re-evaluate both objective expressions with those rounded values.  This keeps
+the returned follower solution and objective values consistent when a solver
+returns a tiny fractional value for a binary variable.
+"""
+function _round_y_values_and_objectives(sol, y_vals, optL2, optL1)
+    rounded = Dict(a => Float64(y_vals[a]) for a in keys(y_vals))
+    steps = String[]
+    for a in keys(rounded)
+        raw = rounded[a]
+        if abs(raw) <= 1e-8
+            rounded[a] = 0.0
+        elseif abs(raw - 1.0) <= 1e-8
+            rounded[a] = 1.0
+        else
+            rounded_value = min(max(Float64(ceil(raw)), 0.0), 1.0)
+            rounded[a] = rounded_value
+            push!(steps, "y[$(a)]=$(raw) -> $(rounded_value)")
+        end
+    end
+
+    isempty(steps) && return y_vals, optL2, optL1
+
+    @warn "Subsolver $(name(sol)) returned non-binary follower y-values. Rounded values: $(join(steps, "; ")). Re-evaluating both follower objective expressions on the rounded y-values."
+
+    y_by_variable = Dict(sol.y_vars[a] => rounded[a] for a in keys(rounded))
+    evaluate_with_rounded_y(expr) = JuMP.constant(expr) + sum(
+        coefficient * get(y_by_variable, variable, Float64(value(variable)))
+        for (coefficient, variable) in JuMP.linear_terms(expr);
+        init=0.0,
+    )
+
+    rounded_optL2 = evaluate_with_rounded_y(sol.c_objterm)
+    rounded_optL1 = evaluate_with_rounded_y(sol.r_objterm)
+    @debug "Subsolver $(name(sol)) changed follower objective values after y-rounding: optL2 $(optL2) -> $(rounded_optL2), optL1 $(optL1) -> $(rounded_optL1)."
+    return rounded, rounded_optL2, rounded_optL1
+end
+NumericalIssueException(message::String, status::String) =
+    NumericalIssueException(message, status, Dict{String,Any}())
 Base.showerror(io::IO, err::NumericalIssueException) = print(io, err.message)
+
+"""
+    _round_integer_objective_if_close(value, parameter, sub_name, description)
+
+When `integer_obj=true`, round an objective-derived value to its nearest
+integer only if it is already within the numerical tolerance.  Objective
+values that are not close to an integer are left unchanged; integer-objective
+mode must not turn a small, genuinely fractional value into one unit.
+"""
+const INTEGER_OBJECTIVE_ROUND_TOL = 1e-4
+
+function _round_integer_objective_if_close(
+    value::Real,
+    parameter::SolverParam,
+    sub_name,
+    description::AbstractString,
+)
+    value_float = Float64(value)
+    integer_obj = hasproperty(parameter, :integer_obj) && getproperty(parameter, :integer_obj)
+    integer_obj || return value_float
+
+    integer_value = round(value_float)
+    if abs(value_float - integer_value) <= INTEGER_OBJECTIVE_ROUND_TOL
+        if value_float != integer_value
+            @debug "$(sub_name) integerizes $(description): $(value_float) -> $(integer_value)."
+        end
+        return Float64(integer_value)
+    end
+    return value_float
+end
 
 struct MibSFailureException <: Exception
     message::String
 end
 Base.showerror(io::IO, err::MibSFailureException) = print(io, err.message)
+
+"""
+    _flush_model_updates!(model)
+
+Flush pending model modifications after a batch of temporary constraints has
+been deleted. JuMP normally flushes these changes at the next `optimize!`, but
+the Gurobi wrapper maintains additional bookkeeping for deleted columns and
+constraints. Calling its internal update routine here keeps that bookkeeping
+and Gurobi's native model synchronized before the persistent model is reused.
+
+For non-Gurobi models, or models without an attached optimizer, this is a
+no-op.
+"""
+function _flush_model_updates!(model)
+    try
+        optimizer = JuMP.unsafe_backend(model)
+        if optimizer isa Gurobi.Optimizer
+            # Use Gurobi.jl's update path rather than calling GRBupdatemodel
+            # directly: the wrapper also adjusts its internal indices after
+            # deletions and resets its pending-change flags.
+            Gurobi._update_if_necessary(optimizer; force=true)
+        end
+    catch err
+        # Some auxiliary model types (notably BilevelJuMP models) do not expose
+        # a JuMP optimizer backend directly. They are flushed by their own
+        # solver interface, so leave those models untouched here.
+        if err isa MethodError || err isa UndefRefError
+            return nothing
+        end
+        rethrow()
+    end
+    return nothing
+end
 
 ############ Functions you have to implement yourself for your subsolver ############
 """

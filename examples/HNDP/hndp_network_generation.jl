@@ -301,8 +301,9 @@ function write_hndp_generated_networks(
     output_cfg::Dict{String,Any},
 )
     base_folder = String(get(output_cfg, "folder", "examples/HNDP/generated_instances"))
-    graph_format = lowercase(String(get(output_cfg, "graph_format", "gexf")))
-    graph_format == "gexf" || throw(ArgumentError("Currently only the 'gexf' graph_format is supported."))
+    graph_format = lowercase(String(get(output_cfg, "graph_format", "json")))
+    graph_format in ("json", "gexf", "both") ||
+        throw(ArgumentError("graph_format must be 'json', 'gexf', or 'both'."))
 
     mkpath(base_folder)
     for generated_network in generated
@@ -318,10 +319,94 @@ function _write_generated_network(
     instance_folder = joinpath(base_folder, generated_network.name)
     mkpath(instance_folder)
 
-    if graph_format == "gexf"
+    if graph_format in ("gexf", "both")
         _write_hndp_gexf(joinpath(instance_folder, "instance.gexf"), generated_network)
     end
+    # `instance.json` is the canonical, lossless interchange format.  Keep the
+    # older users.json sidecar for compatibility with existing inspection tools.
+    _write_hndp_instance_json(joinpath(instance_folder, "instance.json"), generated_network)
     _write_hndp_users_json(joinpath(instance_folder, "users.json"), generated_network)
+end
+
+"""
+    read_hndp_instance(path)
+
+Read a canonical HNDP instance written by `write_hndp_generated_networks`.
+The JSON format is deliberately independent of Julia's graph serialization so
+that generated benchmark instances can be archived and reused on another
+machine or by another language.
+"""
+function read_hndp_instance(path::AbstractString)
+    data = JSON.parsefile(String(path))
+    Int(get(data, "format_version", 0)) == 1 ||
+        throw(ArgumentError("Unsupported HNDP instance format in $(path)."))
+
+    nodes = data["nodes"]
+    n = length(nodes)
+    graph = DiGraph(n)
+    for edge_data in data["edges"]
+        add_edge!(graph, Int(edge_data["source"]), Int(edge_data["target"]))
+    end
+
+    edge_price = Dict{Tuple{Int,Int},Float64}()
+    edgeA = Tuple{Int,Int}[]
+    for edge_data in data["edges"]
+        edge = (Int(edge_data["source"]), Int(edge_data["target"]))
+        edge_price[edge] = Float64(get(edge_data, "construction_cost", 0.0))
+        Bool(get(edge_data, "decision_arc", false)) && push!(edgeA, edge)
+    end
+
+    users = User[]
+    for user_data in data["users"]
+        cost = zeros(Float64, n, n)
+        risk = zeros(Float64, n, n)
+        weight = zeros(Float64, n, n)
+        for edge_data in user_data["arcs"]
+            i, j = Int(edge_data["source"]), Int(edge_data["target"])
+            cost[i, j] = Float64(edge_data["cost"])
+            risk[i, j] = Float64(edge_data["risk"])
+            weight[i, j] = Float64(edge_data["weight"])
+        end
+        limit = get(user_data, "weight_limit", nothing)
+        limit = isnothing(limit) ? nothing : Float64(limit)
+        push!(users, User(
+            user_data["name"], Int(user_data["origin"]), Int(user_data["destination"]),
+            risk, cost, weight, limit,
+        ))
+    end
+
+    # The shortest-weight matrix is a cache, not part of the mathematical
+    # instance. Recompute it when a resource limit is present.
+    minweights = nothing
+    if any(!isnothing(user.weighlimit) for user in users)
+        minweights = floyd_warshall_shortest_paths(graph, users[1].mweight)
+    end
+    instance = HNDPwC(graph, users, edgeA, edge_price, minweights)
+    metadata = Dict{String,Any}(get(data, "metadata", Dict{String,Any}()))
+    name = String(get(data, "instance_name", get(metadata, "name", basename(dirname(String(path))))))
+    metadata["name"] = name
+    metadata["instance_file"] = abspath(String(path))
+    return HNDPGeneratedNetwork(name, instance, metadata)
+end
+
+function visit_hndp_saved_instances(paths::AbstractVector, visitor::Function)
+    seen = Set{String}()
+    for raw_path in paths
+        path = abspath(String(raw_path))
+        path in seen && continue
+        push!(seen, path)
+        visitor(read_hndp_instance(path))
+    end
+    return nothing
+end
+
+function visit_hndp_saved_instances(config::Dict{String,Any}, visitor::Function)
+    paths = get(config, "saved_instances", nothing)
+    paths === nothing && throw(ArgumentError("A saved-instance configuration requires 'saved_instances'."))
+    if paths isa AbstractString
+        paths = [paths]
+    end
+    return visit_hndp_saved_instances(paths, visitor)
 end
 
 function _build_competition_generated_network(
@@ -407,6 +492,7 @@ function _build_competition_generated_network(
     base_graph = _load_named_base_graph(topology_id)
     graph = base_graph
     decision_arcs = _sample_decision_arcs(graph, parameter_seed, decision_arc_count)
+    negative_risk = Bool(get(spec, "negative_risk", false))
 
     users, minweights = if single_layer_arc_mode == "competition"
         _build_single_layer_competition_users(
@@ -421,6 +507,9 @@ function _build_competition_generated_network(
             decision_arcs,
             competitor_cost_factor,
             user_parameter_mode,
+            negative_risk=negative_risk,
+            od_pair_mode=String(get(spec, "od_pair_mode", "random")),
+            od_pair_seed=Int(get(spec, "od_pair_seed", parameter_seed)),
         )
     else
         _build_single_layer_decision_only_users(
@@ -440,12 +529,13 @@ function _build_competition_generated_network(
     instance = HNDPwC(graph, users, decision_arcs, edge_price, minweights)
 
     metadata = Dict{String,Any}(
-        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction, single_layer_arc_mode=single_layer_arc_mode),
+        "name" => _generated_name(base_name, topology_id, nusers, parameter_seed, constrained; length_slack=length_slack, competitor_cost_factor=competitor_cost_factor, user_parameter_mode=user_parameter_mode, decision_arc_count=length(decision_arcs), availability_budget_fraction=availability_budget_fraction, single_layer_arc_mode=single_layer_arc_mode, negative_risk=negative_risk),
         "instance_type" => "competition",
         "topology_family" => topology_id,
         "base_topology_family" => topology_id,
         "competition_graph_style" => "single_layer_k_" * single_layer_arc_mode,
         "single_layer_arc_mode" => single_layer_arc_mode,
+        "negative_risk" => negative_risk,
         "layered_instance" => false,
         "nusers" => nusers,
         "parameter_seed" => parameter_seed,
@@ -771,6 +861,10 @@ function _build_single_layer_competition_users(
     decision_arcs,
     competitor_cost_factor::Float64,
     user_parameter_mode::String,
+    ;
+    negative_risk::Bool=false,
+    od_pair_mode::String="random",
+    od_pair_seed::Int=seed,
 )
     rng = MersenneTwister(seed)
     users = User[]
@@ -784,13 +878,23 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=negative_risk,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
         minweights = constrained ? floyd_warshall_shortest_paths(graph, rweight) : nothing
+        selected_pairs = if od_pair_mode == "shuffled_complete"
+            pairs = [(origin, destination) for origin in 1:nv(graph) for destination in 1:nv(graph) if origin != destination]
+            pair_rng = MersenneTwister(od_pair_seed)
+            shuffle!(pair_rng, pairs)
+            length(pairs) >= nusers || throw(ArgumentError("Requested $nusers OD pairs, but the complete non-self OD set contains only $(length(pairs)) pairs."))
+            pairs[1:nusers]
+        else
+            nothing
+        end
         for user_id in 1:nusers
-            origin, destination = _sample_feasible_od_pair(rng, feasible_targets)
+            origin, destination = isnothing(selected_pairs) ?
+                _sample_feasible_od_pair(rng, feasible_targets) : selected_pairs[user_id]
             bound = _compute_weight_bound(minweights, origin, destination, length_slack, nv(graph) * max_weight)
             push!(users, User("U$(user_id)", origin, destination, rrisk, rcost, user_weight, bound))
         end
@@ -806,7 +910,7 @@ function _build_single_layer_competition_users(
             max_cost=max_cost,
             max_risk=max_risk,
             max_weight=max_weight,
-            negative_risk=false,
+            negative_risk=negative_risk,
         )
         _apply_single_layer_competition_arc_rules!(graph, rcost, rrisk, rweight, decision_arc_set, competitor_cost_factor)
         user_weight = constrained ? rweight : nothing
@@ -1196,6 +1300,7 @@ function _generated_name(
     decision_arc_count=nothing,
     availability_budget_fraction=nothing,
     single_layer_arc_mode=nothing,
+    negative_risk=false,
 )
     parts = [
         base_name,
@@ -1211,15 +1316,66 @@ function _generated_name(
         push!(parts, single_layer_arc_mode == "competition" ? "KCOMP" : "KDEC")
     end
     availability_budget_fraction !== nothing && push!(parts, "B$(availability_budget_fraction)")
+    negative_risk && push!(parts, "RNEG")
     two_stage !== nothing && push!(parts, two_stage ? "coop" : "bilevel")
     user_parameter_mode !== nothing && push!(parts, user_parameter_mode == "shared" ? "shared" : "peruser")
     return join(parts, "_")
 end
 
+function _write_hndp_instance_json(path::String, generated_network::HNDPGeneratedNetwork)
+    inst = generated_network.instance
+    graph = inst.mygraph
+    edge_records = Any[]
+    for edge in edges(graph)
+        arc = (src(edge), dst(edge))
+        push!(edge_records, Dict(
+            "source" => arc[1],
+            "target" => arc[2],
+            "decision_arc" => arc in Set(inst.edgeA),
+            "construction_cost" => Float64(get(inst.edge_price, arc, 0.0)),
+        ))
+    end
+
+    user_records = Any[]
+    for user in inst.users
+        arcs = Any[]
+        for edge in edges(graph)
+            arc = (src(edge), dst(edge))
+            push!(arcs, Dict(
+                "source" => arc[1],
+                "target" => arc[2],
+                "cost" => Float64(_edge_matrix_value(user.mcost, arc)),
+                "risk" => Float64(_edge_matrix_value(user.mrisk, arc)),
+                "weight" => Float64(_edge_matrix_value(user.mweight, arc)),
+            ))
+        end
+        push!(user_records, Dict(
+            "name" => string(user.uname),
+            "origin" => Int(user.origin),
+            "destination" => Int(user.destination),
+            "weight_limit" => user.weighlimit,
+            "arcs" => arcs,
+        ))
+    end
+
+    data = Dict(
+        "format" => "JuBiC-HNDP-instance",
+        "format_version" => 1,
+        "instance_name" => generated_network.name,
+        "metadata" => generated_network.metadata,
+        "nodes" => collect(1:nv(graph)),
+        "edges" => edge_records,
+        "users" => user_records,
+    )
+    open(path, "w") do io
+        JSON.print(io, data, 2)
+    end
+end
+
 function _write_hndp_users_json(path::String, generated_network::HNDPGeneratedNetwork)
     data = Dict(
         "instance_name" => generated_network.name,
-        "instance_type" => generated_network.metadata["instance_type"],
+        "instance_type" => get(generated_network.metadata, "instance_type", "HNDPwC"),
         "users" => [
             Dict(
                 "name" => string(user.uname),
