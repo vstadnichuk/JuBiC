@@ -1,0 +1,44 @@
+{
+  "models": [
+    {
+      "name": "path_dom",
+      "model_type": "path",
+      "enumeration_time_limit": 600.0,
+      "parallelize": true,
+      "use_decision_arc_dominance": true
+    },
+    {
+      "name": "sd_fixed",
+      "model_type": "sd",
+      "big_m_mode": "fixed_network_path",
+      "indicator_constraints": false,
+      "bound_duals": true
+    },
+    {
+      "name": "sd_nminus1",
+      "model_type": "sd",
+      "big_m_mode": "n_minus_one_most_expensive",
+      "indicator_constraints": false,
+      "bound_duals": true
+    },
+    {
+      "name": "sd_indicator",
+      "model_type": "sd",
+      "big_m_mode": "fixed_network_path",
+      "indicator_constraints": true,
+      "bound_duals": true
+    },
+    {
+      "name": "blc_fixed",
+      "model_type": "blc",
+      "big_m_mode": "fixed_network_path",
+      "subproblem_method": "mip"
+    },
+    {
+      "name": "blc_nminus1",
+      "model_type": "blc",
+      "big_m_mode": "n_minus_one_most_expensive",
+      "subproblem_method": "mip"
+    }
+  ]
+}

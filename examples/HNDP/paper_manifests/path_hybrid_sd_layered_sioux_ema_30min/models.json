@@ -1,0 +1,21 @@
+{
+  "models": [
+    {
+      "name": "path_dom_enum5min",
+      "model_type": "path",
+      "enumeration_time_limit": 300.0,
+      "parallelize": true,
+      "use_decision_arc_dominance": true
+    },
+    {
+      "name": "hybrid_sd_dom_flowfallback_enum5min",
+      "model_type": "hybrid_sd",
+      "enumeration_time_limit": 300.0,
+      "big_m_mode": "fixed_network_path",
+      "indicator_constraints": false,
+      "bound_duals": true,
+      "use_decision_arc_dominance": true,
+      "fallback_if_paths_exceed_flow_vars": true
+    }
+  ]
+}
