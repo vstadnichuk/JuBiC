@@ -68,6 +68,28 @@ function _apply_hndp_availability_budget!(
     return effective_count
 end
 
+function _apply_hndp_decision_groups!(model::JuMP.Model, xvars, hndp::HNDPwC)
+    groups = hndp.decision_groups
+    groups === nothing && return nothing
+    for (group_index, group) in enumerate(groups)
+        isempty(group) && continue
+        anchor = first(group)
+        for arc in group[2:end]
+            @constraint(model, xvars[arc] == xvars[anchor], base_name="decision_group_$(group_index)_$(arc)")
+        end
+    end
+    return nothing
+end
+
+function _apply_hndp_decision_budget!(model::JuMP.Model, xvars, hndp::HNDPwC)
+    budget = hndp.decision_budget
+    budget === nothing && return nothing
+    groups = hndp.decision_groups
+    groups === nothing && return nothing
+    @constraint(model, sum(xvars[first(group)] for group in groups if !isempty(group)) <= budget, base_name="decision_budget")
+    return nothing
+end
+
 """
     build_hndp_blc_instance(hndp, solver; big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH, subproblem_method=HNDP_SUBPROBLEM_MIP)
 
@@ -90,6 +112,8 @@ function build_hndp_blc_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(hpr, x, hndp)
+    _apply_hndp_decision_budget!(hpr, x, hndp)
 
     master_terms = Dict{String,Any}()
     sub_terms = Dict{String,Any}()
@@ -155,6 +179,8 @@ function build_hndp_blclag_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(hpr, x, hndp)
+    _apply_hndp_decision_budget!(hpr, x, hndp)
 
     master_terms = Dict{String,JuMP.AbstractJuMPScalar}()
     sub_terms = Dict{String,JuMP.AbstractJuMPScalar}()
@@ -242,6 +268,8 @@ function build_hndp_gbc_instance(
     mm = Model(() -> get_next_optimizer(solver))
     @variable(mm, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mm, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mm, x, hndp)
+    _apply_hndp_decision_budget!(mm, x, hndp)
 
     constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @variable(mm, construction_cost_var)
@@ -629,6 +657,8 @@ function build_hndp_hybrid_blc_instance(
     hpr = Model(() -> get_next_optimizer(solver))
     @variable(hpr, x[all_arcs], Bin)
     _fix_non_decision_arcs!(hpr, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(hpr, x, hndp)
+    _apply_hndp_decision_budget!(hpr, x, hndp)
     _apply_hndp_availability_budget!(
         hpr,
         x,
@@ -734,6 +764,8 @@ function build_hndp_sd_instance(
     big_m_mode::Symbol=HNDP_BIGM_FIXED_NETWORK_PATH,
     indicator_constraints::Bool=false,
     bound_duals::Bool=true,
+    availability_budget_fraction=nothing,
+    availability_budget_count=nothing,
 )
     any(!isnothing(user.weighlimit) for user in hndp.users) &&
         throw(ArgumentError("The strong-duality HNDP formulation is currently only supported for instances without weight bounds."))
@@ -742,6 +774,15 @@ function build_hndp_sd_instance(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
+    _apply_hndp_availability_budget!(
+        mip,
+        x,
+        hndp.edgeA;
+        availability_budget_fraction=availability_budget_fraction,
+        availability_budget_count=availability_budget_count,
+    )
 
     big_m_by_user = _derive_user_big_m_values(hndp, all_arcs, solver, big_m_mode)
     big_m_function = _hndp_big_m_function(big_m_by_user, big_m_mode)
@@ -797,6 +838,8 @@ function build_hndp_sd_auto_instance(
     master_model = Model()
     @variable(master_model, x[all_arcs], Bin)
     _fix_non_decision_arcs!(master_model, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(master_model, x, hndp)
+    _apply_hndp_decision_budget!(master_model, x, hndp)
     constructioncost = sum((hndp.edge_price[a] * x[a] for a in hndp.edgeA); init=0.0)
     @objective(master_model, Min, constructioncost)
 
@@ -846,6 +889,7 @@ function build_hndp_path_instance(
     enumeration_time_limit::Float64,
     parallelize::Bool=false,
     use_decision_arc_dominance::Bool=true,
+    fixed_path_bound_method::Symbol=:labeling,
 )
     if parallelize
         return build_hndp_path_instance_parallel(
@@ -853,6 +897,7 @@ function build_hndp_path_instance(
             solver;
             enumeration_time_limit=enumeration_time_limit,
             use_decision_arc_dominance=use_decision_arc_dominance,
+            fixed_path_bound_method=fixed_path_bound_method,
         )
     end
     return build_hndp_path_instance_sequential(
@@ -860,6 +905,7 @@ function build_hndp_path_instance(
         solver;
         enumeration_time_limit=enumeration_time_limit,
         use_decision_arc_dominance=use_decision_arc_dominance,
+        fixed_path_bound_method=fixed_path_bound_method,
     )
 end
 
@@ -890,6 +936,7 @@ function build_hndp_path_instance_sequential(
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
     use_decision_arc_dominance::Bool=true,
+    fixed_path_bound_method::Symbol=:labeling,
 )
     @info "Starting generation of the path-based HNDP reformulation."
     all_arcs = _hndp_all_arcs(hndp)
@@ -897,6 +944,8 @@ function build_hndp_path_instance_sequential(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
 
     total_enum_runtime = 0.0
     path_counts = Dict{String,Int}()
@@ -909,7 +958,7 @@ function build_hndp_path_instance_sequential(
             break
         end
 
-        bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, solver, deadline)
+        bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, solver, deadline; method=fixed_path_bound_method)
         total_enum_runtime += bound_runtime
         total_enum_runtime = min(total_enum_runtime, enumeration_time_limit)
         if timed_out
@@ -983,6 +1032,7 @@ function build_hndp_path_instance_parallel(
     solver::SolverWrapper;
     enumeration_time_limit::Float64,
     use_decision_arc_dominance::Bool=true,
+    fixed_path_bound_method::Symbol=:labeling,
 )
     @info "Starting generation of the parallel path-based HNDP reformulation."
     all_arcs = _hndp_all_arcs(hndp)
@@ -998,6 +1048,7 @@ function build_hndp_path_instance_parallel(
             solver,
             deadline;
             use_decision_arc_dominance=use_decision_arc_dominance,
+            fixed_path_bound_method=fixed_path_bound_method,
         )
     end
 
@@ -1017,6 +1068,8 @@ function build_hndp_path_instance_parallel(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
 
     leader_terms = Dict{String,Any}()
     path_counts = Dict{String,Int}()
@@ -1112,6 +1165,8 @@ function build_hndp_hybrid_instance(
     mip = Model(() -> get_next_optimizer(solver))
     @variable(mip, x[all_arcs], Bin)
     _fix_non_decision_arcs!(mip, x, hndp.edgeA)
+    _apply_hndp_decision_groups!(mip, x, hndp)
+    _apply_hndp_decision_budget!(mip, x, hndp)
 
     leader_terms = Dict{String,Any}()
     path_counts = Dict{String,Int}()
@@ -1430,8 +1485,183 @@ function _n_minus_one_user_bound(user::User, hndp::HNDPwC, all_arcs)
     return Float64(sum(costs[1:n_take]))
 end
 
+"""Return a scale-aware tolerance for a fixed-network path-cost bound."""
+function _hndp_path_bound_epsilon(bound::Float64)
+    # Generated multimodal costs are integral, but the path code also supports
+    # legacy fractional instances. This tolerance admits paths that are equal
+    # to the bound up to floating-point accumulation error without materially
+    # widening the feasible path-cost threshold.
+    return 1.0e-9 * max(1.0, abs(bound))
+end
+
 """
-    _fixed_arc_path_bound(user, hndp, all_arcs, solver, deadline)
+    _hndp_reverse_dijkstra_distances(graph, costs, destination)
+
+Compute exact lower-bound costs from every node to `destination` in a directed
+graph. This is a single-source Dijkstra run on the graph with all arcs
+reversed, and is therefore equivalent to a single-sink shortest-path run in
+the original graph. It is the admissible remaining-cost heuristic used by
+path enumeration.
+
+The path code assumes nonnegative arc costs. Infinite/`typemax(Int)` entries
+are treated as unavailable arcs.
+"""
+function _hndp_reverse_dijkstra_distances(graph, costs, destination::Int)
+    n = nv(graph)
+    incoming = [Tuple{Int,Float64}[] for _ in 1:n]
+    unavailable = typemax(Int)
+    for u in vertices(graph), v in outneighbors(graph, u)
+        w = costs[u, v]
+        wf = Float64(w)
+        (w == unavailable || !isfinite(wf)) && continue
+        push!(incoming[v], (u, wf))
+    end
+
+    distances = fill(Inf, n)
+    distances[destination] = 0.0
+    queue = [(0.0, destination)]
+
+    while !isempty(queue)
+        current, node = queue[1]
+        last = pop!(queue)
+        if !isempty(queue)
+            queue[1] = last
+            index = 1
+            while true
+                left = 2 * index
+                right = left + 1
+                smallest = index
+                left <= length(queue) && queue[left][1] < queue[smallest][1] && (smallest = left)
+                right <= length(queue) && queue[right][1] < queue[smallest][1] && (smallest = right)
+                smallest == index && break
+                queue[index], queue[smallest] = queue[smallest], queue[index]
+                index = smallest
+            end
+        end
+        current > distances[node] && continue
+
+        for (predecessor, arc_cost) in incoming[node]
+            candidate = current + arc_cost
+            if candidate < distances[predecessor]
+                distances[predecessor] = candidate
+                push!(queue, (candidate, predecessor))
+                index = length(queue)
+                while index > 1
+                    parent = fld(index, 2)
+                    queue[parent][1] <= queue[index][1] && break
+                    queue[parent], queue[index] = queue[index], queue[parent]
+                    index = parent
+                end
+            end
+        end
+    end
+    return distances
+end
+
+mutable struct _HNDPFixedPathLabel
+    node::Int
+    cost::Float64
+    weight::Float64
+    active::Bool
+end
+
+function _hndp_label_dominates(a::_HNDPFixedPathLabel, b::_HNDPFixedPathLabel)
+    return a.cost <= b.cost && a.weight <= b.weight
+end
+
+"""Compute the fixed-network shortest path by label setting.
+
+Returns `(:optimal, value)`, `(:infeasible, nothing)`, `(:timeout, nothing)` or
+`:unsupported` when the resource data are outside the assumptions of the
+label-setting method. Costs and resources must be nonnegative; ignoring an
+optional resource constraint is not done here.
+"""
+function _fixed_arc_labeling_bound(user::User, hndp::HNDPwC, all_arcs, deadline::Float64)
+    fixed_arcs = Set(a for a in all_arcs if !(a in hndp.edgeA))
+    adjacency = [Tuple{Int,Float64,Float64}[] for _ in vertices(hndp.mygraph)]
+    for (u, v) in all_arcs
+        (u, v) in fixed_arcs || continue
+        time() >= deadline && return (:timeout, nothing)
+        cost = Float64(user.mcost[u, v])
+        isfinite(cost) || continue
+        cost < 0.0 && return :unsupported
+        weight = isnothing(user.mweight) ? 0.0 : Float64(user.mweight[u, v])
+        isfinite(weight) || return :unsupported
+        weight < 0.0 && return :unsupported
+        push!(adjacency[u], (v, cost, weight))
+    end
+
+    labels = [_HNDPFixedPathLabel[] for _ in vertices(hndp.mygraph)]
+    first_label = _HNDPFixedPathLabel(user.origin, 0.0, 0.0, true)
+    push!(labels[user.origin], first_label)
+    queue = [(0.0, first_label)]
+
+    while !isempty(queue)
+        time() >= deadline && return (:timeout, nothing)
+        current_cost, label = queue[1]
+        last = pop!(queue)
+        if !isempty(queue)
+            queue[1] = last
+            index = 1
+            while true
+                left = 2 * index
+                right = left + 1
+                smallest = index
+                left <= length(queue) && queue[left][1] < queue[smallest][1] && (smallest = left)
+                right <= length(queue) && queue[right][1] < queue[smallest][1] && (smallest = right)
+                smallest == index && break
+                queue[index], queue[smallest] = queue[smallest], queue[index]
+                index = smallest
+            end
+        end
+        label.active || continue
+        current_cost > label.cost && continue
+        label.node == user.destination && return (:optimal, label.cost)
+
+        for (next_node, arc_cost, arc_weight) in adjacency[label.node]
+            next_weight = label.weight + arc_weight
+            !isnothing(user.weighlimit) && next_weight > user.weighlimit && continue
+            next_label = _HNDPFixedPathLabel(next_node, label.cost + arc_cost, next_weight, true)
+            any(existing -> existing.active && _hndp_label_dominates(existing, next_label), labels[next_node]) && continue
+            for existing in labels[next_node]
+                _hndp_label_dominates(next_label, existing) && (existing.active = false)
+            end
+            push!(labels[next_node], next_label)
+            push!(queue, (next_label.cost, next_label))
+            index = length(queue)
+            while index > 1
+                parent = fld(index, 2)
+                queue[parent][1] <= queue[index][1] && break
+                queue[parent], queue[index] = queue[index], queue[parent]
+                index = parent
+            end
+        end
+    end
+    return (:infeasible, nothing)
+end
+
+"""Compute the fixed-arc path bound using the requested method.
+
+The default `:labeling` method is exact for nonnegative-cost,
+nonnegative-resource shortest paths. `:mip` retains the original generic
+formulation as an explicit fallback.
+"""
+function _fixed_arc_path_bound(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper, deadline::Float64; method::Symbol=:labeling)
+    method in (:labeling, :mip) || throw(ArgumentError("Unknown fixed path bound method $(method). Use :labeling or :mip."))
+    method == :mip && return _fixed_arc_path_bound_mip(user, hndp, all_arcs, solver, deadline)
+    start_time = time()
+    result = _fixed_arc_labeling_bound(user, hndp, all_arcs, deadline)
+    result === :unsupported && return _fixed_arc_path_bound_mip(user, hndp, all_arcs, solver, deadline)
+    status, value = result
+    runtime = time() - start_time
+    status == :optimal && return value, runtime, false, false
+    status == :infeasible && return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, false
+    status == :timeout && return _n_minus_one_user_bound(user, hndp, all_arcs), runtime, true, true
+    throw(ArgumentError("Unexpected fixed path labeling status $(status) for user $(user.uname)."))
+end
+
+"""
+    _fixed_arc_path_bound_mip(user, hndp, all_arcs, solver, deadline)
 
 Compute the path-length threshold used by the path reformulation. JuBiC first
 tries to solve the follower problem on the fixed-arc network. If no such path
@@ -1439,7 +1669,7 @@ exists, the function falls back to the `n - 1` heuristic bound and reports that
 fallback to the caller. The solve respects the remaining global deadline and
 reports whether that budget was exhausted.
 """
-function _fixed_arc_path_bound(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper, deadline::Float64)
+function _fixed_arc_path_bound_mip(user::User, hndp::HNDPwC, all_arcs, solver::SolverWrapper, deadline::Float64)
     start_time = time()
     fixed_arcs = Set(a for a in all_arcs if !(a in hndp.edgeA))
     remaining_time = deadline - start_time
@@ -1535,9 +1765,14 @@ function _enumerate_user_paths_v2(
     length_bound::Float64,
     deadline::Float64;
     use_decision_arc_dominance::Bool=true,
+    heuristic_distances=nothing,
 )
     start_time = time()
-    mincostpairs = floyd_warshall_shortest_paths(hndp.mygraph, user.mcost)
+    effective_bound = length_bound + _hndp_path_bound_epsilon(length_bound)
+    # A single reverse-Dijkstra vector gives the exact cost from every node to
+    # this user's sink. Floyd-Warshall computed all node pairs separately for
+    # every user and was unnecessary for the DFS, which only queries one sink.
+    mincostpairs = isnothing(heuristic_distances) ? _hndp_reverse_dijkstra_distances(hndp.mygraph, user.mcost, user.destination) : nothing
     paths = HNDPPath[]
     visited = Set{Int}([user.origin])
     timed_out = false
@@ -1589,12 +1824,13 @@ function _enumerate_user_paths_v2(
             if !isnothing(user.weighlimit) && new_weight > user.weighlimit
                 continue
             end
-            if new_cost > length_bound
+            if new_cost > effective_bound
                 continue
             end
 
-            remaining_cost = mincostpairs.dists[next_node, user.destination]
-            if isfinite(remaining_cost) && new_cost + remaining_cost > length_bound
+            remaining_cost = isnothing(heuristic_distances) ?
+                mincostpairs[next_node] : heuristic_distances[next_node]
+            if isfinite(remaining_cost) && new_cost + remaining_cost > effective_bound
                 continue
             end
 
@@ -1625,7 +1861,7 @@ function _enumerate_user_paths_v2(
 
     dfs(user.origin, Tuple{Int,Int}[], 0.0, 0.0, 0.0, Set{Tuple{Int,Int}}())
     if isempty(paths) && !timed_out
-        throw(ArgumentError("No feasible path was enumerated for user $(user.uname) within the path bound $(length_bound)."))
+        throw(ArgumentError("No feasible path was enumerated for user $(user.uname) within path bound $(length_bound) (effective bound $(effective_bound)); this indicates an inconsistent network/bound or a path-enumeration bug."))
     end
     return paths, min(time() - start_time, max(0.0, deadline - start_time)), timed_out
 end
@@ -1647,16 +1883,20 @@ function _compute_user_path_data(
     solver::SolverWrapper,
     deadline::Float64;
     use_decision_arc_dominance::Bool=true,
+    heuristic_distances=nothing,
+    fixed_path_bound_method::Symbol=:labeling,
 )
     local_solver = _path_precompute_solver(solver)
     start_time = time()
-    bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, local_solver, deadline)
+    bound, bound_runtime, used_fallback, timed_out = _fixed_arc_path_bound(user, hndp, all_arcs, local_solver, deadline; method=fixed_path_bound_method)
     if timed_out
         return (
             bound=bound,
             used_fallback=true,
             paths=HNDPPath[],
             timed_out=true,
+            bound_runtime=bound_runtime,
+            enumeration_runtime=0.0,
             runtime=min(time() - start_time, max(0.0, deadline - start_time)),
         )
     end
@@ -1667,6 +1907,7 @@ function _compute_user_path_data(
         bound,
         deadline;
         use_decision_arc_dominance=use_decision_arc_dominance,
+        heuristic_distances=heuristic_distances,
     )
     total_runtime = min(bound_runtime + enum_runtime, max(0.0, deadline - start_time))
     return (
@@ -1674,6 +1915,8 @@ function _compute_user_path_data(
         used_fallback=used_fallback,
         paths=paths,
         timed_out=timed_out,
+        bound_runtime=bound_runtime,
+        enumeration_runtime=enum_runtime,
         runtime=total_runtime,
     )
 end

@@ -356,6 +356,8 @@ function _build_hndp_model_from_spec(
             big_m_mode=_parse_hndp_big_m_mode(get(model_spec, "big_m_mode", "fixed_network_path")),
             indicator_constraints=Bool(get(model_spec, "indicator_constraints", false)),
             bound_duals=Bool(get(model_spec, "bound_duals", true)),
+            availability_budget_fraction=nothing,
+            availability_budget_count=get(instance_metadata, "availability_budget_count", nothing),
         )
         return instance, Dict{String,Any}()
     elseif model_type == "path"
@@ -366,6 +368,7 @@ function _build_hndp_model_from_spec(
             enumeration_time_limit=enum_limit,
             parallelize=Bool(get(model_spec, "parallelize", false)),
             use_decision_arc_dominance=Bool(get(model_spec, "use_decision_arc_dominance", true)),
+            fixed_path_bound_method=Symbol(String(get(model_spec, "fixed_path_bound_method", "labeling"))),
         )
         remaining_runtime = max(total_runtime - enum_runtime, 0.0)
         metadata = Dict{String,Any}(

@@ -1,0 +1,11 @@
+{
+  "models": [
+    {
+      "name": "sd_fixed_1min",
+      "model_type": "sd",
+      "big_m_mode": "fixed_network_path",
+      "indicator_constraints": false,
+      "bound_duals": true
+    }
+  ]
+}

@@ -9,7 +9,18 @@ struct HNDPwC
     edge_price::Dict  # for each arc the cost of constructing it, i.e., including it into the network
 
     minweights::Any  # a matrix with the shortest path according to weight for each node pair. If no weight parameter is used, this is 'nothing'. (ASSUMPTIONS: All users have same weight matrix)
+    # Optional groups of decision arcs that must be enabled together.  This is
+    # used by multimodal instances where one station controls two transfers.
+    decision_groups::Any
+    decision_budget::Any
 end
+
+# Keep the historical five-argument constructor compatible with existing
+# instance generators.
+HNDPwC(mygraph, users, edgeA, edge_price, minweights) =
+    HNDPwC(mygraph, users, edgeA, edge_price, minweights, nothing, nothing)
+HNDPwC(mygraph, users, edgeA, edge_price, minweights, decision_groups) =
+    HNDPwC(mygraph, users, edgeA, edge_price, minweights, decision_groups, nothing)
 
 struct User
     uname::Any
