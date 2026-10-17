@@ -1,7 +1,8 @@
 # Numerics and Status Codes
 
-The GBC solver route proved to be highly numerical unsatble, and JuBiC contains a variaty of 
-prevention steps that detect potential numerical instability and try to medigate the negative effects. 
+GBC can be sensitive to numerical errors. JuBiC detects inconsistent connector
+solutions and cut coefficients, records diagnostics, and applies the safeguards
+described below.
 
 ## Current GBC pipeline
 
@@ -46,8 +47,9 @@ nonnegative transition costs.
 GBC callback entry is serialized with a global callback lock because Gurobi may
 invoke callbacks from multiple master threads. Distinct follower connector
 separations may still run in parallel inside one callback. Each parallel
-connector uses the configured connector/subsolver thread count; with parallel
-separation enabled, connector solver calls use one thread.
+worker owns its follower model and connector state. `parallel_subsolvers` sets
+the worker count; `threads_sub_con` controls follower MIP threads. GBC
+ConnectorLP solver calls use one thread.
 
 ## ConnectorLP bound
 

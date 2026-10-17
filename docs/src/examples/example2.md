@@ -139,7 +139,7 @@ result = solve_instance!(instance, params)
 
 ## Background: Transforming MibS Input File Format
 
-It should be noted that JuBiC internally transforms the original bilevel problem formulation into an equivalent formulation with linking variables, as outlined in the [Problem Formulation](../index.md#problem-formulation) section. A key observation is that the constraint $x_1 + y_2 \geq 1$ in the second-level problem does not conform to this formulation as it directly involves the first-level variable $x_1$. To address this issue, JuBiC introduces auxiliary variables. Specifically, it creates a copy of the variable $x_1$ in the second-level problem and replaces it in the constraint accordingly. To facilitate this, we introduce the binary variable $\bar{x}_1$ in the first-level problem to represent the complement of $x_1$, which can be expressed by the equation $x_1 + \bar{x}_1 = 1$. In the second-level problem, the corresponding second-level binary variables $x_1'$ for $x_1$ and $\bar{x}_1'$ for $\bar{x}_1$ are defined. By enforcing that $\bar{x}_1'$ serves as the complement of $x_1'$, along with the binary linking constraints ($x_1' \leq x_1$ and $\bar{x}_1' \leq \bar{x}_1$), we establish that $x_1 = x_1'$.
+It should be noted that JuBiC internally transforms the original bilevel problem formulation into an equivalent formulation with linking variables, as outlined in the [Problem Formulation](../index.md#Problem-Class) section. A key observation is that the constraint $x_1 + y_2 \geq 1$ in the second-level problem does not conform to this formulation as it directly involves the first-level variable $x_1$. To address this issue, JuBiC introduces auxiliary variables. Specifically, it creates a copy of the variable $x_1$ in the second-level problem and replaces it in the constraint accordingly. To facilitate this, we introduce the binary variable $\bar{x}_1$ in the first-level problem to represent the complement of $x_1$, which can be expressed by the equation $x_1 + \bar{x}_1 = 1$. In the second-level problem, the corresponding second-level binary variables $x_1'$ for $x_1$ and $\bar{x}_1'$ for $\bar{x}_1$ are defined. By enforcing that $\bar{x}_1'$ serves as the complement of $x_1'$, along with the binary linking constraints ($x_1' \leq x_1$ and $\bar{x}_1' \leq \bar{x}_1$), we establish that $x_1 = x_1'$.
 
 The formalized structure of both problems is presented below. The first-level problem is defined as:
 
@@ -165,3 +165,13 @@ s.t. \quad  & y_1 \leq x_1 \\
             & y_1, y_2, x_1', \bar{x}_1' \in \{0,1\}
 \end{aligned}
 ```
+
+## Run the maintained script
+
+```sh
+julia --project=. docs/src/examples/example2.jl
+```
+
+The script resolves the bundled MPS/AUX input relative to its own location,
+uses the configured `GurobiSolver` environment, and creates its output folder.
+A working Gurobi installation/license is required.

@@ -1,4 +1,4 @@
-# SubSolver Interface
+# Abstract Subsolver Interface
 
 This page documents the technical subsolver interface used by JuBiC. The concrete built-in subsolver wrappers are documented on their own pages:
 

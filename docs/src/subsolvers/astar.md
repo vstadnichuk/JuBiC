@@ -14,5 +14,5 @@ For implementation details, see the [HNDP A* Subsolver Tutorial](../examples/hnd
 
 ## Related Pages
 
-- [SubSolver Interface](../sub_solvers.md)
+- [Abstract Subsolver Interface](../sub_solvers.md)
 - [HNDP A* Subsolver Tutorial](../examples/hndp/astar.md)

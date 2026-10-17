@@ -1,4 +1,4 @@
-# HNDP Motivation
+# Bilevel Network Design
 
 Besides the basic implementations of the core algorithms, JuBiC provides
 concrete examples showing how these algorithms can be applied to application

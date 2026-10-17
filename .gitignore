@@ -16,3 +16,6 @@ examples/HNDP/generated_instances_debug/
 tmp_compare/
 /data/
 tmp/
+
+# Generated Documenter copies of the canonical HNDP guides
+docs/src/generated/

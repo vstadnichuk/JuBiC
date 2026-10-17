@@ -1,4 +1,4 @@
-# Using JuBiC
+# Overview
 
 The central idea is that JuBiC does not ask for one universal bilevel model representation for every algorithm. Instead, it provides a small set of wrapper objects that match different solver ideas.
 
@@ -9,13 +9,6 @@ Several JuBiC solvers are decomposition-based. In those methods, the first level
 - the first level is handled by a master problem,
 - the followers are handled through one or more subproblems,
 - and the solver exchanges information between them through cuts.
-
-That is why JuBiC introduces explicit wrapper objects.
-
-This split is especially useful when:
-
-- the same first-level decisions affect many follower problems,
-- and we want to exploit algorithmically the structure of follower problems.
 
 Not every solver in JuBiC uses decomposition, but this master/subproblem view is the main organizational idea of the package.
 
@@ -104,7 +97,7 @@ Single-model solver wrappers:
 
 All JuBiC follower-side wrappers inherit from the abstract type `SubSolver`.
 
-The required interface is documented in [SubSolver Interface](sub_solvers.md). Built-in subsolvers are grouped by whether the follower oracle itself needs to solve a bilevel problem.
+The required interface is documented in [Abstract Subsolver Interface](sub_solvers.md). Built-in subsolvers are grouped by whether the follower oracle itself needs to solve a bilevel problem.
 
 Non-bilevel subsolvers:
 

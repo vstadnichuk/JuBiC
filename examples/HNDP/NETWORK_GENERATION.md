@@ -26,15 +26,15 @@ use `.instance` for a solver builder and `.metadata` for generation details.
 | `constrained_shortest_path` | Single-layer network; leader controls arcs and followers minimize route costs subject to optional weight bounds | `length_constrained`, `length_slack`/`alpha`, `two_stage`, `user_parameter_mode` |
 | `competition` with `layered_*` topology | Operator and competitor layers; decisions control operator availability | `competitor_cost_factor`/`beta`, `availability_budget_fraction`, optional weight bounds |
 | `competition` with an unprefixed topology | One layer with sampled decision arcs | `decision_arc_count`; `single_layer_arc_mode="competition"` or `"decision_only"` |
-| `multimodal_bike` | Walking, car, and bicycle layers plus transit services; station transfer arcs are paired leader decisions | `station_limit`, `station_budget`, speeds, station costs/profits |
+| `multimodal_bike` | Car, public-transport, and bicycle layers; station transfer arcs are paired leader decisions | `station_limit`, `station_budget`, speeds, station costs/profits |
 | `multimodal_expansion` | Existing car/transit network with candidate services involving additional stations | `station_limit`, `expansion_station_count`, `arc_budget`, service costs/profits |
 
 The named base topologies are `sioux_falls`, `anaheim`, `berlin_mitte_center`,
 `ema`, and `friedrichshain_center`. CSP and multimodal generators accept these
 base names. Competition accepts the base names for single-layer instances and
 `layered_` followed by a base name for two-layer instances. Inputs are the
-bundled static network files; OSM/GTFS acquisition is excluded from v0.6.
-The files contain fixed topologies; seeds randomize parameters and user choices.
+bundled static network files. The files contain fixed topologies; seeds
+randomize parameters and user choices.
 
 `length_constrained=false` is needed for the ordinary strong-duality solver.
 The multimodal generators produce users without weight bounds. See

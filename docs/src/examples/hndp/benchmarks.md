@@ -2,10 +2,25 @@
 
 The HNDP benchmark pipeline is designed for long experiment sweeps where partial
 results must be preserved. It separates instance generation, model generation,
-and solver parameters into three JSON files and streams one generated instance
-at a time.
+and solver parameters into three JSON files (or one combined file) and streams
+one generated instance at a time.
 
 The central runner is `examples/HNDP/hndp_experiment_runner.jl`.
+
+## Run the supplied small example
+
+From the repository root, with a working Gurobi installation/license:
+
+```sh
+julia --project=. --threads=2 examples/HNDP/run_hndp_manifest.jl examples/HNDP/multimodal_example.json tmp_compare/hndp_multimodal_example
+```
+
+Append `--dry-run` to construct the two instances and count jobs without solving;
+append `--no-resume` to rerun completed jobs. The combined JSON contains
+`instances`, `models`, and `params`. The launcher also accepts a directory
+containing `instances.json`, `models.json`, and `params.json` for custom runs.
+Paper-specific manifests and seed-hunt/reproduction batches are no longer part
+of the generic example distribution.
 
 ## Core Workflow
 
@@ -155,7 +170,10 @@ The parameter config controls the solver runtime and logging behavior:
       "name": "gurobi_10min",
       "mip_solver": "Gurobi",
       "runtime": 600.0,
-      "threads": 8
+      "threads_master": 2,
+      "threads_sub_con": 1,
+      "parallel_subsolvers": 1,
+      "parallel_separation": false
     }
   ]
 }
@@ -174,3 +192,11 @@ is reduced accordingly.
 instance-generation parameters, model-generation metrics, and solver run
 metrics. The concrete columns depend on the selected instance generator, model
 builder, and solver configuration.
+
+## Branching and reproducibility
+
+For GBC, BlC, and BlCLag, `branching_rule` selects `"default"`, `"linking_first"`,
+or `"fixed_linking_order"`. `parallel_subsolvers` controls follower worker count
+separately from the per-model thread limits. Use fixed seeds and fixed thread
+counts when comparing formulations. The [parameter reference](../../generated/hndp/formulations.md)
+describes big-M callbacks, integer-cut stabilization, and `connector_s_bound`.

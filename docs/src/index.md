@@ -1,101 +1,54 @@
 # JuBiC Documentation
 
+JuBiC provides interfaces to existing solvers and decomposition methods for
+mixed-integer bilevel optimization. Its decomposition methods can use custom
+follower subsolvers to exploit application-specific problem structure.
+
 ## Problem Class
 
-JuBiC addresses mixed-integer bilevel optimization problems with binary linking variables. A generic problem in the supported class can be written as
+JuBiC supports multiple followers coupled to the first level through binary
+linking variables:
 
 ```math
 \begin{aligned}
-\min_{x,\, y^1,\dots,y^K}\quad & F(x) + \sum_{k \in \mathcal{K}} G_k(x, y^k) \\
-\text{s.t.}\quad & x \in X, \\
-& y^k \in \arg\min_{\bar y \in Y_k(x)} f_k(x, \bar y) \qquad \forall k \in \mathcal{K},
+\min_{x,\,y^1,\dots,y^K}\quad
+    & F(x) + \sum_{k\in\mathcal K} G_k(y^k) \\
+\text{s.t.}\quad
+    & x\in X,\qquad x_a\in\{0,1\} && a\in A, \\
+    & y^k\in\underset{\bar y\in Y_k}{\arg\min}
+      \left\{f_k(\bar y):\ \bar y_a\le x_a,\ \bar y_a\in\{0,1\}\quad a\in A\right\}
+      && k\in\mathcal K.
 \end{aligned}
 ```
 
-where:
-
-- `x` denotes the first-level decision variables,
-- `\mathcal{K}` is the set of second-level problems,
-- `Y_k(x)` is the feasible region of follower `k`, parameterized by the first-level linking decisions,
-- `F` and `G_k` define the first-level objective,
-- and `f_k` is the follower objective.
-
-JuBiC builds on top of [JuMP](https://jump.dev/JuMP.jl/stable/), so the first-level model `X` and the follower models `Y_k(x)` are ordinary JuMP models. The important structural restriction for the algorithms currently implemented in JuBiC is that the linking variables connecting both levels are binary. In a standard form, this is represented by
-
-```math
-x_a \in \{0,1\} \qquad \forall a \in A,
-```
-
-and, for each follower `k`,
-
-```math
-y^k_a \in \{0,1\}, \qquad y^k_a \le x_a \qquad \forall a \in A.
-```
-
-This coupling means that the first level activates or blocks second-level binary decisions through the shared resource set `A`.
-
-The following are the settings that JuBiC has been tested on so far:
-
-- a minimization problem at both levels,
-- linear first-level and second-level constraints,
-- linear objective terms,
-- and binary linking variables that activate or restrict second-level decisions.
-
-JuBiC provides several solver interfaces for this problem class. The package is
-organized around a small number of common concepts:
-
-- **model wrappers**, which describe how the first-level model and follower problems are passed to JuBiC,
-- **solver parameter objects**, which define runtime behavior such as solver selection, output handling, logging, and runtime limits,
-- **solver methods**, which define the algorithmic route used to solve an `Instance`,
-- **subsolvers**, which implement follower-side oracle calls for decomposition methods,
-- **application examples**, which show how concrete problem families are generated, modeled, and benchmarked,
-- and **run statistics**, which report solver status, objective values, runtimes, and numerical fallback information.
-
-The documentation follows this structure. Start with a small runnable example,
-then read the JuBiC usage overview, and then move to the solver, subsolver, or
-application-example page that matches the task.
-
-## Installation
-
-The current development version can be installed directly from GitHub:
-
-```julia-repl
-julia> import Pkg
-
-julia> Pkg.add(url="https://github.com/vstadnichuk/JuBiC")
-```
-
-## Verify Installation
-
-To run the package tests:
-
-```julia-repl
-julia> Pkg.test("JuBiC")
-```
-
-The current test suite uses `Gurobi`, so running the tests requires a working `Gurobi` installation and a valid license.
+Here, ``A`` indexes the shared linking variables, while ``X`` and ``Y_k`` contain
+the remaining first-level and follower constraints. Currently, JuBiC has only been extensively tested for mixed-integer bilevel optimization problems.
 
 ## Documentation Map
 
-- [Getting Started](getting_started.md)
-  A small bilevel model written in JuBiC syntax and solved with representative solver routes.
-- [Using JuBiC](model_objects.md)
-  The main conceptual overview: `Instance`, master wrappers, subsolver wrappers, solver parameter objects, solver families, and experiment output.
-- [Extending JuBiC](extending_jubic.md)
-  Practical guidance and current limitations for implementing custom solver or subsolver components.
-- [Solver Methods](solvers/gbc.md)
-  Algorithm-specific pages for `GBC`, `BlC`, `BlCLag`, the compact MIP wrapper, and the direct `MiBS` wrapper.
-- [SubSolvers](sub_solvers.md)
-  The follower-oracle interface and the currently implemented subsolver wrappers.
-- [Numerics and Status Codes](numerics_and_status.md)
-  Numerical safeguards, fallback logic, and the status values written to `RunStats`.
-- [HNDP Example](examples/hndp/motivation.md)
-  Application documentation split into motivation, instance generation, solver models, A* subsolver implementation, and benchmark pipeline.
-- [Core Solver API](solver_api.md)
-  A generated technical reference for exported JuBiC objects.
+- [Getting Started](getting_started.md): installation, verification, and a first solve.
+- [Overview](model_objects.md): modeling objects and the common solve interface.
+- [Implemented Solvers](solvers/gbc.md): decomposition methods and existing solver interfaces.
+- [Implemented Follower Subsolvers](sub_solvers.md): available follower oracles.
+- [Custom (Sub)Solver](extending_jubic.md): implementing custom solvers and subsolvers.
+- [Bilevel Network Design](examples/hndp/motivation.md): instances, formulations, and examples.
+- [Numerics and Status Codes](numerics_and_status.md): safeguards and result interpretation.
+- [Core Solver API](solver_api.md): technical API reference.
 
 ## Citation
 
 If you use JuBiC in research, cite:
 
 > Stadnichuk and Koster (2024), *Solving Multi-Follower Mixed-Integer Bilevel Problems with Binary Linking Variables*, Optimization Online. [Link](https://optimization-online.org/?p=28877)
+
+## Disclaimer
+
+JuBiC is an ongoing project, and keeping this documentation up to date is a
+tedious task for which we currently have limited resources. Large parts of this
+documentation have been automatically generated by AI during coding and may be
+challenging for human readers. We are continually trying to improve it, but the
+process is tedious and still ongoing.
+
+If you find any parts of the documentation unclear, feel free to contact us at
+[vladimir.stadnichuk@uni-kassel.de](mailto:vladimir.stadnichuk@uni-kassel.de),
+and we will try to get back to you as soon as possible.

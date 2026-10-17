@@ -3,6 +3,12 @@
 The HNDP example uses generated instance families to turn the mathematical model
 from the motivation page into concrete computational test cases.
 
+## Configuration reference and runnable examples
+
+The [generator reference](../../generated/hndp/generators.md) lists every current
+`instance_type`, topology, JSON option, small Julia construction example, and
+saved-instance round trip. It is built directly from the guide beside the code.
+
 ## Instance Types
 
 The currently documented variants are:
@@ -35,7 +41,8 @@ are then translated into JuBiC solver models by
 ## Constrained Shortest Paths
 
 In the `constrained_shortest_path` family, ``G`` is one base graph topology.
-The current generator supports this family for the Sioux Falls topology.
+The current generator accepts `sioux_falls`, `anaheim`, `berlin_mitte_center`,
+`ema`, and `friedrichshain_center`.
 
 The generated data is:
 
@@ -199,3 +206,69 @@ A minimal layered competition network-generation configuration has the shape:
 
 The full set of supported generation fields is documented in
 `examples/HNDP/NETWORK_GENERATION.md`.
+
+## Multimodal network design
+
+The multimodal generators model travelers choosing between car, public
+transport, and, in one variant, bicycle routes. They start from a bundled road
+network such as Sioux Falls. Road links, distances, and capacities provide the
+base data; configurable speeds and capacity adjustments determine travel costs.
+Public-transport services are generated between selected stations, with travel
+times based on shortest car routes and a configurable time advantage.
+
+Each traveler has an origin and destination on the car layer and chooses a
+minimum-cost route through the available network. Transfers at stations allow a
+route to combine modes. The operator chooses which facilities or services to
+make available, balancing investment costs against the benefits of their use.
+The generated travelers have no additional path-weight bound.
+
+### Bicycle station design: `multimodal_bike`
+
+This variant has three graph layers: car, public transport, and bicycle. The car
+and bicycle layers follow the input road topology. The public-transport layer
+connects the selected stations and remains available throughout optimization.
+
+The operator decides which bicycle stations to open. Each candidate station is
+represented by two transfer arcs, one entering and one leaving the bicycle
+layer. These arcs form a decision group and must be opened or closed together.
+The station budget limits the number of open stations, rather than counting
+each transfer direction separately. Use `station_limit` to set the number of
+candidates and `station_budget` to limit how many can open.
+
+### Transit network expansion: `multimodal_expansion`
+
+This variant has two layers: car and public transport. Services between the
+existing stations form the fixed transit network. The generator also selects
+additional candidate stations and creates directed candidate services whose
+endpoints include at least one of those new stations.
+
+The operator chooses which candidate services to add. Transfers between the car
+and transit layers are fixed at all selected stations; the decisions concern
+transit services, not road links or station openings. Use `station_limit` for the
+existing stations, `expansion_station_count` for the additional stations, and
+`arc_budget` to limit the number of services selected.
+
+### Run the small examples
+
+The [multimodal configuration](../../generated/hndp/multimodal_example.json)
+contains one bicycle-station instance and one transit-expansion instance,
+together with a strong-duality formulation and Gurobi solver settings. From the
+repository root, run:
+
+```sh
+julia --project=. --threads=2 examples/HNDP/run_hndp_manifest.jl examples/HNDP/multimodal_example.json tmp_compare/hndp_multimodal_example
+```
+
+Add `--dry-run` to construct and count the instances without solving. Solving
+requires a working Gurobi installation and license. The
+[generator reference](../../generated/hndp/generators.md) gives the cost formulas
+and additional configuration options; the [experiment runner](benchmarks.md)
+describes the output files.
+
+## Saving generated instances
+
+`write_hndp_generated_networks` saves an instance as `instance.json`, and
+`read_hndp_instance` loads it for reuse with another formulation. The JSON
+preserves the graph, traveler data, investment costs, decision groups, and
+budgets. See the [save/reload example](../../generated/hndp/generators.md) to keep
+instance construction separate from optimization.

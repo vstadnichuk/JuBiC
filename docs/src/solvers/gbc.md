@@ -169,3 +169,20 @@ params = GBCparam(
 stats = solve_instance!(instance, params)
 println(stats.data["Opt"])
 ```
+
+## Worker and branching controls
+
+`parallel_subsolvers` sets the number of follower workers independently of
+`threads_master` and `threads_sub_con`. Each worker has its own follower state;
+GBC ConnectorLP solves use one solver thread. Callback entry is serialized while
+worker separation can run concurrently. `integer_obj` enables the documented
+integral-objective stabilization rules.
+
+For JSON-driven runs, `branching_rule` is `"default"`, `"linking_first"`, or
+`"fixed_linking_order"`. The setting is stored in the parameter statistics by
+the configuration loader. For direct API use, set
+`params.stats.data["branching_rule"]` to the selected string before solving.
+See [Numerics and Status Codes](../numerics_and_status.md) and the
+[HNDP parameter reference](../generated/hndp/formulations.md).
+
+GBC also accepts the keyword `connector_s_bound` to set the ConnectorLP `s` bound.

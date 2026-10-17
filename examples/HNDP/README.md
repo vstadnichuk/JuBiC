@@ -22,6 +22,5 @@ also supply a directory containing `instances.json`, `models.json`, and
 `params.json`. The solver implementations are in `hndp_model_generation.jl`;
 the generic batch runner is `hndp_experiment_runner.jl`.
 
-Paper-specific seed hunts, reproduction batches, and OSM/GTFS importers are
-excluded from these generic examples. Generated output belongs under `tmp/`
-or `tmp_compare/`, or another directory you choose.
+Generated output belongs under `tmp/` or `tmp_compare/`, or another directory
+you choose.

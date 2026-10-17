@@ -1,11 +1,38 @@
 # Getting Started
 
+## Installation
+
+The current development version can be installed directly from GitHub:
+
+```julia-repl
+julia> import Pkg
+
+julia> Pkg.add(url="https://github.com/vstadnichuk/JuBiC", rev="v0.6")
+```
+
+## Verify Installation
+
+For the development checkout, install dependencies and run the tests from the
+repository root:
+
+```sh
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+julia --project=. test/runtests.jl
+julia --project=. examples/HNDP/hndp_model_generation_tests.jl
+```
+
+The solver tests require a working Gurobi installation/license and MiBS. The
+HTML documentation can be built without running those tests or solving models;
+see [Building and Publishing the Docs](documentation.md).
+
+## First Bilevel Example
+
 This page shows one small bilevel model from the test suite, first in mathematical notation and then in JuBiC syntax. The example is then solved in two ways:
 
 - with JuBiC's generalized Benders decomposition (`GBC`),
 - and with the direct `MiBS` wrapper on an explicit bilevel model.
 
-## The Example Problem
+### The Example Problem
 
 We use a single-follower bilevel model with two binary linking variables.
 
@@ -26,7 +53,7 @@ x_1 = 1,\qquad x_2 = 0,
 
 with total objective value `1`.
 
-## JuBiC Code
+### JuBiC Code
 
 The following code builds the model in JuBiC syntax.
 
@@ -78,7 +105,7 @@ This constructs a JuBiC decomposition instance:
 - `SubSolverJuMP(...)` wraps the follower JuMP model,
 - and `Instance(master, [follower])` combines both into the object expected by `solve_instance!`.
 
-## Structural Modeling Requirements
+### Structural Modeling Requirements
 
 The following structural requirements should be taken into account when modeling with JuBiC:
 
@@ -101,7 +128,7 @@ SubSolverJuMP(sub_name, follower_model, A, y, first_level_follower_term, sub_obj
 defines the follower-side linking variables. They must match the shared resource set `A`.
 
 
-## Solving with `GBC`
+### Solving with `GBC`
 
 JuBiC provides multiple solver interfaces. Here, we exemplary use the native JuBiC solver `GBC`.
 
@@ -138,7 +165,7 @@ GBC status: Optimal
 GBC objective: 1.0000999834060664
 ```
 
-## Solving the Same Problem with `MiBS`
+### Solving the Same Problem with `MiBS`
 
 JuBiC also supports accessing existing bilevel solvers such as `MiBS`. Different solver routes rely on different structural assumptions. In particular, the direct `MiBS` route requires a `MIP-MIP` bilevel model. In JuBiC this route is built on top of the [BilevelJuMP](https://joaquimg.github.io/BilevelJuMP.jl/stable/) wrapper, so we formulate the same example a bit differently here and build it directly as a `BilevelJuMP.BilevelModel`.
 
@@ -187,7 +214,7 @@ MiBS objective: 1.0
 
 After this first example, the most relevant follow-up pages are:
 
-- [Using JuBiC](model_objects.md)
+- [Overview](model_objects.md)
 - [Core Solver API](solver_api.md)
 - [Generalized Benders Cuts (GBC)](solvers/gbc.md)
 - [Direct MiBS Wrapper](solvers/mibs.md)

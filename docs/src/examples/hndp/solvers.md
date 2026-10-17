@@ -10,6 +10,13 @@ stats = solve_instance!(instance, params)
 
 The main bridge is `examples/HNDP/hndp_model_generation.jl`.
 
+## Formulation overview and examples
+
+The [formulation and parameter reference](../../generated/hndp/formulations.md)
+compares all eight runner-selectable formulations and the experimental automated
+strong-duality API. It includes builder/parameter pairings and a small runnable
+solve example. This reference is generated from the guide beside the HNDP code.
+
 ## JuBiC Decomposition Solvers
 
 HNDP reuses JuBiC's native decomposition solvers without adding HNDP-specific
@@ -59,7 +66,8 @@ instance.
 Important options are:
 
 - `big_m_mode`: chooses how HNDP derives big-M values. Current values include
-  `HNDP_BIGM_FIXED_NETWORK_PATH` and `HNDP_BIGM_N_MINUS_ONE`.
+  `HNDP_BIGM_FIXED_NETWORK_PATH`, `HNDP_BIGM_N_MINUS_ONE`, and
+  `HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST` (cost-aware cut callbacks).
 - `indicator_constraints`: optionally replaces parts of the big-M logic by
   indicator constraints.
 - `bound_duals`: bounds dual variables using the derived big-M values.
@@ -75,6 +83,7 @@ instance = build_hndp_sd_instance(
     indicator_constraints = false,
     bound_duals = true,
 )
+mkpath(output_folder)
 params = MIPparam(solver, false, output_folder, "lp", 600.0)
 stats = solve_instance!(instance, params)
 ```
@@ -121,6 +130,7 @@ Current builder options include:
 - `enumeration_time_limit`: wall-clock budget for path-bound computation and
   path enumeration.
 - `parallelize`: enumerates users in parallel during precomputation.
+- `fixed_path_bound_method`: `:labeling` or `:mip` for the fixed-network bound.
 - `use_decision_arc_dominance`: enables the HNDP dominance rule that prunes path
   labels with no better cost/weight behavior and no better decision-arc usage.
 
@@ -135,6 +145,12 @@ instance, enum_runtime, path_counts = build_hndp_path_instance(
     use_decision_arc_dominance = true,
 )
 ```
+
+The path builder returns `(instance, enum_runtime, path_counts)`. Both hybrid
+builders return five values, additionally including fallback-user lists. A pure
+path model is usable only after complete enumeration; its parallel variant
+returns an empty model on timeout by convention. Use a hybrid route when users
+need a fallback. Strong-duality fallback requires users without weight bounds.
 
 The remaining solve time is usually reduced by `enum_runtime` in benchmark
 runs, so the configured total runtime still applies to the whole instance.

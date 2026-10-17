@@ -77,8 +77,12 @@ julia --project=. --threads=2 examples/HNDP/run_hndp_manifest.jl examples/HNDP/m
 ```
 
 The JSON contains `instances`, `models`, and `params`. Replace the model entry,
-for example, with `{"name":"gbc_astar","model_type":"gbc","subproblem_method":"astar"}`
-to select GBC with A*. Solver-specific options belong in the `params` entry.
+for example, with `{"name":"gbc_mip","model_type":"gbc","subproblem_method":"mip"}`
+to select GBC with a MIP follower oracle. Solver-specific options belong in the
+`params` entry. A* requires nonnegative transition costs for every objective it
+uses. GBC evaluates operator contributions as well as follower costs, so the
+negative profit coefficients in default competition/multimodal data can make
+GBC+A* unsupported; use a MIP oracle there.
 
 ## Common Concepts
 

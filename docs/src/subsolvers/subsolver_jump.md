@@ -47,4 +47,4 @@ own internal copies with unit linking capacities.
 
 - [`GBC`](../solvers/gbc.md)
 - [`BlC`](../solvers/blc.md)
-- [SubSolver Interface](../sub_solvers.md)
+- [Abstract Subsolver Interface](../sub_solvers.md)
