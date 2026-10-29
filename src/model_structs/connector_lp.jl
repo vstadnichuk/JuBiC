@@ -64,6 +64,25 @@ function _snapshot_s(subLP::ConnectorLP)
 end
 
 function _snapshot_g(subLP::ConnectorLP)
+    # A repeated-cut fallback may temporarily increase g to certify that the
+    # already-known cut is satisfied. Option A keeps the original g for the
+    # complete subsequent optimality-cut construction, so that the cut does
+    # not mix the fallback value with its coefficient calculations.
+    if get(subLP.numeric_state, :accepted_numerically, false) &&
+       haskey(subLP.numeric_state, :original_g)
+        return subLP.numeric_state[:original_g]
+    end
+    if haskey(subLP.numeric_state, :g_override)
+        return subLP.numeric_state[:g_override]
+    end
+    snapshot = get(subLP.numeric_state, :cut_solution_snapshot, nothing)
+    return isnothing(snapshot) ? value(subLP.lp[:g]) : snapshot[:g]
+end
+
+function _snapshot_g_for_cut(subLP::ConnectorLP)
+    # Experimental mixed fallback: retain the rounded value for the cut
+    # right-hand side, while allowing the bound coefficient xi to use the
+    # original value.
     if haskey(subLP.numeric_state, :g_override)
         return subLP.numeric_state[:g_override]
     end
@@ -239,11 +258,47 @@ function _record_opt_cut_validation!(
     return nothing
 end
 
-function _round_cut_component(value::Real, params::GBCparam)
-    if params.integer_obj
-        return Float64(ceil(value))
+function _integerized_nonnegative_coefficient(
+    value::Real,
+    params::GBCparam,
+    subLP::ConnectorLP,
+    description::AbstractString,
+)
+    coefficient = Float64(value)
+    integerized = params.integer_obj ? Float64(ceil(coefficient)) : coefficient
+    if params.integer_obj && integerized != coefficient
+        @debug "ConnectorLP $(name(subLP.sub_solver)) integerizes $(description): $(coefficient) -> $(integerized)."
     end
-    return Float64(value)
+    return integerized
+end
+
+function _add_integerized_linking_term!(
+    cut::JuMP.GenericAffExpr,
+    coefficient::Real,
+    variable::JuMP.VariableRef,
+    params::GBCparam,
+    subLP::ConnectorLP,
+    description::AbstractString,
+)
+    integerized = _integerized_nonnegative_coefficient(coefficient, params, subLP, description)
+    JuMP.add_to_expression!(cut, -integerized, variable)
+    return integerized
+end
+
+function _add_integerized_paired_term!(
+    cut::JuMP.GenericAffExpr,
+    coefficient::Real,
+    variable::JuMP.VariableRef,
+    params::GBCparam,
+    subLP::ConnectorLP,
+    description::AbstractString,
+)
+    # Add q*(1-x) as a pair using one rounded q. This keeps the term exactly
+    # zero when x=1, including after integerization.
+    integerized = _integerized_nonnegative_coefficient(coefficient, params, subLP, description)
+    JuMP.add_to_expression!(cut, -integerized)
+    JuMP.add_to_expression!(cut, integerized, variable)
+    return integerized
 end
 
 function _sanitize_nonnegative_opt_cut_coefficient(
@@ -260,7 +315,16 @@ function _sanitize_nonnegative_opt_cut_coefficient(
         @debug "ConnectorLP $(name(subLP.sub_solver)) rounds the $(coeff_name) coefficient $(numeric_value) up to 0.0 within numerical tolerance $(tol)."
         return 0.0
     end
-    throw(ArgumentError("The $(coeff_name) coefficient $(numeric_value) used in ConnectorLP $(name(subLP.sub_solver)) is negative!"))
+    throw(NumericalIssueException(
+        "The $(coeff_name) coefficient $(numeric_value) used in ConnectorLP $(name(subLP.sub_solver)) is negative!",
+        "Terminate_Numerics",
+        Dict{String,Any}(
+            "type" => "NegativeOptimalityCutCoefficient",
+            "coefficient" => coeff_name,
+            "value" => Float64(numeric_value),
+            "connector" => name(subLP.sub_solver),
+        ),
+    ))
 end
 
 function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gval, kvals, x_vals)
@@ -271,7 +335,18 @@ function _compute_opt_cut_bound_coefficient(subLP::ConnectorLP, sval, optL2, gva
         end
     end
     @debug "ConnectorLP $(name(subLP.sub_solver)) uses bound coefficient xi=$(bound_value) with s=$(sval), optL2=$(optL2), g=$(gval), and lower_bound=$(subLP.lower_bound_obj_contribution)."
-    return _sanitize_nonnegative_opt_cut_coefficient(bound_value, "bound / xi", subLP)
+    try
+        return _sanitize_nonnegative_opt_cut_coefficient(bound_value, "bound / xi", subLP)
+    catch err
+        if err isa NumericalIssueException
+            err.context["s"] = Float64(sval)
+            err.context["optL2"] = Float64(optL2)
+            err.context["g"] = Float64(gval)
+            err.context["lower_bound_obj_contribution"] = Float64(subLP.lower_bound_obj_contribution)
+            err.context["xi"] = Float64(bound_value)
+        end
+        rethrow()
+    end
 end
 
 function _compute_opt_cut_k_coefficients(
@@ -286,10 +361,7 @@ function _compute_opt_cut_k_coefficients(
         if params.trim_coeff
             raw_value = min(raw_value, Float64(bound_value))
         end
-        coeffs[a] = _round_cut_component(
-            _sanitize_nonnegative_opt_cut_coefficient(raw_value, "k[$(a)]", subLP),
-            params,
-        )
+        coeffs[a] = _sanitize_nonnegative_opt_cut_coefficient(raw_value, "k[$(a)]", subLP)
     end
     return coeffs
 end
@@ -308,17 +380,14 @@ function _compute_opt_cut_blc_g_coefficients(
         if params.trim_coeff
             raw_value = min(raw_value, Float64(bound_value))
         end
-        coeffs[a] = _round_cut_component(
-            _sanitize_nonnegative_opt_cut_coefficient(raw_value, "g[$(a)]", subLP),
-            params,
-        )
+        coeffs[a] = _sanitize_nonnegative_opt_cut_coefficient(raw_value, "g[$(a)]", subLP)
     end
     return coeffs
 end
 
 function _rounded_binary_y_values(subLP::ConnectorLP, y_vals)
     rounded = Dict{Any,Float64}()
-    warned = false
+    nonbinary_steps = String[]
     for a in subLP.A
         raw = Float64(y_vals[a])
         if abs(raw) <= 1e-8
@@ -326,12 +395,13 @@ function _rounded_binary_y_values(subLP::ConnectorLP, y_vals)
         elseif abs(raw - 1.0) <= 1e-8
             rounded[a] = 1.0
         else
-            rounded[a] = min(max(Float64(ceil(raw)), 0.0), 1.0)
-            if !warned
-                @warn "ConnectorLP $(name(subLP.sub_solver)) received non-binary follower y-values when generating an optimality cut. JuBiC rounded them up to binary values for numerical stabilization."
-                warned = true
-            end
+            rounded_value = min(max(Float64(ceil(raw)), 0.0), 1.0)
+            rounded[a] = rounded_value
+            push!(nonbinary_steps, "y[$(a)]=$(raw) -> $(rounded_value)")
         end
+    end
+    if !isempty(nonbinary_steps)
+        @warn "ConnectorLP $(name(subLP.sub_solver)) received non-binary follower y-values when generating an optimality cut. JuBiC rounded these values for numerical stabilization: $(join(nonbinary_steps, "; "))."
     end
     return rounded
 end
@@ -371,10 +441,12 @@ Generate an general Benders (feasibility or optimality) cut.
 """
 function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, params::GBCparam, time_limit) where T
     _reset_numeric_state!(subLP)
+    subLP.numeric_state[:connector_phase] = "follower_solve"
     # adjust sub_problem by setting new objective
     @debug "We now solve for the found optimal master solution the ConnectorLP $(name(subLP.sub_solver))."
 
     foundfeas, optL2, optL2_risk, y_vals = solve_sub_for_x(subLP.sub_solver, link_vals, params, time_limit)
+    subLP.numeric_state[:connector_phase] = "standard_lp"
     new_obj = subLP.lp[:s] - optL2 * subLP.lp[:g]
     new_obj +=
         -sum([
@@ -398,7 +470,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         fix_g_constraint = @constraint(subLP.lp, subLP.lp[:g] == 0)
 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for feasibility cut generation."
-        time_iterate = iterate_subsolver(subLP, params, time_limit)  # solve with new constraint
+        time_iterate = iterate_subsolver(subLP, params, time_limit; phase="standard")  # solve with new constraint
 
         
         # pareto optimality step for feasibility cuts
@@ -415,7 +487,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
     else
         # solve sub_problem 
         @debug "Solving ConnectorLP $(name(subLP.sub_solver)) for optimality cut generation."
-        time_iterate = iterate_subsolver(subLP, params, time_limit)
+        time_iterate = iterate_subsolver(subLP, params, time_limit; phase="standard")
         time_limit_build_cut = time_limit - time_iterate
         pobj = value(new_obj)
 
@@ -425,16 +497,18 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
             # pareto optimality step for optimality cuts
             time_limit_pareto = time_limit - time_iterate
             pareto_snapshot = _connector_solution_snapshot(subLP)
+            pareto_start = time()
             try
                 if !haskey(params.stats.data, "ConnectorLPTimePareto")
                     new_stat!(params.stats, "ConnectorLPTimePareto", 0.0)
                 end
                 @debug "Start pareto-optimal Benders cut generation procedure for connector $(name(subLP.sub_solver)) for optimality cut construction with remaining time limit $time_limit_pareto."
-                pareto_time = @elapsed pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
-                add_stat!(params.stats, "ConnectorLPTimePareto", pareto_time)
+                pareto_optimal_decomposition(subLP, new_obj, optL2, params, time_limit_pareto)
+                _add_connector_time!(params.stats, "ConnectorLPTimePareto", time() - pareto_start)
                 time_limit_build_cut = time_limit_pareto
                 pobj = value(new_obj)
             catch err
+                _add_connector_time!(params.stats, "ConnectorLPTimePareto", time() - pareto_start)
                 @warn "Pareto-optimal cut generation failed for connector $(name(subLP.sub_solver)). JuBiC falls back to the pre-pareto connector solution and continues with the standard cut. Error: $(sprint(showerror, err))"
                 params.stats.data["Opt_status_override"] = "Numerics"
                 params.stats.data["GBCStatus"] = "Numerics"
@@ -443,7 +517,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         end
 
         # build the usual optimality cut. In the numerical fallback path this uses
-        # the stabilized g-value stored in subLP.numeric_state[:g_override].
+        # the original g-value after a numerically accepted repeated cut.
         cut, bigMcut = build_opt_cut(subLP, optL2, optL2_risk, y_vals, link_vals, params, time_limit_build_cut)
     end
 
@@ -461,6 +535,7 @@ function genBenders_cut!(subLP::ConnectorLP{T}, link_vals::Dict{T,Float64}, para
         end
         empty!(subLP.my_subsolutions)
     end
+    _flush_model_updates!(subLP.lp)
     @debug "Finished solving connectLP $(name(subLP.sub_solver))."
     return feas, cut, bigMcut, pobj
 end
@@ -487,26 +562,53 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     master_vars = subLP.link_vars
     bigMcut = nothing
     rounded_x_vals = _rounded_binary_x_values(subLP, x_vals, params)
+    cut_optL2 = _round_integer_objective_if_close(
+        optL2,
+        params,
+        name(subLP.sub_solver),
+        "optimality-cut follower objective optL2",
+    )
 
     # g term of the cut
-    gval = _snapshot_g(subLP)
+    gval = _snapshot_g_for_cut(subLP)
 
     # s term of the cut
     sval = _snapshot_s(subLP)
-    cut_rhs = _adjust_optcut_constant(sval - optL2 * gval, optL2_risk, subLP, params)
-    cut = cut_rhs
-    incumbent_cut_value = Float64(cut)
+    cut_rhs = _adjust_optcut_constant(sval - cut_optL2 * gval, optL2_risk, subLP, params)
+    # Keep the cut as an affine expression from the first assembled term so
+    # integerized coefficients are added locally and transparently.
+    cut = JuMP.AffExpr(Float64(cut_rhs))
+    incumbent_cut_value = Float64(cut_rhs)
     incumbent_reference_value = Float64(cut_rhs)
 
     kvals = _snapshot_k(subLP)
-    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, optL2, gval, kvals, x_vals)
+    bound_gval = if get(subLP.numeric_state, :original_g_for_bound, false) &&
+                    haskey(subLP.numeric_state, :original_g)
+        subLP.numeric_state[:original_g]
+    else
+        gval
+    end
+    if bound_gval != gval
+        @debug "ConnectorLP $(name(subLP.sub_solver)) uses original g=$(bound_gval) only for xi bound generation and rounded g=$(gval) for the cut."
+    end
+    bound_value = _compute_opt_cut_bound_coefficient(subLP, sval, cut_optL2, bound_gval, kvals, x_vals)
     k_coeffs = _compute_opt_cut_k_coefficients(subLP, kvals, bound_value, params)
+    integerized_k_coeffs = Dict{Any,Float64}()
+    for a in subLP.A
+        integerized_k = _add_integerized_linking_term!(
+            cut,
+            k_coeffs[a],
+            master_vars[a],
+            params,
+            subLP,
+            "k[$(a)]",
+        )
+        integerized_k_coeffs[a] = integerized_k
+        incumbent_cut_value -= integerized_k * rounded_x_vals[a]
+        incumbent_reference_value -= integerized_k * rounded_x_vals[a]
+    end
 
-    cut -= sum(k_coeffs[a] * master_vars[a] for a in subLP.A)
-    incumbent_cut_value -= sum(k_coeffs[a] * rounded_x_vals[a] for a in subLP.A)
-    incumbent_reference_value -= sum(k_coeffs[a] * rounded_x_vals[a] for a in subLP.A)
-
-    @debug "ConnectorLP $(name(subLP.sub_solver)) uses k-coefficients $(k_coeffs) and base g-coefficient xi=$(bound_value) for this optimality cut."
+    @debug "ConnectorLP $(name(subLP.sub_solver)) uses assembled k-coefficients $(integerized_k_coeffs) (raw values $(k_coeffs)) and base g-coefficient xi=$(bound_value)."
 
     ## generate cut from bound or by solving Lagrangian dual for BlC
     blc_subroutine = params.bigMwithLC && gval > 0 
@@ -518,13 +620,20 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
         blc_cut, _, cutcoeff_BlC = genBenderslike_cut!(subLP.blc_cut_generator, x_vals, params, timelimit)  # if we get a timeout error, we just let it through
         
         # build GBC cut, i.e., Bilevel Lagrangian cut, coefficients for theta terms
-        @debug "The big M values computed from Lagrangian dual now used in BlC are: $cutcoeff_BlC and optL2 * gval=$(ceil(Int, optL2 * gval))"
+        @debug "The big M values computed from Lagrangian dual now used in BlC are: $cutcoeff_BlC and optL2 * gval=$(ceil(Int, cut_optL2 * gval))"
         blc_g_coeffs = _compute_opt_cut_blc_g_coefficients(subLP, cutcoeff_BlC, gval, bound_value, params)
         for a in keys(blc_g_coeffs) 
-            rounded_coef = blc_g_coeffs[a]
+            raw_coef = blc_g_coeffs[a]
             # we do not multiply the big M with yvals as there can exist multiple equivalent solutions of L2 with same objective, leeding to different BlC 
-            cut -= rounded_coef * (1-master_vars[a]) #* y_vals[a] # TODO: rounding to avoid numeric trouble
-            incumbent_cut_value -= rounded_coef * (1 - rounded_x_vals[a])
+            integerized_coef = _add_integerized_paired_term!(
+                cut,
+                raw_coef,
+                master_vars[a],
+                params,
+                subLP,
+                "BlC g[$(a)]",
+            )
+            incumbent_cut_value -= integerized_coef * (1 - rounded_x_vals[a])
         end
         add_stat!(params.stats, "NBigMlagCuts", 1)
 
@@ -542,9 +651,22 @@ function build_opt_cut(subLP::ConnectorLP, optL2, optL2_risk, y_vals, x_vals, pa
     else
         if gval > 0
             rounded_y_vals = _rounded_binary_y_values(subLP, y_vals)
-            theta_xXg = sum(bound_value * (1 - master_vars[a]) * rounded_y_vals[a] for a in subLP.A)
-            cut -= theta_xXg
-            incumbent_cut_value -= sum(bound_value * (1 - rounded_x_vals[a]) * rounded_y_vals[a] for a in subLP.A)
+            integerized_xi = Dict{Any,Float64}()
+            for a in subLP.A
+                if rounded_y_vals[a] > 0
+                    raw_xi = bound_value * rounded_y_vals[a]
+                    integerized_xi[a] = _add_integerized_paired_term!(
+                        cut,
+                        raw_xi,
+                        master_vars[a],
+                        params,
+                        subLP,
+                        "xi[$(a)]",
+                    )
+                    incumbent_cut_value -= integerized_xi[a] * (1 - rounded_x_vals[a])
+                end
+            end
+            @debug "ConnectorLP $(name(subLP.sub_solver)) uses assembled xi-coefficients $(integerized_xi) (base xi=$(bound_value))."
 
             # Overlap between k and the y-pattern can occur on numerically
             # delicate instances. We continue, but flag the run.
@@ -602,22 +724,36 @@ function check_solution_status_LP(me::ConnectorLP)
 
 
     if status == MOI.INFEASIBLE
-        @error "The ConnectorLP $(name(me)) is infeasible. Starting computations of IIS. But most of the time this is implied by numerical issues."
-        compute_conflict!(me.lp)
-        @debug "IIS computed, now printing it"
-        iis_model, _ = copy_conflict(me.lp)
-        if get_attribute(me.lp, MOI.ConflictStatus()) == MOI.CONFLICT_FOUND
-            @error iis_model # printing to file just causes error...
-        else
-            @error "The IIS was not computed succesfully??? Most likely numerics??"
-        end
-        error("ConnectorLP $(name(me)) was infeasible. Computed IIS but stopping solution process (as it is clearly a bug). Most likely, it was caused by numerical issues.")
+        # ConnectorLP is solved from threaded GBC callback workers. Avoid
+        # constructing and copying a temporary IIS model here, since it can be
+        # finalized while the callback is still active.
+        phase = get(me.numeric_state, :connector_phase, "unknown")
+        iteration = get(me.numeric_state, :connector_iteration, missing)
+        @error "The ConnectorLP $(name(me)) is infeasible during phase=$(phase), iteration=$(iteration). IIS computation is disabled during threaded separation; this most likely indicates a numerical issue."
+        throw(NumericalIssueException(
+            "ConnectorLP $(name(me)) was infeasible during phase=$(phase), iteration=$(iteration). IIS computation was skipped during threaded separation; stopping solution process because this most likely indicates a numerical issue.",
+            "Terminate_Numerics",
+            Dict{String,Any}(
+                "type" => "InfeasibleConnectorLP",
+                "connector" => name(me),
+                "phase" => phase,
+                "iteration" => iteration,
+            ),
+        ))
     elseif status == MOI.DUAL_INFEASIBLE
-        error("The ConnectorLP $(name(me)) was unbounded what violates the way we handle its. Because we add significantly large bounds, we avoid unboundnes; so, this should not have happended.")
+        throw(NumericalIssueException(
+            "The ConnectorLP $(name(me)) was unbounded what violates the way we handle its. Because we add significantly large bounds, we avoid unboundnes; so, this should not have happended.",
+            "Terminate_Numerics",
+            Dict{String,Any}("type" => "UnboundedConnectorLP", "connector" => name(me)),
+        ))
     end
 
     if !(status == MOI.OPTIMAL)
-        error("ConnectorLP $(name(me)) could not be solver to optimality but terminated with status $(status). Connot continue as this is undefined behavior.")
+        throw(NumericalIssueException(
+            "ConnectorLP $(name(me)) could not be solver to optimality but terminated with status $(status). Connot continue as this is undefined behavior.",
+            "Terminate_Numerics",
+            Dict{String,Any}("type" => "UnexpectedConnectorLPStatus", "connector" => name(me), "solver_status" => string(status)),
+        ))
     end
 end
 
@@ -636,7 +772,7 @@ function _duplicate_connector_cut_error(
         "The current connector-LP value is s=$(sval), while the follower still certifies a value of $(opt_obj). " *
         "To avoid cycling on numerically unstable cuts, JuBiC stops here. " *
         "For this cut to be considered non-violated, the connector-LP would need to bring s below approximately $(target) (using tolerance $(tolerance)).",
-        "NumericalIssue_DuplicateCut",
+        "Terminate_Numerics",
     )
 end
 
@@ -652,24 +788,30 @@ In case the separation takes longer that the set time limit, throw an exception.
 # Return
     The time it required to execute this function
 """
-function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
-    # this part of the solver can run into quite some nasty infinity loops. To prevent the software just freezing (or seeming to freeze for the user),
-    ## we stop the separation process in case we reach the timelimit set in the parameters (what still can take long, but at least the user is expected to wait this long) 
-    current_time = time()
+function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit; phase::AbstractString="standard")
+    # This part of the solver can run into nasty iteration loops.  Use a
+    # deadline local to this call; the caller supplies the remaining global
+    # GBC time, so repeated master callbacks cannot reset the full run limit.
+    start_time = time()
+    deadline = start_time + max(0.0, Float64(time_limit))
+    if deadline <= time()
+        throw(TimeoutException("We reached the time limit before solving ConnectorLP $(name(subLP.sub_solver))."))
+    end
 
     if !haskey(params.stats.data, "ConnectorLPIterations")
         new_stat!(params.stats, "ConnectorLPIterations", 0)
     end
-    if !haskey(params.stats.data, "ConnectorLPTimeLP")
-        new_stat!(params.stats, "ConnectorLPTimeLP", 0.0)
-    end
-    if !haskey(params.stats.data, "ConnectorLPTimePricing")
-        new_stat!(params.stats, "ConnectorLPTimePricing", 0.0)
-    end
+    _ensure_connector_time_stats!(params.stats)
 
     violated_cut = true # true as long as violated constraint could exist in LP
     while violated_cut
         add_stat!(params.stats, "ConnectorLPIterations", 1)
+        subLP.numeric_state[:connector_phase] = "$(phase)_lp_solve"
+        subLP.numeric_state[:connector_iteration] = get(params.stats.data, "ConnectorLPIterations", 0)
+        remaining_time = deadline - time()
+        if remaining_time <= 0
+            throw(TimeoutException("We reached the time limit before resolving ConnectorLP $(name(subLP.sub_solver))."))
+        end
         # solve the sub_problem iteratively (but first debbug output)
         if params.debbug_out
             write_to_file(
@@ -680,31 +822,38 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
 
         # first, solve the LP
         #@debug subLP.lp # this debug output is not helpfull
+        set_time_limit_sec(subLP.lp, remaining_time)
         lp_time = @elapsed optimize!(subLP.lp) # Assumption: Solving the LP consumes neglectable time
-        add_stat!(params.stats, "ConnectorLPTimeLP", lp_time)
+        # LP and pricing work performed during Pareto refinement is included
+        # in the Pareto wall-clock component and must not be counted again.
+        phase == "pareto" || _add_connector_time!(params.stats, "ConnectorLPTimeLP", lp_time)
         check_solution_status_LP(subLP)  
 
         # solve sub_problem for found solution
         kvals = Dict(a => value(subLP.lp[:k][a]) for a in subLP.A)
         @debug "The found sub_problem ConnectorLP solution is s=$(value(subLP.lp[:s])), g=$(value(subLP.lp[:g])), and non-zero k=$(Dict(key => k for (key, k) in kvals if k != 0)). "
+        subLP.numeric_state[:connector_phase] = "$(phase)_pricing"
         pricing_time = @elapsed begin
+            remaining_time = deadline - time()
+            remaining_time <= 0 && throw(TimeoutException("We reached the time limit before pricing ConnectorLP $(name(subLP.sub_solver))."))
             sub_solver = separation!(
                 subLP.sub_solver,
                 value(subLP.lp[:s]),
                 value(subLP.lp[:g]),
                 kvals,
                 params,
-                time_limit
+                remaining_time
             )
             subLP.numeric_state[:last_sub_solver_solution] = sub_solver
         end
-        add_stat!(params.stats, "ConnectorLPTimePricing", pricing_time)
+        phase == "pareto" || _add_connector_time!(params.stats, "ConnectorLPTimePricing", pricing_time)
         sub_solver = subLP.numeric_state[:last_sub_solver_solution]
         delete!(subLP.numeric_state, :last_sub_solver_solution)
 
         # if we found a violated constraint, add it and resolve
         if sub_solver.vio
             # add constraints
+            subLP.numeric_state[:connector_phase] = "$(phase)_add_subsolver_cut"
             @debug "For connector $(name(subLP.sub_solver)), we found a sub_problem solution that violates current LP solution and uses resources $(sub_solver.A_sub)."
             csc = ConSubsolCut(sub_solver.A_sub, sub_solver.obj_second_level, sub_solver.obj_first_level)
             if csc in subLP.my_subsolutions
@@ -730,7 +879,9 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
                     )
                     @warn warning_msg
                     subLP.numeric_state[:accepted_numerically] = true
+                    subLP.numeric_state[:original_g] = g_current
                     subLP.numeric_state[:g_override] = g_rounded
+                    subLP.numeric_state[:original_g_for_bound] = true
                     params.stats.data["Opt_status_override"] = "Numerics"
                     params.stats.data["GBCStatus"] = "Numerics"
                     violated_cut = false
@@ -752,7 +903,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
             push!(subLP.my_subsolutions, csc)
 
             # check for time limit
-            if current_time + params.runtime < time() 
+            if deadline < time()
                 @error "We reached the time limit when solving ConnectorLP $(name(subLP.sub_solver)). Terminating cut generation process."
                 throw(TimeoutException("We reached the time limit when solving ConnectorLP $(name(subLP.sub_solver)). Terminating GBC solution procedure."))
             end
@@ -765,7 +916,7 @@ function iterate_subsolver(subLP::ConnectorLP, params::GBCparam, time_limit)
         end
     end
 
-    return time() - current_time # return how long the process took
+    return time() - start_time # return how long the process took
 end
 
 
@@ -845,6 +996,12 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
             "We got a negative big_m in ConnectorLP $(name(subLP)) because s=$(cssol), g=$(cgsol), gcoef=$(g_obj_coef), and bound=$(subLP.lower_bound_obj_contribution).",
         )
     end
+    if params.integer_obj
+        # The Pareto coefficient is an objective-side big-M.  When the
+        # objective is integer-valued, round it upward so the Pareto phase
+        # cannot lose the incumbent objective cell through underestimation.
+        bigMterm = ceil(bigMterm)
+    end
 
     # build adjusted model
     current_obj = objective_value(subLP.lp)
@@ -864,7 +1021,7 @@ function pareto_optimal_decomposition(subLP::ConnectorLP, lp_obj, g_obj_coef, pa
     end
 
     # resolve optimization problem
-    iterate_subsolver(subLP, params, time_limit)
+    iterate_subsolver(subLP, params, time_limit; phase="pareto")
 end
 
 

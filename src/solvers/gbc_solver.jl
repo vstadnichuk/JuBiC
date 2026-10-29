@@ -2,8 +2,53 @@
 using JuMP
 using BenchmarkTools
 using CSV
+using JSON
 import MathOptInterface as MOI
 using Base.Threads
+
+const GBC_CONNECTOR_TIMEOUT_BUFFER = 1.0
+
+function _request_gurobi_master_termination!(cb_data, reason::AbstractString)
+    try
+        Gurobi.GRBterminate(cb_data.model)
+        @debug "Requested native Gurobi master termination: $(reason)"
+    catch err
+        @error "Could not request native Gurobi master termination after $(reason)" exception=(err, catch_backtrace())
+    end
+    return nothing
+end
+
+function _set_gbc_timeout_status!(stats, status::AbstractString)
+    stats.data["GBCStatus"] = status
+    stats.data["Opt_status_override"] = status
+    return nothing
+end
+
+function _is_global_gbc_timeout(failure)
+    failure.err isa TimeoutException || return false
+    message = failure.err.message
+    return occursin("GBC global time limit", message) ||
+           occursin("GBC separation cancelled after the global time limit", message)
+end
+
+function _write_numerical_diagnostic(param, err::NumericalIssueException, bt)
+    # Keep ordinary runs lightweight: write a structured diagnostic only when
+    # numerical instability aborts the GBC solve.
+    try
+        diagnostic = Dict{String,Any}(
+            "exception_type" => string(typeof(err)),
+            "status" => err.status,
+            "message" => err.message,
+            "context" => err.context,
+            "stacktrace" => string.(bt),
+        )
+        open(joinpath(param.output_folder_path, "numeric_termination.json"), "w") do io
+            write(io, JSON.json(diagnostic, 2))
+        end
+    catch diagnostic_error
+        @warn "Could not write numerical termination diagnostics: $(diagnostic_error)"
+    end
+end
 
 
 """
@@ -40,13 +85,27 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     new_stat!(param.stats, "ConnectorLPTimeLP", 0.0)  # time spent solving the connector LP relaxation
     new_stat!(param.stats, "ConnectorLPTimePricing", 0.0)  # time spent in subsolver pricing / separation calls
     new_stat!(param.stats, "ConnectorLPTimePareto", 0.0)  # time spent in pareto refinement inside connectors
+    new_stat!(param.stats, "ConnectorLPTimeTotal", 0.0)  # disjoint sum of LP, pricing, and Pareto connector time
     new_stat!(param.stats, "ConnectorLPIterations", 0)  # number of connector LP resolve/pricing iterations
     new_stat!(param.stats, "parallel_separation", param.parallel_separation)
     master_threads = resolve_nthreads!(param.stats, "threads_master", param.threads_master; context="the master MIP")
     sub_threads = resolve_nthreads!(param.stats, "threads_sub_con", param.threads_sub_con; context="the subproblem solvers")
-    if param.parallel_separation
-        parallel_workers = _resolve_parallel_workers!(param.stats, sub_threads)
-        new_stat!(param.stats, "parallel_connector_workers_used", parallel_workers)
+    parallel_workers = param.parallel_separation ?
+        _resolve_parallel_workers!(
+            param.stats,
+            param.parallel_subsolvers;
+            master_threads=master_threads,
+            sub_threads=sub_threads,
+            connector_threads=1,
+            context="GBC connector/subsolver separation",
+        ) : 1
+    new_stat!(param.stats, "parallel_connector_workers_used", parallel_workers)
+
+    # Gurobi environments are not thread-safe.  Initialize the complete pool
+    # before any callback can spawn separation workers; the connector models
+    # are then assigned to these environments during construction below.
+    if param.solver isa GurobiSolver
+        ensure_worker_envs!(param.solver, parallel_workers)
     end
 
     # do some initail checks for master and sub solvers
@@ -67,21 +126,36 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
         master.partial_decomposition(master.model, subObj)
     end
 
-    # configure solver logging before preprocessing and final export
+    # Use one absolute deadline for preprocessing, master optimization, and
+    # all callback-side separation calls.  A callback may be entered many
+    # times, so passing `param.runtime` directly to each callback would reset
+    # the effective time limit on every master incumbent.
+    deadline = time() + param.runtime
+
+    # build the sub LPs for Benders subroutine
+    clps, runtime_init = init_connectorLPs(subs, master.link_vars, subObj, param)
+    new_stat!(param.stats, "runtime_preprocessingGBC", runtime_init)
+
+    # Models supplied by callers may have been created with Gurobi's default
+    # environment.  Rebind the master and follower models before optimization
+    # so that the master has its own environment and each connector's complete
+    # worker-side model set uses the connector's assigned worker environment.
+    if param.solver isa GurobiSolver
+        _assign_gurobi_worker_models!(master, subs, clps, param.solver, parallel_workers, get_seed(param))
+    end
+
+    # Configure logging after any optimizer rebinding, since replacing a
+    # JuMP optimizer clears optimizer-specific attributes such as LogFile.
     if should_write_output_logs(param)
         try
             set_silent(master.model)
             set_optimizer_attribute(master.model, "LogFile", param.output_folder_path*"/gbc_mip_log.txt")
-        catch err 
+        catch err
             @error "Could not set log file for folder $(param.output_folder_path). Error is $err"
         end
     else
         set_silent(master.model)
     end
-
-    # build the sub LPs for Benders subroutine 
-    clps, runtime_init = init_connectorLPs(subs, master.link_vars, subObj, param) 
-    new_stat!(param.stats, "runtime_preprocessingGBC", runtime_init)
 
     # debug output: export the master only after preprocessing so stored subObj bounds match the live model
     if should_write_output_logs(param)
@@ -96,28 +170,47 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
     end
 
     # set time limit and number of threads
-    true_runtime = param.runtime - runtime_init
+    true_runtime = max(0.0, deadline - time())
     set_time_limit_sec(master.model, true_runtime)
+    # Reserve a small margin for callback unwinding and model cleanup.  The
+    # callback will request native termination if it is entered in this
+    # buffer, and no ConnectorLP separation will be started.
+    if true_runtime <= GBC_CONNECTOR_TIMEOUT_BUFFER
+        _set_gbc_timeout_status!(param.stats, "Timeout")
+    end
     set_attribute(master.model, MOI.NumberOfThreads(), master_threads)
     set_seed!(master.model, param.solver, get_seed(param))
+    _apply_linking_branching_rule!(master.model, master.link_vars, param)
     for sub in subs
-        if param.parallel_separation
-            set_singlethread(sub)
-        else
-            set_nthreads(sub, sub_threads)
-        end
+        set_nthreads(sub, sub_threads)
     end
 
     # add callback to master and solve 
     msol_cuts_mapping = Dict()  # a mapping of master solution to found lazy constraints
     msol_cuts_mapping_blc = Dict()  # a mapping of master solution to found lazy blc constraints. They are only generated if BlC coef. are automatically computed in subroutine
     msol_subobj_mapping = Dict()  # for each master solution, store per subproblem which subObj values were already separated
+    callback_lock = ReentrantLock()
+    worker_locks = [ReentrantLock() for _ in 1:parallel_workers]
     if true_runtime > 0
         @debug "Finished model construction. Now proceeding to optimization process with GBC. Remaining runtime is $true_runtime"
-        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param))
+        set_attribute(master.model, MOI.LazyConstraintCallback(), cb -> begin
+            # Gurobi may invoke callbacks from multiple master threads. The
+            # callback owns shared cut caches and mutable ConnectorLP objects;
+            # serialize callback entry while retaining parallel separation of
+            # distinct connectors inside one callback.
+            lock(callback_lock)
+            try
+                gbc_callback_function(cb, master, names, clps, subObj, msol_cuts_mapping, msol_cuts_mapping_blc, msol_subobj_mapping, param, deadline, worker_locks)
+            finally
+                unlock(callback_lock)
+            end
+        end)
     else
         @debug "We do not add any callbacks to GBCSolver as we run into a time out during the preprocessing."
-        new_stat!(param.stats, "GBCStatus", "Timeout_Submodel")
+        # Preprocessing may already have recorded a status.  Do not attempt
+        # to register the same statistic a second time; this used to turn a
+        # legitimate preprocessing timeout into a runner-level ArgumentError.
+        _set_gbc_timeout_status!(param.stats, "Timeout")
     end
 
     try 
@@ -129,8 +222,19 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             param.stats.data["Opt_status_override"] = "Timeout_Submodel"
         elseif (e isa NumericalIssueException)
             @error "GBCSolver stopped due to a detected numerical issue: $(e.message)"
-            param.stats.data["GBCStatus"] = e.status
-            param.stats.data["Opt_status_override"] = e.status
+            # A status ending in _Numerics is already the final, qualified
+            # status. Otherwise retain the solver's eventual base status and
+            # let set_optimization_status_stats append the numerical marker.
+            if endswith(e.status, "_Numerics")
+                param.stats.data["GBCStatus"] = e.status
+                param.stats.data["Opt_status_override"] = e.status
+            else
+                param.stats.data["GBCStatus"] = "Numerics"
+                param.stats.data["Opt_status_override"] = "Numerics"
+            end
+            if get(param.stats.data, "GBCStatus", "") == "Terminate_Numerics"
+                _write_numerical_diagnostic(param, e, catch_backtrace())
+            end
         else
             @error "GBCsolver suffered an error: $e"
             @error stacktrace(catch_backtrace())
@@ -167,18 +271,15 @@ function solve_with_GBC!(inst::Instance, param::GBCparam)
             new_stat!(param.stats, "gap", Inf)
         end
         try
-        try
             new_stat!(param.stats, "BNodes", MOI.get(master.model, MOI.NodeCount()))
         catch
             new_stat!(param.stats, "BNodes", Inf)
-        end
-        catch
         end
     else
         # print solution and collected data
         print_collected_cuts(param, msol_cuts_mapping)
         print_collected_cuts(param, msol_cuts_mapping_blc; filename="mastercuts_blc.txt")
-        if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT
+        if termination_status(master.model) == MOI.OPTIMAL || termination_status(master.model) == MOI.LOCALLY_SOLVED || termination_status(master.model) == MOI.TIME_LIMIT || termination_status(master.model) == MOI.INTERRUPTED
             if primal_status(master.model) == MOI.FEASIBLE_POINT
                 try
                     mobj = objective_value(master.model)
@@ -243,9 +344,11 @@ function init_connectorLPs(subs, link_vars, subObjs, param::GBCparam)
     timelimit_inner = param.runtime
     connectors = []
     try 
-        for s in subs
+        for (idx, s) in enumerate(subs)
             time_s = @elapsed begin
-                con = build_connectorLP(s, link_vars, subObjs[name(s)], param, timelimit_inner)
+                worker_id = param.solver isa GurobiSolver ?
+                    mod1(idx, max(1, get(param.stats.data, "parallel_connector_workers_used", 1))) : 1
+                con = build_connectorLP(s, link_vars, subObjs[name(s)], param, timelimit_inner, worker_id)
                 push!(connectors, con)
             end
             timelimit_inner = timelimit_inner - time_s
@@ -280,14 +383,22 @@ Generate the ConnectorLP objects that form the Benders subproblems within our hi
 # Returns
 - 'lp::ConnectorLP': The LP
 """
-function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, parameter::GBCparam, timelimit)
+function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, parameter::GBCparam, timelimit, worker_id::Integer=1)
     # Generate the ConnectorLP for the passed sub_problem
     @debug "Starting building of ConnectorLP for subpoblem $(name(sub))."
 
     # Construct LP (no objective or constraints)
     # Note that we use upper bounds to prevent unbounded solutions, see the ConnectorLP implimentation
-    myLP = Model(() -> get_next_optimizer(parameter.solver))
-    @variable(myLP, s <= parameter.infinity_num)
+    optimizer_factory = parameter.solver isa GurobiSolver ?
+        (() -> get_worker_optimizer(parameter.solver, worker_id)) :
+        (() -> get_next_optimizer(parameter.solver))
+    myLP = Model(optimizer_factory)
+    set_seed!(myLP, parameter.solver, get_seed(parameter))
+    s_bound = isnothing(parameter.connector_s_bound) ?
+        parameter.infinity_num : parameter.connector_s_bound
+    s_bound > 0 || error("ConnectorLP s-bound must be positive, got $(s_bound) for subproblem $(name(sub)).")
+    @debug "Using ConnectorLP s upper bound $(s_bound) for subproblem $(name(sub))."
+    @variable(myLP, s <= s_bound)
     @variable(myLP, k[sub.A] >= 0)
     @variable(myLP, 0 <= g <= parameter.infinity_num)
 
@@ -316,11 +427,48 @@ function build_connectorLP(sub::SubSolver, link_vars_master::Dict, subObjvar, pa
     # add generator for BlC cuts if better cuts are requested
     blc_generator = nothing
     if parameter.bigMwithLC
-        blc_generator = ConnectorLP_BlC(parameter, sub.A, link_vars_master, sub)
+        blc_generator = ConnectorLP_BlC(parameter, sub.A, link_vars_master, sub;
+            optimizer_factory=optimizer_factory)
     end
 
     # build ConnectorLP obj
     return ConnectorLP(myLP, sub.A, link_vars_master, sub, lbm, blc_generator, Vector{ConSubsolCut}(), parameter.g_round_digit, Dict{Symbol,Any}())
+end
+
+"""Rebind worker-side models before the first threaded callback invocation."""
+function _assign_gurobi_worker_models!(master, subs, clps, solver::GurobiSolver, nworkers::Integer, seed::Integer)
+    set_optimizer(master.model, () -> Gurobi.Optimizer(solver.env))
+    set_seed!(master.model, solver, seed)
+    for (idx, con) in enumerate(clps)
+        worker_id = mod1(idx, nworkers)
+        worker_factory = () -> get_worker_optimizer(solver, worker_id)
+        # The ConnectorLP itself is constructed with this factory.  Rebinding
+        # here also handles models constructed by an older/custom constructor.
+        set_optimizer(con.lp, worker_factory)
+        set_seed!(con.lp, solver, seed)
+        # MIP-based follower subsolvers own a JuMP model that must be rebound
+        # to the worker environment. Algorithmic subsolvers such as AStarSolver
+        # do not own a mip_model; their connector LP is still rebound above.
+        if hasproperty(con.sub_solver, :mip_model)
+            set_optimizer(con.sub_solver.mip_model, worker_factory)
+            set_seed!(con.sub_solver.mip_model, solver, seed)
+        end
+        # SubSolverBlCJuMP keeps a separate persistent oracle model created by
+        # copy_model. It must use the same worker environment as the main
+        # subsolver; otherwise oracle calls can recreate/finalize models in the
+        # shared master environment from inside a threaded callback.
+        if hasproperty(con.sub_solver, :oracle_model) &&
+           !isnothing(con.sub_solver.oracle_model)
+            set_optimizer(con.sub_solver.oracle_model, worker_factory)
+            set_seed!(con.sub_solver.oracle_model, solver, seed)
+            con.sub_solver.oracle_optimizer_bound[] = true
+        end
+        if !isnothing(con.blc_cut_generator)
+            set_optimizer(con.blc_cut_generator.lp, worker_factory)
+            set_seed!(con.blc_cut_generator.lp, solver, seed)
+        end
+    end
+    return nothing
 end
 
 
@@ -329,25 +477,38 @@ function _normalize_subobj_cache_value(v::Real)
     return round(Float64(v), digits=6)
 end
 
-function _resolve_parallel_workers!(stats::RunStats, requested_workers::Integer)
-    used = min(max(1, Int(requested_workers)), max(1, Threads.nthreads()))
-    if used < requested_workers
-        @warn "Requested $(requested_workers) parallel connector workers, but the Julia process only has $(Threads.nthreads()) thread(s). JuBiC will use $(used) worker(s) for parallel connector separation."
+function _resolve_parallel_workers!(
+    stats::RunStats,
+    requested_workers::Integer;
+    master_threads::Integer=1,
+    sub_threads::Integer=1,
+    connector_threads::Integer=1,
+    context="parallel separation",
+)
+    workers = max(1, Int(requested_workers))
+    per_worker = max(Int(sub_threads), Int(connector_threads))
+    requested_total = max(1, Int(master_threads)) + workers * per_worker
+    available = max(1, Threads.nthreads())
+    new_stat!(stats, "parallel_subsolvers_requested", workers)
+    new_stat!(stats, "parallel_thread_budget_requested", requested_total)
+    if requested_total > available
+        @warn "Requested thread budget for $(context) is $(requested_total), calculated as master=$(master_threads) + workers=$(workers) * max(subsolver=$(sub_threads), connector=$(connector_threads)); Julia provides $(available) thread(s). JuBiC will still enforce the requested worker and solver-thread settings, so the runtime scheduler may oversubscribe available Julia threads."
     end
-    return used
+    return workers
 end
 
 function _connector_thread_count(params::GBCparam)
-    return params.parallel_separation ? 1 : used_nthreads(params.stats, "threads_sub_con")
+    return 1
 end
 
-function _local_gbc_param(params::GBCparam)
+function _local_gbc_param(params::GBCparam; runtime=params.runtime)
     local_stats = RunStats()
     new_stat!(local_stats, "threads_master_used", get(params.stats.data, "threads_master_used", 1))
     new_stat!(local_stats, "threads_sub_con_used", get(params.stats.data, "threads_sub_con_used", 1))
     new_stat!(local_stats, "ConnectorLPTimeLP", 0.0)
     new_stat!(local_stats, "ConnectorLPTimePricing", 0.0)
     new_stat!(local_stats, "ConnectorLPTimePareto", 0.0)
+    new_stat!(local_stats, "ConnectorLPTimeTotal", 0.0)
     new_stat!(local_stats, "ConnectorLPIterations", 0)
     return GBCparam(
         params.solver,
@@ -355,7 +516,7 @@ function _local_gbc_param(params::GBCparam)
         params.output_folder_path,
         params.file_format_output,
         local_stats,
-        params.runtime,
+        runtime,
         params.seed,
         params.threads_master,
         params.threads_sub_con,
@@ -365,22 +526,30 @@ function _local_gbc_param(params::GBCparam)
         params.bigMwithLC,
         params.trim_coeff,
         params.infinity_num,
+        params.connector_s_bound,
         params.g_round_digit,
         params.integer_obj,
         params.pareto_band_tolerance,
         params.blc_pareto_band_tolerance,
+        params.parallel_subsolvers,
     )
 end
 
-function _format_parallel_gbc_task_error(subname::AbstractString, err, bt)
+function _format_parallel_gbc_task_error(subname::AbstractString, err, bt; worker_id=nothing, phase=nothing, cleanup_errors=())
     io = IOBuffer()
     print(io, "Parallel GBC separator failed for subproblem ", subname, ". ")
+    !isnothing(worker_id) && print(io, "worker=", worker_id, ". ")
+    !isnothing(phase) && print(io, "phase=", phase, ". ")
     showerror(io, err, bt)
+    for cleanup_error in cleanup_errors
+        print(io, " Cleanup failure: ")
+        showerror(io, cleanup_error.error, cleanup_error.backtrace)
+    end
     return String(take!(io))
 end
 
 function _merge_parallel_gbc_stats!(target::RunStats, local_stats::RunStats)
-    for key in ("ConnectorLPTimeLP", "ConnectorLPTimePricing", "ConnectorLPTimePareto", "ConnectorLPIterations")
+    for key in ("ConnectorLPTimeLP", "ConnectorLPTimePricing", "ConnectorLPTimePareto", "ConnectorLPTimeTotal", "ConnectorLPIterations")
         if haskey(local_stats.data, key)
             add_stat!(target, key, local_stats.data[key])
         end
@@ -423,9 +592,17 @@ function _has_cached_subobj_value(mapping::Dict, msolkey, subname, value)
     return _normalize_subobj_cache_value(value) in per_sub[subname]
 end
 
-function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam)
+function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj, msol_cuts_mapping::Dict, msol_cuts_mapping_blc::Dict, msol_subobj_mapping::Dict, parameter::GBCparam, deadline::Real, worker_locks)
     # x are the linking variables and clps the connectors (one for each sub)
     # subObj are the obj. vars. in master (for each sub)
+
+    # Do not start another separation after the global deadline.  Returning
+    # normally lets Gurobi terminate through its own time-limit machinery.
+    if deadline - time() <= GBC_CONNECTOR_TIMEOUT_BUFFER
+        _set_gbc_timeout_status!(parameter.stats, "Timeout")
+        _request_gurobi_master_termination!(cb_data, "the one-second connector timeout buffer was reached")
+        return
+    end
 
     status = callback_node_status(cb_data, master.model)
     if status == MOI.CALLBACK_NODE_STATUS_FRACTIONAL
@@ -478,14 +655,64 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
             fill!(task_errors, nothing)
             if parameter.parallel_separation && length(pending) > 1
                 sem = Base.Semaphore(get(parameter.stats.data, "parallel_connector_workers_used", 1))
-                @sync for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
+                # Timeout is cooperative. Tasks already inside separation are
+                # allowed to drain; tasks waiting for a worker do not start new
+                # Gurobi work once this flag is set.
+                abort_separation = Threads.Atomic{Bool}(false)
+                timeout_observed = Threads.Atomic{Bool}(false)
+                sync_error = nothing
+                try
+                    @sync for (res_idx, (connector_idx, con, subname, current_subobj)) in enumerate(pending)
                     Threads.@spawn begin
-                        Base.acquire(sem)
+                        worker_id = mod1(connector_idx, length(worker_locks))
+                        semaphore_acquired = false
+                        worker_locked = false
+                        phase = "created"
+                        primary_failure = nothing
+                        cleanup_failures = NamedTuple{(:error, :backtrace),Tuple{Any,Any}}[]
                         try
-                            local_param = _local_gbc_param(parameter)
+                            phase = "acquire_semaphore"
+                            Base.acquire(sem)
+                            semaphore_acquired = true
+                            if abort_separation[]
+                                phase = "cancelled_before_lock"
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=TimeoutException("GBC separation cancelled after the global time limit was reached."),
+                                    bt=nothing,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
+                                )
+                                return
+                            end
+                            phase = "lock_worker"
+                            lock(worker_locks[worker_id])
+                            worker_locked = true
+                            phase = "check_deadline"
+                            remaining_time = deadline - time()
+                            if remaining_time <= GBC_CONNECTOR_TIMEOUT_BUFFER
+                                Threads.atomic_xchg!(abort_separation, true)
+                                Threads.atomic_xchg!(timeout_observed, true)
+                                phase = "deadline_reached"
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=TimeoutException("GBC global time limit reached before separating connector $(subname)."),
+                                    bt=nothing,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
+                                )
+                                return
+                            end
+                            phase = "build_local_parameters"
+                            local_param = _local_gbc_param(parameter; runtime=remaining_time)
                             result_ref = Ref{Any}(nothing)
+                            phase = "genBenders_cut"
                             cuttime = @elapsed begin
-                                feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                                feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, remaining_time)
                                 result_ref[] = (
                                     subname=subname,
                                     current_subobj=current_subobj,
@@ -499,31 +726,114 @@ function gbc_callback_function(cb_data, master::Master, sub_names, clps, subObj,
                             base_result = result_ref[]
                             results[res_idx] = (; base_result..., cuttime=cuttime)
                         catch err
-                            task_errors[res_idx] = (
-                                subname=subname,
-                                current_subobj=current_subobj,
+                            primary_failure = (
                                 err=err,
-                                bt=stacktrace(catch_backtrace()),
+                                backtrace=stacktrace(catch_backtrace()),
                             )
+                            if err isa TimeoutException
+                                Threads.atomic_xchg!(abort_separation, true)
+                                Threads.atomic_xchg!(timeout_observed, true)
+                            end
                         finally
-                            Base.release(sem)
+                            if worker_locked
+                                phase = "unlock_worker"
+                                try
+                                    unlock(worker_locks[worker_id])
+                                catch err
+                                    push!(cleanup_failures, (error=err, backtrace=catch_backtrace()))
+                                end
+                            end
+                            if semaphore_acquired
+                                phase = "release_semaphore"
+                                try
+                                    Base.release(sem)
+                                catch err
+                                    push!(cleanup_failures, (error=err, backtrace=catch_backtrace()))
+                                end
+                            end
+                            if !isnothing(primary_failure)
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=primary_failure.err,
+                                    bt=primary_failure.backtrace,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
+                                )
+                            elseif !isempty(cleanup_failures)
+                                task_errors[res_idx] = (
+                                    subname=subname,
+                                    current_subobj=current_subobj,
+                                    err=cleanup_failures[1].error,
+                                    bt=cleanup_failures[1].backtrace,
+                                    worker_id=worker_id,
+                                    phase=phase,
+                                    cleanup_errors=cleanup_failures,
+                                )
+                            end
                         end
+                    end
+                    end
+                catch err
+                    sync_error = (error=err, backtrace=catch_backtrace())
+                    # A cleanup exception can mask the original
+                    # TimeoutException.  If the synchronization barrier fails
+                    # at the global deadline, preserve the timeout meaning for
+                    # status reporting and retain the composite error above as
+                    # a diagnostic.
+                    if deadline - time() <= GBC_CONNECTOR_TIMEOUT_BUFFER
+                        Threads.atomic_xchg!(timeout_observed, true)
+                    end
+                end
+
+                if !isnothing(sync_error)
+                    if timeout_observed[]
+                        @error "Parallel GBC separation raised an exception after a timeout; classifying the run as Timeout" exception=(sync_error.error, sync_error.backtrace)
+                        _set_gbc_timeout_status!(parameter.stats, "Timeout")
+                    else
+                        throw(sync_error.error)
                     end
                 end
 
                 failures = [failure for failure in task_errors if !isnothing(failure)]
-                if !isempty(failures)
-                    for failure in failures
-                        @error _format_parallel_gbc_task_error(failure.subname, failure.err, failure.bt)
+                timeout_failures = [failure for failure in failures if failure.err isa TimeoutException]
+                submodel_timeout_failures = [failure for failure in timeout_failures if !_is_global_gbc_timeout(failure)]
+                other_failures = [failure for failure in failures if !(failure.err isa TimeoutException)]
+                if !isempty(other_failures) && !timeout_observed[]
+                    for failure in other_failures
+                        @error _format_parallel_gbc_task_error(
+                            failure.subname,
+                            failure.err,
+                            failure.bt;
+                            worker_id=get(failure, :worker_id, nothing),
+                            phase=get(failure, :phase, nothing),
+                            cleanup_errors=get(failure, :cleanup_errors, ()),
+                        )
                     end
-                    throw(first(failures).err)
+                    throw(first(other_failures).err)
+                elseif !isempty(timeout_failures) || abort_separation[] || timeout_observed[]
+                    # Never throw a timeout from inside the Gurobi callback.
+                    # Partial cuts are discarded and all spawned tasks have
+                    # already drained because this code follows @sync.
+                    timeout_status = isempty(submodel_timeout_failures) ? "Timeout" : "Timeout_Submodel"
+                    _set_gbc_timeout_status!(parameter.stats, timeout_status)
+                    @debug "GBC separation reached its global time limit; connector tasks drained and no further cuts are submitted."
+                    _request_gurobi_master_termination!(cb_data, "the global GBC time limit was reached after connector separation")
+                    return
                 end
             else
                 for (res_idx, (_, con, subname, current_subobj)) in enumerate(pending)
-                    local_param = parameter.parallel_separation ? _local_gbc_param(parameter) : parameter
+                    remaining_time = deadline - time()
+                    if remaining_time <= GBC_CONNECTOR_TIMEOUT_BUFFER
+                        _set_gbc_timeout_status!(parameter.stats, "Timeout")
+                        _request_gurobi_master_termination!(cb_data, "the one-second connector timeout buffer was reached in serial separation")
+                        return
+                    end
+                    local_param = parameter.parallel_separation ? _local_gbc_param(parameter; runtime=remaining_time) : parameter
                     result_ref = Ref{Any}(nothing)
                     cuttime = @elapsed begin
-                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, local_param.runtime)
+                        feas, cut, bigMcut, pobj = genBenders_cut!(con, x_vals, local_param, remaining_time)
                         result_ref[] = (
                             subname=subname,
                             current_subobj=current_subobj,

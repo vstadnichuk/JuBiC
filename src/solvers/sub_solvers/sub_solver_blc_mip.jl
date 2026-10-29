@@ -23,6 +23,11 @@ struct SubSolverBlCJuMP{T} <: SubSolver
     c_objterm::GenericAffExpr
     oracle_solve::Function
     big_m::Function
+    # The default oracle owns a persistent JuMP model.  Keeping it explicit
+    # allows the GBC worker assignment to bind it to the same Gurobi
+    # environment as the main subsolver model.
+    oracle_model::Union{Nothing,JuMP.Model}
+    oracle_optimizer_bound::Base.RefValue{Bool}
     cached_oracle_solutions::Dict{Any,NamedTuple}
 end
 
@@ -42,20 +47,23 @@ function _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
     oracle_c_objterm = _copy_affexpr(c_objterm, oracle_ref_map)
     set_silent(oracle_model)
     @objective(oracle_model, Min, oracle_c_objterm)
+    oracle_optimizer_bound = Ref(false)
 
     return function (x_vals, params, time_limit)
-        set_optimizer(oracle_model, () -> get_next_optimizer(params.solver))
+        # BLC can also be used outside GBC, where the worker assignment step is
+        # not called.  Bind the optimizer lazily in that case, but only once.
+        # In GBC, _assign_gurobi_worker_models! binds this model beforehand to
+        # the current connector worker's environment.
+        if !oracle_optimizer_bound[]
+            set_optimizer(oracle_model, () -> get_next_optimizer(params.solver))
+            oracle_optimizer_bound[] = true
+        end
         set_silent(oracle_model)
         set_time_limit_sec(oracle_model, time_limit)
         set_seed!(oracle_model, params.solver, get_seed(params))
 
         if haskey(params.stats.data, "threads_sub_con_used")
-            oracle_threads =
-                (
-                    (params isa GBCparam && params.parallel_separation) ||
-                    (params isa BlCLagparam && params.parallel_separation)
-                ) ? 1 :
-                used_nthreads(params.stats, "threads_sub_con")
+            oracle_threads = used_nthreads(params.stats, "threads_sub_con")
             set_attribute(oracle_model, MOI.NumberOfThreads(), oracle_threads)
         end
 
@@ -79,8 +87,9 @@ function _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
                 delete(oracle_model, fixc[a])
             end
             unregister(oracle_model, :fixc)
+            _flush_model_updates!(oracle_model)
         end
-    end
+    end, oracle_model, oracle_optimizer_bound
 end
 
 function SubSolverBlCJuMP(
@@ -104,6 +113,8 @@ function SubSolverBlCJuMP(
         c_objterm,
         oracle_solve,
         big_m,
+        nothing,
+        Ref(false),
         Dict{Any,NamedTuple}(),
     )
 end
@@ -118,7 +129,13 @@ function SubSolverBlCJuMP(
     big_m::Function,
 ) where T
     link_varsC = _create_link_varsC(mip_model, name, A, y_vars)
-    oracle_solve = _build_default_oracle(mip_model, A, link_varsC, y_vars, c_objterm)
+    oracle_solve, oracle_model, oracle_optimizer_bound = _build_default_oracle(
+        mip_model,
+        A,
+        link_varsC,
+        y_vars,
+        c_objterm,
+    )
     return SubSolverBlCJuMP{T}(
         name,
         mip_model,
@@ -129,6 +146,8 @@ function SubSolverBlCJuMP(
         c_objterm,
         oracle_solve,
         big_m,
+        oracle_model,
+        oracle_optimizer_bound,
         Dict{Any,NamedTuple}(),
     )
 end
@@ -255,7 +274,8 @@ function separation_BlC!(sol::SubSolverBlCJuMP, sval, kvals::Dict, params::Solve
 end
 
 function set_nthreads(sol::SubSolverBlCJuMP, n)
-    set_attribute(sol.mip_model, MOI.NumberOfThreads(), capped_nthreads(n))
+    warn_if_excess_threads(sol, n)
+    set_attribute(sol.mip_model, MOI.NumberOfThreads(), max(1, Int(n)))
 end
 
 function set_singlethread(sol::SubSolverBlCJuMP)
@@ -267,24 +287,28 @@ function supports_bilevel_subproblem_solver(sol::SubSolverBlCJuMP)
 end
 
 function solve_sub_for_x(sol::SubSolverBlCJuMP, xvals, params::SolverParam, time_limit)
-    @objective(sol.mip_model, Min, sol.c_objterm)
-    @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))
-
+    # The fixing constraints are temporary and the model is persistent across
+    # connector calls.  Keep their creation inside the protected scope: solve_mip
+    # may throw on timeout or an unexpected solver status before returning.
+    fix_constraints = nothing
     try
-        if should_debbug_print(params)
-            write_to_file(
-                sol.mip_model,
-                "$(params.output_folder_path)/subfix_$(sol.name).$(params.file_format_output)",
-            )
+        @objective(sol.mip_model, Min, sol.c_objterm)
+        fix_constraints = @constraint(sol.mip_model, fixc[a=sol.A], sol.link_varsC[a] == round(xvals[a]))
+
+        try
+            if should_debbug_print(params)
+                write_to_file(
+                    sol.mip_model,
+                    "$(params.output_folder_path)/subfix_$(sol.name).$(params.file_format_output)",
+                )
+            end
+        catch err
+            @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
         end
-    catch err
-        @error "Could not print Submodel MIP $(sol.name) to file. error message $err"
-    end
 
-    @debug "Subproblem $(sol.name) MIP was adjusted. Start MIP solver with persistent BlC cuts."
-    solve_mip(sol, params, time_limit)
+        @debug "Subproblem $(sol.name) MIP was adjusted. Start MIP solver with persistent BlC cuts."
+        solve_mip(sol, params, time_limit)
 
-    try
         status = termination_status(sol.mip_model)
         if status == MOI.INFEASIBLE || status == MOI.INFEASIBLE_OR_UNBOUNDED
             @debug "The Subproblem $(sol.name) was infeasible"
@@ -298,13 +322,17 @@ function solve_sub_for_x(sol::SubSolverBlCJuMP, xvals, params::SolverParam, time
             value.(sol.y_vars)
         osol = value(sol.c_objterm)
         osol_L1 = value(sol.r_objterm)
+        y_vals, osol, osol_L1 = _round_y_values_and_objectives(sol, y_vals, osol, osol_L1)
         @debug "We found a bilevel-feasible solution for subproblem $(sol.name) with value $(osol)."
         return true, osol, osol_L1, y_vals
     finally
-        for a in sol.A
-            delete(sol.mip_model, fixc[a])
+        if !isnothing(fix_constraints)
+            for a in sol.A
+                delete(sol.mip_model, fix_constraints[a])
+            end
+            unregister(sol.mip_model, :fixc)
+            _flush_model_updates!(sol.mip_model)
         end
-        unregister(sol.mip_model, :fixc)
     end
 end
 
@@ -341,6 +369,7 @@ function verify_sub_for_x_optimistic(sol::SubSolverBlCJuMP, xvals, params::Solve
             Dict(a => value(sol.y_vars[a]) for a in keys(sol.y_vars)) :
             value.(sol.y_vars)
         osol_L1 = value(sol.r_objterm)
+        y_vals, opt_cost, osol_L1 = _round_y_values_and_objectives(sol, y_vals, opt_cost, osol_L1)
         return true, opt_cost, osol_L1, y_vals
     finally
         if !isnothing(tie_constraint)
@@ -350,6 +379,7 @@ function verify_sub_for_x_optimistic(sol::SubSolverBlCJuMP, xvals, params::Solve
             delete(sol.mip_model, fixc[a])
         end
         unregister(sol.mip_model, :fixc)
+        _flush_model_updates!(sol.mip_model)
     end
 end
 
@@ -407,9 +437,31 @@ function solve_mip(sol::SubSolverBlCJuMP, params::SolverParam, time_limit)
             return
         end
 
-        rhs = oracle.optL2 + sum(sol.big_m(a) * oracle.y_vals[a] * (1 - sol.link_varsC[a]) for a in sol.A)
+        # Keep the persistent BlC cut consistent with the standalone BlC
+        # solver when integer follower objectives are requested.  The
+        # product is rounded as one coefficient, before it is multiplied by
+        # the symbolic linking term, so small solver noise cannot create a
+        # fractional integer-valued cut coefficient.
+        rounded_optL2 = _round_integer_objective_if_close(
+            oracle.optL2,
+            params,
+            sol.name,
+            "persistent cut follower objective",
+        )
+        rounded_big_m_terms = Dict(
+            a => _round_integer_objective_if_close(
+                (applicable(sol.big_m, a, oracle.optL2, x_vals) ? sol.big_m(a, oracle.optL2, x_vals) : sol.big_m(a)) * oracle.y_vals[a],
+                params,
+                sol.name,
+                "persistent cut big-M coefficient for arc $(a)",
+            ) for a in sol.A
+        )
+        rhs = rounded_optL2 + sum(
+            rounded_big_m_terms[a] * (1 - sol.link_varsC[a]) for a in sol.A;
+            init=0.0,
+        )
         cut = @constraint(sol.mip_model, sol.c_objterm <= rhs)
-        @debug "Added persistent BlC cut $(cut) for subsolver $(sol.name) at x=$(x_vals), candidate c=$(current_c), oracle c=$(oracle.optL2)."
+        @debug "Added persistent BlC cut $(cut) for subsolver $(sol.name) at x=$(x_vals), candidate c=$(current_c), oracle c=$(oracle.optL2), rounded rhs constant=$(rounded_optL2), rounded coefficients=$(rounded_big_m_terms)."
     end
 end
 

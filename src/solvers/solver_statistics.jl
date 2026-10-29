@@ -45,3 +45,19 @@ function add_stat!(stats::RunStats, name::String, value::Any)
     end
     stats.data[name] += value
 end
+
+"""Initialize the disjoint ConnectorLP timing statistics."""
+function _ensure_connector_time_stats!(stats::RunStats)
+    for key in ("ConnectorLPTimeLP", "ConnectorLPTimePricing", "ConnectorLPTimePareto", "ConnectorLPTimeTotal")
+        haskey(stats.data, key) || new_stat!(stats, key, 0.0)
+    end
+    return nothing
+end
+
+"""Add one disjoint ConnectorLP timing component and its total."""
+function _add_connector_time!(stats::RunStats, key::String, value::Real)
+    _ensure_connector_time_stats!(stats)
+    add_stat!(stats, key, Float64(value))
+    key == "ConnectorLPTimeTotal" || add_stat!(stats, "ConnectorLPTimeTotal", Float64(value))
+    return nothing
+end

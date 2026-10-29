@@ -1,7 +1,7 @@
 # HNDP Network Generation Config
 
 This document describes the JSON structure used by
-[network_generation_example.json](run_settings/network_generation_example.json)
+[network_generation_example.json](network_generation_example.json)
 and
 [hndp_network_generation.jl](hndp_network_generation.jl).
 
@@ -12,6 +12,91 @@ The intended workflow is JSON-driven: define instance families and parameter
 grids in a network-generation JSON file, let the generator expand the list-valued
 fields into concrete HNDP instances, and then pass these generated instances to
 the model-generation and solver pipeline.
+
+## Available instance generators
+
+All examples below run from the repository root in `julia --project=.`.
+Load `hndp_network_generation.jl` once to use the generic API. Loading
+`hndp_model_generation.jl` also loads the generators, so do not include both
+into the same Julia module. Generation returns `HNDPGeneratedNetwork` values:
+use `.instance` for a solver builder and `.metadata` for generation details.
+
+| `instance_type` | Network and decisions | Important settings |
+| --- | --- | --- |
+| `constrained_shortest_path` | Single-layer network; leader controls arcs and followers minimize route costs subject to optional weight bounds | `length_constrained`, `length_slack`/`alpha`, `two_stage`, `user_parameter_mode` |
+| `competition` with `layered_*` topology | Operator and competitor layers; decisions control operator availability | `competitor_cost_factor`/`beta`, `availability_budget_fraction`, optional weight bounds |
+| `competition` with an unprefixed topology | One layer with sampled decision arcs | `decision_arc_count`; `single_layer_arc_mode="competition"` or `"decision_only"` |
+| `multimodal_bike` | Car, public-transport, and bicycle layers; station transfer arcs are paired leader decisions | `station_limit`, `station_budget`, speeds, station costs/profits |
+| `multimodal_expansion` | Existing car/transit network with candidate services involving additional stations | `station_limit`, `expansion_station_count`, `arc_budget`, service costs/profits |
+
+The named base topologies are `sioux_falls`, `anaheim`, `berlin_mitte_center`,
+`ema`, and `friedrichshain_center`. CSP and multimodal generators accept these
+base names. Competition accepts the base names for single-layer instances and
+`layered_` followed by a base name for two-layer instances. Inputs are the
+bundled static network files. The files contain fixed topologies; seeds
+randomize parameters and user choices.
+
+`length_constrained=false` is needed for the ordinary strong-duality solver.
+The multimodal generators produce users without weight bounds. See
+[HNDP_SOLVER_OVERVIEW.md](HNDP_SOLVER_OVERVIEW.md) for the solver comparison.
+
+## Small construction examples
+
+This creates one instance of each family without launching optimization:
+
+```julia
+include("examples/HNDP/hndp_network_generation.jl")
+
+specs = [
+    Dict{String,Any}("name" => "csp", "instance_type" => "constrained_shortest_path",
+        "topologies" => ["sioux_falls"], "nusers" => [2],
+        "length_constrained" => [true], "length_slack" => [0.2]),
+    Dict{String,Any}("name" => "layered", "instance_type" => "competition",
+        "topologies" => ["layered_sioux_falls"], "nusers" => [2],
+        "length_constrained" => [false]),
+    Dict{String,Any}("name" => "single_layer", "instance_type" => "competition",
+        "topologies" => ["sioux_falls"], "nusers" => [2],
+        "length_constrained" => [false], "decision_arc_count" => [4],
+        "single_layer_arc_mode" => ["decision_only"]),
+    Dict{String,Any}("name" => "bike", "instance_type" => "multimodal_bike",
+        "topologies" => ["sioux_falls"], "nusers" => [2],
+        "station_limit" => 4, "station_budget" => 2),
+    Dict{String,Any}("name" => "expansion", "instance_type" => "multimodal_expansion",
+        "topologies" => ["sioux_falls"], "nusers" => [2],
+        "station_limit" => 4, "expansion_station_count" => 2, "arc_budget" => 2)
+]
+config = Dict{String,Any}("parameter_seeds" => [17], "instances" => specs)
+networks = generate_hndp_networks(config)
+for network in networks
+    println(network.name, ": ", length(network.instance.users), " users")
+end
+```
+
+For a JSON-driven parameter grid:
+
+```julia
+networks = generate_hndp_networks("examples/HNDP/network_generation_example.json")
+```
+
+List-valued fields are expanded into combinations, so the supplied general
+configuration produces more than one instance per entry. To process a large
+grid without retaining it all, use `visit_hndp_networks(config, network -> ...)`.
+
+To save and reload a constructed network, in the same Julia session:
+
+```julia
+write_hndp_generated_networks([first(networks)],
+    Dict{String,Any}("folder" => "tmp/hndp_generated", "graph_format" => "json"))
+saved = read_hndp_instance(joinpath("tmp/hndp_generated", first(networks).name, "instance.json"))
+hndp = saved.instance
+```
+
+The canonical JSON round-trip preserves grouped decisions, budgets, and users
+without weight matrices. Version-1 files remain readable; new files use version 2.
+The low-level legacy helpers `build_random_SiouxFalls` and
+`build_random_layer_SiouxFalls`, and `build_toy_HNDPwC`/`build_toy_HNDPneg`, also
+remain in `hndp_instances.jl`; the generic API above is the entry point for the
+configurable families.
 
 ## Top-Level Structure
 
@@ -30,6 +115,32 @@ the model-generation and solver pipeline.
 
 ### `instance_output`
 
+Generated instances can be persisted independently of solver runs. The
+canonical file is `instance.json`; it contains the directed graph, decision
+arcs, construction costs, every user's origin/destination, cost/risk/weight
+arc data, weight limits, and the generation metadata. Set
+`"graph_format": "json"` (the default) or `"both"` to also create the
+visualization-oriented `instance.gexf` file. The small `users.json` sidecar is
+kept for compatibility with older inspection scripts.
+
+The saved JSON is read with `read_hndp_instance(path)`. A solver run can use a
+configuration containing saved paths instead of an `instances` generation
+list:
+
+```json
+{
+  "saved_instances": [
+    "generated_hndp/sioux_falls_U250_S42/instance.json"
+  ]
+}
+```
+
+Pass that configuration as the instance configuration to
+`run_hndp_experiments!`. The runner loads each graph once, prints its path
+once, and then evaluates all selected solver/model configurations on the same
+in-memory instance. This separates random instance generation from solver
+execution and makes reruns independent of generator changes.
+
 - Type: object
 - Optional: yes
 - Meaning: controls whether generated instances are written to disk for
@@ -45,10 +156,9 @@ Supported fields:
     `"examples/HNDP/generated_instances"` or `"/tmp/hndp_debug"`.
 - `graph_format`
   - Type: string
-  - Supported values: `"gexf"`
-  - Meaning: graph export format for the instance graph.
-  - Current behavior: each instance folder contains an `instance.gexf` file and
-    a `users.json` companion file with the realized OD pairs and weight bounds.
+  - Supported values: `"json"` (default), `"gexf"`, `"both"`.
+  - Meaning: `instance.json` and `users.json` are always written; `"gexf"`
+    and `"both"` additionally request `instance.gexf` for visualization.
 
 ### `parameter_seeds`
 
@@ -84,6 +194,8 @@ Each entry in `instances` supports the following common fields.
 - Supported values:
   - `"constrained_shortest_path"`
   - `"competition"`
+  - `"multimodal_bike"`
+  - `"multimodal_expansion"`
 - Meaning:
   - `constrained_shortest_path` builds a single-layer network.
   - `competition` builds either:
@@ -96,8 +208,9 @@ Each entry in `instances` supports the following common fields.
 - Type: array of strings
 - Optional: yes
 - Current supported values:
-  - for `constrained_shortest_path`:
-    - `"sioux_falls"`
+  - for `constrained_shortest_path`, `multimodal_bike`, and `multimodal_expansion`:
+    - `"sioux_falls"`, `"anaheim"`, `"berlin_mitte_center"`, `"ema"`,
+      `"friedrichshain_center"`
   - for `competition`:
     - layered families:
       - `"layered_sioux_falls"`
@@ -530,13 +643,21 @@ decisions are the two transfer arcs at each possible bike station. Expansion
 has fixed transfers to all stations; only additional transit services are
 decisions.
 
-The ready-to-run Sioux Falls smoke manifest is:
+The reusable Sioux Falls multimodal example lives alongside the HNDP code in
+`multimodal_example.json`. It contains the bike and transit-expansion instance
+specifications, strong-duality model options, and solver parameters:
 
 ```powershell
 julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/run_settings/multimodal_sioux_strong_duality `
-  tmp_compare/multimodal_sioux_strong_duality
+  examples/HNDP/multimodal_example.json `
+  tmp_compare/hndp_multimodal_example
 ```
+
+Add `--dry-run` to validate and generate the two example instances without
+solving. The general runner also accepts a directory containing `instances.json`,
+`models.json`, and `params.json` for custom experiments. Paper-specific manifests,
+seed-hunt handoffs, and reproduction batches are not distributed with these
+examples.
 
 For a construction-only check, run:
 

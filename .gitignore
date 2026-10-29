@@ -13,6 +13,9 @@ examples/data/smkp
 examples/BOBILib/instances
 .codex
 examples/HNDP/generated_instances_debug/
-tmp/
 tmp_compare/
-data/osm/
+/data/
+tmp/
+
+# Generated Documenter copies of the canonical HNDP guides
+docs/src/generated/

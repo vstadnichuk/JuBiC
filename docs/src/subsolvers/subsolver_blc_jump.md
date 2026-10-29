@@ -69,4 +69,4 @@ This is why it can be used with `BlCLag`.
 
 - [`BlC`](../solvers/blc.md)
 - [`BlCLag`](../solvers/blc_lag.md)
-- [SubSolver Interface](../sub_solvers.md)
+- [Abstract Subsolver Interface](../sub_solvers.md)

@@ -194,3 +194,13 @@ end
 
 The returned object can be used by HNDP model builders as
 `HNDP_SUBPROBLEM_ASTAR`.
+
+## Nonnegative-cost requirement
+
+The HNDP A* wrapper checks transition costs for the active cost state before
+search. Values below `-1e-4` are rejected; smaller negative numerical noise is
+clamped to zero. GBC also uses `MASTER_LEVEL` costs for lower-bound computation,
+so the default negative operator/profit coefficients of competition and
+multimodal generators are not valid for that call. Use the MIP oracle for those
+instances, or nonnegative operator-cost data. The maintained
+[routing example](../example3.md) uses the latter.

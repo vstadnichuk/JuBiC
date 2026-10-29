@@ -40,4 +40,4 @@ This is why it can be used with `BlCLag`.
 
 - [`BlCLag`](../solvers/blc_lag.md)
 - [`Direct MiBS Wrapper`](../solvers/mibs.md)
-- [SubSolver Interface](../sub_solvers.md)
+- [Abstract Subsolver Interface](../sub_solvers.md)

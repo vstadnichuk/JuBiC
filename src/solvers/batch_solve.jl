@@ -506,6 +506,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
+        parallel_subsolvers = _get_int(config, "parallel_subsolvers", 1)
         parallel_separation = _get_bool(config, "parallel_separation", true)
         pareto = _parse_pareto_cut(get(config, "pareto", "OPT"))
         warmstart = _get_bool(config, "warmstart", true)
@@ -513,6 +514,12 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         trim_coeff = _get_bool(config, "trim_coeff", false)
         integer_obj = _get_bool(config, "integer_obj", false)
         infinity_num = _get_number(config, "infinity_num", 1e9)
+        connector_s_bound = get(config, "connector_s_bound", nothing)
+        if connector_s_bound isa Number
+            connector_s_bound = Float64(connector_s_bound)
+        elseif !isnothing(connector_s_bound)
+            error("connector_s_bound must be numeric or null")
+        end
         g_round_digit = _get_int(config, "g_round_digit", 0)
         param = GBCparam(
             wrapper,
@@ -532,8 +539,11 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             infinity_num,
             g_round_digit,
             integer_obj,
+            connector_s_bound=connector_s_bound,
+            parallel_subsolvers=parallel_subsolvers,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        new_stat!(param.stats, "branching_rule", _get_string(config, "branching_rule", "default"))
         return param
     elseif solver_name == "BLC"
         wrapper = _build_mip_solver_wrapper(config)
@@ -542,7 +552,9 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
+        parallel_subsolvers = _get_int(config, "parallel_subsolvers", 1)
         parallel_separation = _get_bool(config, "parallel_separation", true)
+        integer_obj = _get_bool(config, "integer_obj", false)
         param = BLCparam(
             wrapper,
             debbug_out,
@@ -554,8 +566,11 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             threads_master,
             threads_sub_con,
             parallel_separation,
+            integer_obj,
+            parallel_subsolvers,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        new_stat!(param.stats, "branching_rule", _get_string(config, "branching_rule", "default"))
         return param
     elseif solver_name == "BlCLag"
         wrapper = _build_mip_solver_wrapper(config)
@@ -564,6 +579,7 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
         seed = _get_int(config, "seed", 42)
         threads_master = _get_int(config, "threads_master", 8)
         threads_sub_con = _get_int(config, "threads_sub_con", 8)
+        parallel_subsolvers = _get_int(config, "parallel_subsolvers", 1)
         parallel_separation = _get_bool(config, "parallel_separation", false)
         pareto = _parse_pareto_cut(get(config, "pareto", "OPT"))
         warmstart = _get_bool(config, "warmstart", true)
@@ -582,8 +598,10 @@ function _build_solver_params(solver_name::AbstractString, config::Dict{String,A
             pareto,
             warmstart,
             infinity_num,
+            parallel_subsolvers=parallel_subsolvers,
         )
         new_stat!(param.stats, "enable_output_logs", enable_output_logs)
+        new_stat!(param.stats, "branching_rule", _get_string(config, "branching_rule", "default"))
         return param
     elseif solver_name == "MIP"
         wrapper = _build_mip_solver_wrapper(config)

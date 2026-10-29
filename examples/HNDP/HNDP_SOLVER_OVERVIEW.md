@@ -1,14 +1,88 @@
 # HNDP Solver Overview
 
 This note summarizes the HNDP model-generation functions in
-[hndp_model_generation.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/examples/HNDP/hndp_model_generation.jl)
+[hndp_model_generation.jl](hndp_model_generation.jl)
 and the JuBiC solver parameter objects in
-[solver_parameters.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/src/solvers/solver_parameters.jl).
+[solver_parameters.jl](../../src/solvers/solver_parameters.jl).
 
 The structure is:
 - common HNDP concepts
 - common JuBiC solve parameters
 - solver/model-specific generation options
+
+## Formulations at a glance
+
+Run examples from the repository root with `julia --project=.`. The HNDP
+builders are example code loaded with `include`, rather than exported JuBiC APIs.
+They accept an `HNDPwC` instance and a solver wrapper. The runner selects them
+using the `model_type` field below.
+
+| Formulation | `model_type` | Builder | Solve parameters | Main restriction or behavior |
+| --- | --- | --- | --- | --- |
+| Benders-like cuts (BlC) | `blc` | `build_hndp_blc_instance` | `BLCparam` | MIP or A* follower oracle |
+| Lagrangian Benders-like cuts (BlCLag) | `blclag` | `build_hndp_blclag_instance` | `BlCLagparam` | Persistent BlC-JuMP or MiBS follower oracle |
+| Generalized Benders cuts (GBC) | `gbc` | `build_hndp_gbc_instance` | `GBCparam` | MIP, A*, or BlC-JuMP oracle; optional partial decomposition |
+| MiBS | `mibs` | `build_hndp_mibs_instance` | `MibSparam` | Requires an installed MiBS executable and a MIP-MIP model |
+| Explicit strong duality | `sd` | `build_hndp_sd_instance` | `MIPparam` | No follower weight bounds |
+| Enumerated paths | `path` | `build_hndp_path_instance` | `MIPparam` | Enumerates admissible paths; generation can be expensive |
+| Paths with strong-duality fallback | `hybrid_sd` | `build_hndp_hybrid_instance` | `MIPparam` | Non-enumerated users need an unweighted shortest-path fallback |
+| Paths with BlC fallback | `hybrid_blc` | `build_hndp_hybrid_blc_instance` | `BLCparam` | Keeps fallback users as BlC subproblems |
+| Automated strong duality (experimental) | Direct Julia API only | `build_hndp_sd_auto_instance` | `MIPparam` | No weight bounds; experimental generic reformulation |
+
+The path builder returns `(instance, enumeration_seconds, path_counts)`.
+Both hybrid builders return five values (also fallback user lists). The other builders return the JuBiC instance directly. The experiment
+runner handles these differences and deducts path-generation time from the
+remaining solve budget. Full path enumeration is not a substitute for a
+completed generation phase; use a hybrid formulation when fallback is needed.
+
+See [NETWORK_GENERATION.md](NETWORK_GENERATION.md) for instance families,
+topologies, and construction examples. A weight constraint is present when a
+user's `weighlimit` is non-`nothing`; `length_constrained=false` omits it.
+
+## Small runnable solve example
+
+Start Julia from the repository root with `julia --project=. --threads=2`.
+This constructs a small unconstrained competition instance and solves the
+explicit strong-duality model. A working Gurobi installation/license is required.
+
+```julia
+using JuBiC
+include("examples/HNDP/hndp_model_generation.jl")
+
+config = Dict{String,Any}("parameter_seeds" => [17], "instances" => [
+    Dict{String,Any}("name" => "small_competition", "instance_type" => "competition",
+        "topologies" => ["layered_sioux_falls"], "nusers" => [2],
+        "length_constrained" => [false])
+])
+generated = only(generate_hndp_networks(config))
+solver = GurobiSolver()
+instance = build_hndp_sd_instance(generated.instance, solver)
+mkpath("tmp/hndp_sd_example")
+params = MIPparam(solver, false, "tmp/hndp_sd_example", "lp", 30.0)
+stats = solve_instance!(instance, params)
+```
+
+For BlC on the same instance, use
+`build_hndp_blc_instance(generated.instance, solver)` and
+`BLCparam(solver, false, "tmp/hndp_blc_example", "lp", 30.0)`.
+For GBC, use `build_hndp_gbc_instance` and `GBCparam` with the same arguments.
+Create the chosen output directory with `mkpath` before direct solver calls.
+The remaining builder signatures and options are documented below.
+
+To run the supplied bike and transit-expansion examples through the generic
+runner (or append `--dry-run` to construct them without optimization):
+
+```sh
+julia --project=. --threads=2 examples/HNDP/run_hndp_manifest.jl examples/HNDP/multimodal_example.json tmp_compare/hndp_multimodal_example
+```
+
+The JSON contains `instances`, `models`, and `params`. Replace the model entry,
+for example, with `{"name":"gbc_mip","model_type":"gbc","subproblem_method":"mip"}`
+to select GBC with a MIP follower oracle. Solver-specific options belong in the
+`params` entry. A* requires nonnegative transition costs for every objective it
+uses. GBC evaluates operator contributions as well as follower costs, so the
+negative profit coefficients in default competition/multimodal data can make
+GBC+A* unsupported; use a MIP oracle there.
 
 ## Common Concepts
 
@@ -37,6 +111,11 @@ These constants control how user-specific big-M values are derived:
   Uses the `n - 1` most expensive arcs heuristic.
   This is the fallback-style option and does not require a feasible fixed-network path.
 
+- `HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST`
+  Uses a fixed-network bound with the current follower cost and a numerical
+  margin during cut generation. Select `"fixed_network_path_current_cost"`
+  in JSON. This is a dynamic cut callback mode, not a new solver.
+
 These modes are used by:
 - `build_hndp_blc_instance`
 - `build_hndp_sd_instance`
@@ -62,7 +141,10 @@ These constants control how follower problems are solved inside decomposition-ty
 
 - `HNDP_SUBPROBLEM_BLC_JUMP`
   JuMP-based bilevel-aware follower subsolver that keeps persistent BlC-style cuts.
-  This is only supported for GBC generation.
+  Supported by GBC and BlCLag generation.
+
+- `HNDP_SUBPROBLEM_MIBS`
+  MiBS follower oracle for BlCLag; select `"mibs"` as its `subproblem_method`.
 
 ### Hybrid Fallback Modes
 
@@ -85,7 +167,7 @@ fallbacks in the benchmark metadata.
 ## Common JuBiC Solve Parameters
 
 The JuBiC parameter structs are independent of HNDP and live in
-[src/solvers/solver_parameters.jl](/home/stadnichuk/Documents/JuBiC/JuBiC/src/solvers/solver_parameters.jl).
+[src/solvers/solver_parameters.jl](../../src/solvers/solver_parameters.jl).
 
 ### Parameters Shared By Most JuBiC Solvers
 
@@ -126,9 +208,43 @@ For GBC, BlC, and BlCLag, JuBiC distinguishes:
   Threads for the master MIP
 
 - `threads_sub_con`
-  Threads for JuMP-based follower subproblems and connector LP routines
+  Gurobi threads assigned to each follower subproblem. For GBC, ConnectorLP
+  models always use one Gurobi thread; this setting controls the follower
+  subsolver. BlC and BlCLag use this setting for their follower subsolver.
+
+- `parallel_subsolvers`
+  Number of follower separation workers allowed to run concurrently. Each
+  worker owns one follower subsolver and its ConnectorLP. The worker uses the
+  configured `threads_sub_con` threads for the follower subsolver. ConnectorLP
+  uses one thread in parallel GBC separation and shares the worker's thread
+  budget because it and the follower subsolver are not solved simultaneously.
+
+- `parallel_separation`
+  If `true`, follower workers are scheduled concurrently. If `false`, one
+  follower is separated at a time. The configured follower thread count is
+  still used; GBC ConnectorLP remains fixed at one thread.
+
+The requested budget for parallel separation is calculated as
+`threads_master + parallel_subsolvers * max(threads_sub_con, connector_threads)`.
+If this exceeds the Julia thread count, JuBiC emits a warning with the
+calculation but preserves the requested solver and worker settings.
 
 For `MIPparam`, only `threads_master` is relevant because the model is solved as a single MIP.
+
+### Branching, bounds, and cut settings
+
+For GBC, BlC, and BlCLag, select `branching_rule` as `"default"`,
+`"linking_first"`, or `"fixed_linking_order"` in the solver parameter JSON.
+These control the master branching priorities; they do not change the instance
+or select a different formulation. `parallel_subsolvers` controls the number of
+follower workers separately from MIP thread counts.
+
+GBC additionally accepts `connector_s_bound` to set the ConnectorLP `s` bound.
+`integer_obj` controls stabilization of integral objective-derived cut values.
+The HNDP runner defaults this to `true` for GBC and BlC, with an explicit JSON
+override available. Big-M selection belongs to the model configuration's
+`big_m_mode`, using `"fixed_network_path"`, `"n_minus_one_most_expensive"`, or
+`"fixed_network_path_current_cost"`.
 
 ### Practical Reproducibility Note
 
@@ -153,6 +269,10 @@ Important fields:
 - `seed`
 - `threads_master`
 - `threads_sub_con`
+- `integer_obj`: if enabled, objective-derived values that are within `10^-4`
+  of an integer are rounded to the nearest integer. Nonnegative cut
+  coefficients use the conservative coefficient-rounding rule; values that
+  are not close to integers are retained.
 - `pareto`
   One of:
   - `PARETO_NONE`
@@ -199,14 +319,18 @@ param = BLCparam(solver, false, outdir, "lp", 3600)
 
 ### `BlCLagparam`
 
-Use with BlCLag-compatible bilevel instances. This is not currently the main
-HNDP route, but it remains part of JuBiC core.
+Use with `build_hndp_blclag_instance(...)`. The runner selects this route with
+`"model_type": "blclag"`.
 
 Important fields:
 - `runtime`
 - `seed`
 - `threads_master`
 - `threads_sub_con`
+- `integer_obj`: if enabled, objective-derived values that are within `10^-4`
+  of an integer are rounded to the nearest integer. Nonnegative cut
+  coefficients use the conservative coefficient-rounding rule; values that
+  are not close to integers are retained.
 - `pareto`
 - `warmstart`
 - `infinity_num`
@@ -272,12 +396,26 @@ Supported options:
 - `big_m_mode`
   - `HNDP_BIGM_FIXED_NETWORK_PATH`
   - `HNDP_BIGM_N_MINUS_ONE`
+  - `HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST`
 - `subproblem_method`
   - `HNDP_SUBPROBLEM_MIP`
   - `HNDP_SUBPROBLEM_ASTAR`
 
 Use with:
 - `BLCparam`
+
+## `build_hndp_blclag_instance`
+
+```julia
+build_hndp_blclag_instance(hndp, solver;
+    big_m_mode=HNDP_BIGM_FIXED_NETWORK_PATH,
+    subproblem_method=HNDP_SUBPROBLEM_BLC_JUMP)
+```
+
+Builds a Lagrangian Benders-like master. Use `BlCLagparam` to solve it.
+The persistent BlC-JuMP oracle supports the big-M options above. The alternative
+`HNDP_SUBPROBLEM_MIBS` oracle uses MiBS; it does not use the big-M callback.
+MIP and A* are not accepted as direct BlCLag oracle selections.
 
 ## `build_hndp_gbc_instance`
 
@@ -368,6 +506,7 @@ Options:
 - `big_m_mode`
   - `HNDP_BIGM_FIXED_NETWORK_PATH`
   - `HNDP_BIGM_N_MINUS_ONE`
+  - `HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST`
 - `indicator_constraints`
   If `true`, uses indicator constraints for some dual feasibility logic.
 - `bound_duals`
@@ -409,6 +548,7 @@ build_hndp_path_instance(
     enumeration_time_limit,
     parallelize=false,
     use_decision_arc_dominance=true,
+    fixed_path_bound_method=:labeling,
 )
 ```
 
@@ -420,6 +560,9 @@ Options:
   Global time budget for path-bound computation and path enumeration.
 - `parallelize`
   If `true`, uses the parallel precomputation variant.
+- `fixed_path_bound_method`
+  Selects `:labeling` (default) or `:mip` for the fixed-network bound in
+  sequential or parallel precomputation.
 - `use_decision_arc_dominance`
   Enables the decision-arc dominance pruning rule during path enumeration.
 
@@ -510,6 +653,9 @@ Use with:
 
 Common model / parameter combinations:
 
+- BlCLag model:
+  `build_hndp_blclag_instance(...)` + `BlCLagparam(...)`
+
 - BlC model:
   `build_hndp_blc_instance(...)` + `BLCparam(...)`
 
@@ -550,3 +696,17 @@ Common model / parameter combinations:
     - no `beta` scaling
     - sampled arcs are only the controllable arcs
     - risk remains on all arcs and is positive in this mode
+
+## Multimodal example
+
+The strong-duality example is configured in [multimodal_example.json](multimodal_example.json)
+alongside the HNDP implementation. From the repository root, run:
+
+```sh
+julia --project=. examples/HNDP/run_hndp_manifest.jl examples/HNDP/multimodal_example.json tmp_compare/hndp_multimodal_example
+```
+
+Add `--dry-run` to construct and validate the instances without solving.
+The solver reformulation remains in `hndp_model_generation.jl`; the JSON file
+only selects its options. See [NETWORK_GENERATION.md](NETWORK_GENERATION.md)
+for generation parameters.

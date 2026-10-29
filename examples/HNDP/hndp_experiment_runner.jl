@@ -30,6 +30,7 @@ function run_hndp_experiments!(
     param_config_path::AbstractString;
     output_root::AbstractString,
     resume::Bool=true,
+    model_filter::Function=(generated_network, model_spec) -> true,
 )
     instance_cfg = load_hndp_network_generation_config(String(instance_config_path))
     model_cfg = JSON.parsefile(String(model_config_path))
@@ -50,11 +51,41 @@ function run_hndp_experiments!(
     completed_ids = resume ? JuBiC._read_completed_batch_ids(summary_csv_path) : Set{String}()
     results = Dict{String,JuBiC.RunStats}()
 
-    visit_hndp_networks(instance_cfg, generated_network -> begin
+    # For saved instances, filter completed combinations before deserializing
+    # the graph.  `read_hndp_instance` reconstructs all users and model data,
+    # so doing the resume check only inside the visitor can be expensive for a
+    # large batch.  The canonical instance name is also the saved directory
+    # name, which is sufficient to reproduce the experiment identifiers.
+    if haskey(instance_cfg, "saved_instances")
+        saved_paths = _hndp_saved_instance_paths(instance_cfg)
+        candidate_paths = _hndp_resume_candidate_paths(
+            saved_paths,
+            models,
+            params,
+            completed_ids,
+        )
+        @info "Resume scan retained $(length(candidate_paths)) of $(length(saved_paths)) saved HNDP instances for deserialization."
+        visit_function = visitor -> visit_hndp_saved_instances(candidate_paths, visitor)
+    else
+        visit_function = visitor -> visit_hndp_networks(instance_cfg, visitor)
+    end
+
+    visit_function(generated_network -> begin
         instance_metadata = deepcopy(generated_network.metadata)
         instance_name = String(instance_metadata["name"])
+        instance_file = get(instance_metadata, "instance_file", nothing)
+        if isnothing(instance_file)
+            @info "Using generated HNDP graph instance $(instance_name)."
+        else
+            @info "Using saved HNDP graph instance $(instance_name) from $(instance_file)."
+        end
 
         for model_spec in models
+            if !model_filter(generated_network, model_spec)
+                model_label = String(get(model_spec, "name", "model"))
+                @info "Skipping model $(model_label) for instance $(instance_name) because the benchmark filter marked it ineligible."
+                continue
+            end
             for param_spec in params
                 experiment_id = _hndp_experiment_id(instance_name, model_spec, param_spec)
                 if experiment_id in completed_ids
@@ -96,11 +127,27 @@ function run_hndp_experiments!(
                 finally
                     aggregate_row["experiment_id"] = experiment_id
                     aggregate_row["instance_name"] = instance_name
+                    if Bool(get(param_spec, "print_collected_cuts", false))
+                        _print_hndp_collected_cuts(run_output_path, experiment_id)
+                    end
+                    if Bool(get(param_spec, "print_big_m_summary", false))
+                        _print_hndp_big_m_summary(run_output_path, experiment_id)
+                    end
                     JuBiC._append_batch_summary_csv!(summary_csv_path, aggregate_row)
                     push!(completed_ids, experiment_id)
 
                     if !write_run_logs
                         try
+                            diagnostic_path = joinpath(run_output_path, "numeric_termination.json")
+                            if isfile(diagnostic_path)
+                                diagnostic_dir = joinpath(output_root, "results", "numeric_termination")
+                                mkpath(diagnostic_dir)
+                                cp(
+                                    diagnostic_path,
+                                    joinpath(diagnostic_dir, "$(experiment_id).json");
+                                    force=true,
+                                )
+                            end
                             rm(run_output_path; recursive=true, force=true, allow_delayed_delete=true)
                         catch err
                             @warn "Could not immediately remove transient HNDP run folder $(run_output_path). Continuing. Error: $(sprint(showerror, err))"
@@ -112,6 +159,80 @@ function run_hndp_experiments!(
     end)
 
     return results
+end
+
+function _hndp_saved_instance_paths(config::Dict{String,Any})
+    paths = get(config, "saved_instances", nothing)
+    paths === nothing && throw(ArgumentError("A saved-instance configuration requires 'saved_instances'."))
+    paths isa AbstractString && return [abspath(String(paths))]
+    return unique(abspath.(String.(paths)))
+end
+
+function _hndp_saved_instance_name(path::AbstractString)
+    # `write_hndp_generated_networks` stores each canonical instance as
+    # <instance_root>/<instance_name>/instance.json.
+    return basename(dirname(abspath(String(path))))
+end
+
+function _hndp_resume_candidate_paths(
+    paths,
+    models::Vector{Dict{String,Any}},
+    params::Vector{Dict{String,Any}},
+    completed_ids::Set{String},
+)
+    candidates = String[]
+    for path in paths
+        instance_name = _hndp_saved_instance_name(path)
+        needs_work = any(
+            _hndp_experiment_id(instance_name, model_spec, param_spec) ∉ completed_ids
+            for model_spec in models, param_spec in params
+        )
+        needs_work && push!(candidates, path)
+    end
+    return candidates
+end
+
+function _print_hndp_big_m_summary(run_output_path::AbstractString, experiment_id::AbstractString)
+    cut_path = joinpath(run_output_path, "mastercuts_collection.txt")
+    if !isfile(cut_path)
+        println("BIG_M_SUMMARY_NONE=" * experiment_id)
+        return nothing
+    end
+    text = read(cut_path, String)
+    matches = [
+        parse(Float64, replace(m.captures[1], " " => ""))
+        for m in eachmatch(r"([+-]?\s*\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s+x\[", text)
+    ]
+    if isempty(matches)
+        println("BIG_M_SUMMARY_NONE=" * experiment_id)
+        return nothing
+    end
+    # Values below one are numerical residuals in the serialized cut
+    # expression rather than meaningful Big-M coefficients. Exclude them from
+    # the summary while retaining the original cut files in the run directory.
+    matches = [value for value in matches if abs(value) >= 1.0]
+    isempty(matches) && (println("BIG_M_SUMMARY_NONE=" * experiment_id); return nothing)
+    sorted = sort(matches)
+    q(p) = sorted[clamp(ceil(Int, p * length(sorted)), 1, length(sorted))]
+    println(
+        "BIG_M_SUMMARY=$(experiment_id) " *
+        "count=$(length(sorted)) distinct=$(length(unique(sorted))) " *
+        "min=$(sorted[1]) p25=$(q(0.25)) median=$(q(0.5)) " *
+        "p75=$(q(0.75)) p90=$(q(0.9)) max=$(sorted[end]) mean=$(sum(sorted) / length(sorted))",
+    )
+    return nothing
+end
+
+function _print_hndp_collected_cuts(run_output_path::AbstractString, experiment_id::AbstractString)
+    cut_path = joinpath(run_output_path, "mastercuts_collection.txt")
+    if isfile(cut_path)
+        println("COLLECTED_CUTS_BEGIN=" * experiment_id)
+        print(read(cut_path, String))
+        println("COLLECTED_CUTS_END=" * experiment_id)
+    else
+        println("COLLECTED_CUTS_NONE=" * experiment_id)
+    end
+    return nothing
 end
 
 function _maybe_export_hndp_solver_instance!(
@@ -160,6 +281,9 @@ function _run_hndp_experiment(
         model_spec,
         param_spec,
     )
+    if haskey(model_spec, "warmstart")
+        model_metadata["warmstart"] = Bool(model_spec["warmstart"])
+    end
 
     solver_name = JuBiC._infer_solver_name(model_instance)
     resolved_param_config = _resolve_hndp_param_config(
@@ -322,8 +446,19 @@ function _resolve_hndp_param_config(
 )
     resolved = deepcopy(param_spec)
     resolved["solver"] = solver_name
+    # HNDP follower-risk objectives are integer-valued by construction. Use
+    # integerized GBC/BlC cuts by default, while preserving an explicit override.
+    if solver_name in ("GBC", "BLC") && !haskey(resolved, "integer_obj")
+        resolved["integer_obj"] = true
+    end
     resolved["output_folder_path"] = String(run_output_path)
     resolved["enable_output_logs"] = write_run_logs
+    # Allow a model specification to override the batch-wide warm-start
+    # setting. This is needed when comparing the plain ND variant against
+    # warm-started GBC variants in one streamed benchmark.
+    if haskey(model_metadata, "warmstart")
+        resolved["warmstart"] = Bool(model_metadata["warmstart"])
+    end
     if haskey(model_metadata, "runtime_override")
         resolved["runtime"] = model_metadata["runtime_override"]
     end
@@ -480,6 +615,8 @@ function _parse_hndp_big_m_mode(value)
     value_str = String(value)
     if value_str == "fixed_network_path"
         return HNDP_BIGM_FIXED_NETWORK_PATH
+    elseif value_str == "fixed_network_path_current_cost"
+        return HNDP_BIGM_FIXED_NETWORK_PATH_CURRENT_COST
     elseif value_str == "n_minus_one_most_expensive"
         return HNDP_BIGM_N_MINUS_ONE
     end

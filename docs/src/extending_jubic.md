@@ -1,4 +1,4 @@
-# Extending JuBiC
+# Custom (Sub)Solver
 
 JuBiC is implemented as a generic tool for multi-follower generalized
 interdiction games. In particular, the decomposition methods are designed so
@@ -79,7 +79,7 @@ Useful questions tend to be specific, for example:
 - Where are solver parameters constructed?
 - Which statistics are written to the benchmark CSV?
 
-For subsolvers, also see the [SubSolver Interface](sub_solvers.md) and the
+For subsolvers, also see the [Abstract Subsolver Interface](sub_solvers.md) and the
 existing subsolver pages.
 
 ## Contact

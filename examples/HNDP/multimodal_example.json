@@ -1,0 +1,61 @@
+{
+  "parameter_seeds": [
+    17
+  ],
+  "instances": [
+    {
+      "name": "sioux_multimodal_bike",
+      "instance_type": "multimodal_bike",
+      "topologies": [
+        "sioux_falls"
+      ],
+      "nusers": [
+        8
+      ],
+      "station_limit": 6,
+      "station_budget": 3,
+      "car_speed_kmh": 40,
+      "bike_speed_kmh": 15,
+      "transit_delta_min_bp": 2000,
+      "transit_delta_max_bp": 5000,
+      "bike_station_profit": 1,
+      "bike_station_cost": 1
+    },
+    {
+      "name": "sioux_multimodal_expansion",
+      "instance_type": "multimodal_expansion",
+      "topologies": [
+        "sioux_falls"
+      ],
+      "nusers": [
+        8
+      ],
+      "station_limit": 6,
+      "expansion_station_count": 3,
+      "arc_budget": 4,
+      "expansion_arc_profit": 1,
+      "expansion_arc_cost": 1
+    }
+  ],
+  "models": [
+    {
+      "name": "sd_fixed_1min",
+      "model_type": "sd",
+      "big_m_mode": "fixed_network_path",
+      "indicator_constraints": false,
+      "bound_duals": true
+    }
+  ],
+  "write_run_logs": false,
+  "params": [
+    {
+      "name": "gurobi_1min",
+      "mip_solver": "Gurobi",
+      "runtime": 60.0,
+      "threads_master": 8,
+      "threads_sub_con": 8,
+      "parallel_separation": false,
+      "seed": 17
+    }
+  ]
+}
