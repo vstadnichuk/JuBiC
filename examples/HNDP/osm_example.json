@@ -1,0 +1,52 @@
+{
+  "parameter_seeds": [
+    17
+  ],
+  "instances": [
+    {
+      "name": "aachen_osm",
+      "instance_type": "osm_gtfs",
+      "city_name": "aachen",
+      "city_center": [
+        50.775,
+        6.083
+      ],
+      "osm_path": "data/osm/aachen_buffer_highways.json",
+      "boundary_path": "data/osm/aachen_boundary.json",
+      "gtfs_dir": "data/osm/avv_gtfs",
+      "use_boundary_compression": true,
+      "nusers": [
+        2
+      ],
+      "bike_station_count": 4,
+      "bike_station_budget": 2
+    }
+  ],
+  "models": [
+    {
+      "name": "path_dominance",
+      "model_type": "path",
+      "enumeration_time_limit": 30.0,
+      "parallelize": false,
+      "use_decision_arc_dominance": true
+    },
+    {
+      "name": "strong_duality",
+      "model_type": "sd",
+      "big_m_mode": "fixed_network_path",
+      "indicator_constraints": false,
+      "bound_duals": true
+    }
+  ],
+  "params": [
+    {
+      "name": "gurobi_60s",
+      "mip_solver": "Gurobi",
+      "runtime": 60.0,
+      "threads_master": 1,
+      "threads_sub_con": 1,
+      "seed": 17
+    }
+  ],
+  "write_run_logs": false
+}

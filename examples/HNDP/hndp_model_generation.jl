@@ -5,7 +5,7 @@ using Graphs
 using Gurobi
 using Base.Threads
 
-include("hndp_network_generation.jl")
+include("hndp_osm_network_generation.jl")
 include("hndp_astar_wrapper.jl")
 
 const HNDP_BIGM_FIXED_NETWORK_PATH = :fixed_network_path

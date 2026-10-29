@@ -36,10 +36,10 @@ the new setting.
 The core files worth inspecting are:
 
 - `examples/HNDP/hndp_instances.jl`
-- `examples/HNDP/hndp_network_generation.jl`
+- `examples/HNDP/hndp_osm_network_generation.jl`
 - `examples/HNDP/hndp_model_generation.jl`
 - `examples/HNDP/hndp_astar_wrapper.jl`
-- `examples/HNDP/hndp_experiment_runner.jl`
+- `examples/HNDP/hndp_osm_experiment_runner.jl`
 
 ## Developer Perspective
 

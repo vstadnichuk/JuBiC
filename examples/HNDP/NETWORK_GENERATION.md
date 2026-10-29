@@ -1,666 +1,105 @@
-# HNDP Network Generation Config
+# OSM network generation
 
-This document describes the JSON structure used by
-[network_generation_example.json](network_generation_example.json)
-and
-[hndp_network_generation.jl](hndp_network_generation.jl).
+This branch constructs HNDP application instances from cached OpenStreetMap
+roads, municipal boundaries, and GTFS transit schedules. The entry point is
+[hndp_osm_network_generation.jl](hndp_osm_network_generation.jl); the road and
+transit importer is [hndp_osm_gtfs_generation.jl](hndp_osm_gtfs_generation.jl).
+Shared data containers are in `hndp_instances.jl`, and JSON/GEXF interchange is
+in `hndp_osm_network_io.jl`. Solver/model builders remain independent of source
+file formats.
 
-The generator creates HNDP network instances only. Solver-specific JuBiC models
-are built later.
+## Prepare the source data
 
-The intended workflow is JSON-driven: define instance families and parameter
-grids in a network-generation JSON file, let the generator expand the list-valued
-fields into concrete HNDP instances, and then pass these generated instances to
-the model-generation and solver pipeline.
+Follow [OSM_GTFS_PIPELINE.md](OSM_GTFS_PIPELINE.md) for buffered extracts,
+boundary compression, GTFS conversion, and cost assumptions. Raw downloads
+belong under ignored `data/osm/`. Supply a complete road extract covering the
+municipal study area and its surrounding buffer for comparable city networks.
 
-## Available instance generators
+## Generate a city directly
 
-All examples below run from the repository root in `julia --project=.`.
-Load `hndp_network_generation.jl` once to use the generic API. Loading
-`hndp_model_generation.jl` also loads the generators, so do not include both
-into the same Julia module. Generation returns `HNDPGeneratedNetwork` values:
-use `.instance` for a solver builder and `.metadata` for generation details.
-
-| `instance_type` | Network and decisions | Important settings |
-| --- | --- | --- |
-| `constrained_shortest_path` | Single-layer network; leader controls arcs and followers minimize route costs subject to optional weight bounds | `length_constrained`, `length_slack`/`alpha`, `two_stage`, `user_parameter_mode` |
-| `competition` with `layered_*` topology | Operator and competitor layers; decisions control operator availability | `competitor_cost_factor`/`beta`, `availability_budget_fraction`, optional weight bounds |
-| `competition` with an unprefixed topology | One layer with sampled decision arcs | `decision_arc_count`; `single_layer_arc_mode="competition"` or `"decision_only"` |
-| `multimodal_bike` | Car, public-transport, and bicycle layers; station transfer arcs are paired leader decisions | `station_limit`, `station_budget`, speeds, station costs/profits |
-| `multimodal_expansion` | Existing car/transit network with candidate services involving additional stations | `station_limit`, `expansion_station_count`, `arc_budget`, service costs/profits |
-
-The named base topologies are `sioux_falls`, `anaheim`, `berlin_mitte_center`,
-`ema`, and `friedrichshain_center`. CSP and multimodal generators accept these
-base names. Competition accepts the base names for single-layer instances and
-`layered_` followed by a base name for two-layer instances. Inputs are the
-bundled static network files. The files contain fixed topologies; seeds
-randomize parameters and user choices.
-
-`length_constrained=false` is needed for the ordinary strong-duality solver.
-The multimodal generators produce users without weight bounds. See
-[HNDP_SOLVER_OVERVIEW.md](HNDP_SOLVER_OVERVIEW.md) for the solver comparison.
-
-## Small construction examples
-
-This creates one instance of each family without launching optimization:
+Run from the repository root:
 
 ```julia
-include("examples/HNDP/hndp_network_generation.jl")
-
-specs = [
-    Dict{String,Any}("name" => "csp", "instance_type" => "constrained_shortest_path",
-        "topologies" => ["sioux_falls"], "nusers" => [2],
-        "length_constrained" => [true], "length_slack" => [0.2]),
-    Dict{String,Any}("name" => "layered", "instance_type" => "competition",
-        "topologies" => ["layered_sioux_falls"], "nusers" => [2],
-        "length_constrained" => [false]),
-    Dict{String,Any}("name" => "single_layer", "instance_type" => "competition",
-        "topologies" => ["sioux_falls"], "nusers" => [2],
-        "length_constrained" => [false], "decision_arc_count" => [4],
-        "single_layer_arc_mode" => ["decision_only"]),
-    Dict{String,Any}("name" => "bike", "instance_type" => "multimodal_bike",
-        "topologies" => ["sioux_falls"], "nusers" => [2],
-        "station_limit" => 4, "station_budget" => 2),
-    Dict{String,Any}("name" => "expansion", "instance_type" => "multimodal_expansion",
-        "topologies" => ["sioux_falls"], "nusers" => [2],
-        "station_limit" => 4, "expansion_station_count" => 2, "arc_budget" => 2)
-]
-config = Dict{String,Any}("parameter_seeds" => [17], "instances" => specs)
-networks = generate_hndp_networks(config)
-for network in networks
-    println(network.name, ": ", length(network.instance.users), " users")
-end
+include("examples/HNDP/hndp_osm_network_generation.jl")
+network = generate_osm_gtfs(
+    osm_path="data/osm/aachen_buffer_highways.json",
+    boundary_path="data/osm/aachen_boundary.json",
+    gtfs_dir="data/osm/avv_gtfs",
+    city_name="aachen", city_center=(50.775, 6.083),
+    use_boundary_compression=true,
+    nusers=100, seed=17, bike_station_count=20, bike_station_budget=10,
+)
 ```
 
-For a JSON-driven parameter grid:
+The returned `HNDPGeneratedNetwork` contains `.instance` (an `HNDPwC`) and
+`.metadata`. Its four layers are walking, car, transit, and bicycle. Station
+transfer arcs retain their decision groups and station budget.
+
+For other cities, replace the three input paths and provide `city_name` and
+`city_center`. `source_bbox` can record the source extract bounds. The Aachen
+convenience functions remain available for existing OSM benchmark scripts.
+
+## Batch configurations
+
+The complete generation configuration is
+[osm_network_generation_example.json](osm_network_generation_example.json).
+Every source entry uses `instance_type: "osm_gtfs"` and the three required path
+fields. Input paths are relative to the working directory. `nusers` and
+`parameter_seeds` accept scalars or arrays of integers; all other options pass
+through as importer keyword arguments. Boundary compression defaults to true
+in the batch API. Other source-instance types are rejected explicitly.
 
 ```julia
-networks = generate_hndp_networks("examples/HNDP/network_generation_example.json")
+networks = generate_hndp_osm_networks(
+    "examples/HNDP/osm_network_generation_example.json")
+visit_hndp_osm_networks(
+    "examples/HNDP/osm_network_generation_example.json",
+    network -> println(network.name),
+)
 ```
 
-List-valued fields are expanded into combinations, so the supplied general
-configuration produces more than one instance per entry. To process a large
-grid without retaining it all, use `visit_hndp_networks(config, network -> ...)`.
+The visitor holds only one generated network at a time. `instance_output`
+optionally writes each network before visiting it. Set `folder` and choose
+`graph_format` as `json`, `gexf`, or `both`.
 
-To save and reload a constructed network, in the same Julia session:
+## Save and reuse networks
 
 ```julia
-write_hndp_generated_networks([first(networks)],
-    Dict{String,Any}("folder" => "tmp/hndp_generated", "graph_format" => "json"))
-saved = read_hndp_instance(joinpath("tmp/hndp_generated", first(networks).name, "instance.json"))
-hndp = saved.instance
+write_hndp_generated_networks([network], Dict{String,Any}(
+    "folder" => "tmp_compare/osm_instances", "graph_format" => "json"))
+restored = read_hndp_instance(
+    "tmp_compare/osm_instances/" * network.name * "/instance.json")
 ```
 
-The canonical JSON round-trip preserves grouped decisions, budgets, and users
-without weight matrices. Version-1 files remain readable; new files use version 2.
-The low-level legacy helpers `build_random_SiouxFalls` and
-`build_random_layer_SiouxFalls`, and `build_toy_HNDPwC`/`build_toy_HNDPneg`, also
-remain in `hndp_instances.jl`; the generic API above is the entry point for the
-configurable families.
+`instance.json` preserves graph arcs, user costs and objectives, decision
+groups, and the decision budget. The reader reconstructs sparse user matrices
+so city-sized networks do not require dense quadratic allocations. The
+shortest-weight matrix is a derived cache and is rebuilt only when needed.
 
-## Top-Level Structure
+A configuration with `saved_instances` can supply one JSON path or an array of
+paths instead of `instances`. It works in both the batch API and experiment
+runner; saved paths are deduplicated.
 
-```json
-{
-  "instance_output": {
-    "folder": "...",
-    "graph_format": "gexf"
-  },
-  "parameter_seeds": [0, 1],
-  "instances": [
-    { "...": "..." }
-  ]
-}
+## Evaluate the models
+
+```sh
+julia --project=. --threads=2 examples/HNDP/run_osm_hndp_manifest.jl examples/HNDP/osm_example.json tmp_compare/osm_example --dry-run
 ```
 
-### `instance_output`
+Remove `--dry-run` to compare path enumeration and strong duality. The example
+requires cached input data and a working Gurobi license for optimization. A
+directory of `instances.json`, `models.json`, and `params.json` is also accepted.
+See [HNDP_SOLVER_OVERVIEW.md](HNDP_SOLVER_OVERVIEW.md) for model parameters and
+[aggregated_network_model_results/README.md](aggregated_network_model_results/README.md)
+for the retained city benchmark results and reproduction scripts.
 
-Generated instances can be persisted independently of solver runs. The
-canonical file is `instance.json`; it contains the directed graph, decision
-arcs, construction costs, every user's origin/destination, cost/risk/weight
-arc data, weight limits, and the generation metadata. Set
-`"graph_format": "json"` (the default) or `"both"` to also create the
-visualization-oriented `instance.gexf` file. The small `users.json` sidecar is
-kept for compatibility with older inspection scripts.
+## Offline smoke test
 
-The saved JSON is read with `read_hndp_instance(path)`. A solver run can use a
-configuration containing saved paths instead of an `instances` generation
-list:
-
-```json
-{
-  "saved_instances": [
-    "generated_hndp/sioux_falls_U250_S42/instance.json"
-  ]
-}
+```sh
+julia --project=. examples/HNDP/osm_smoke.jl
 ```
 
-Pass that configuration as the instance configuration to
-`run_hndp_experiments!`. The runner loads each graph once, prints its path
-once, and then evaluates all selected solver/model configurations on the same
-in-memory instance. This separates random instance generation from solver
-execution and makes reruns independent of generator changes.
-
-- Type: object
-- Optional: yes
-- Meaning: controls whether generated instances are written to disk for
-  debugging and inspection.
-
-Supported fields:
-
-- `folder`
-  - Type: string
-  - Meaning: base output folder. Each generated instance gets its own
-    subfolder below it.
-  - Reasonable values: writable paths such as
-    `"examples/HNDP/generated_instances"` or `"/tmp/hndp_debug"`.
-- `graph_format`
-  - Type: string
-  - Supported values: `"json"` (default), `"gexf"`, `"both"`.
-  - Meaning: `instance.json` and `users.json` are always written; `"gexf"`
-    and `"both"` additionally request `instance.gexf` for visualization.
-
-### `parameter_seeds`
-
-- Type: array of integers
-- Optional: yes
-- Default: `[0]`
-- Meaning: random seeds used for generating arc parameters and user OD pairs.
-- Reasonable values: small nonnegative integers such as `[0, 1, 2, 3, 4]`.
-
-### `instances`
-
-- Type: array of objects
-- Optional: no
-- Meaning: each object defines one batch of related HNDP network instances.
-
-## Instance Spec Fields
-
-Each entry in `instances` supports the following common fields.
-
-### `name`
-
-- Type: string
-- Optional: yes
-- Meaning: human-readable base name used in generated metadata and instance
-  names.
-- Reasonable values: short identifiers like `"csp_sioux"` or
-  `"competition_small"`.
-
-### `instance_type`
-
-- Type: string
-- Optional: no
-- Supported values:
-  - `"constrained_shortest_path"`
-  - `"competition"`
-  - `"multimodal_bike"`
-  - `"multimodal_expansion"`
-- Meaning:
-  - `constrained_shortest_path` builds a single-layer network.
-  - `competition` builds either:
-    - a two-layer competition network when the topology id starts with
-      `"layered_"`, or
-    - a single-layer network with a sampled set of decision arcs otherwise.
-
-### `topologies`
-
-- Type: array of strings
-- Optional: yes
-- Current supported values:
-  - for `constrained_shortest_path`, `multimodal_bike`, and `multimodal_expansion`:
-    - `"sioux_falls"`, `"anaheim"`, `"berlin_mitte_center"`, `"ema"`,
-      `"friedrichshain_center"`
-  - for `competition`:
-    - layered families:
-      - `"layered_sioux_falls"`
-      - `"layered_anaheim"`
-      - `"layered_berlin_mitte_center"`
-      - `"layered_ema"`
-      - `"layered_friedrichshain_center"`
-    - single-layer families:
-      - `"sioux_falls"`
-      - `"anaheim"`
-      - `"berlin_mitte_center"`
-      - `"ema"`
-      - `"friedrichshain_center"`
-- Meaning: selects the topology family used for this batch.
-
-### `nusers`
-
-- Type: array of integers
-- Optional: yes
-- Default: `[1]`
-- Meaning: number of users generated in each network instance.
-- Reasonable values: positive integers such as `[1]`, `[5, 10]`, `[25]`.
-
-### `length_constrained`
-
-- Type: array of booleans
-- Optional: yes
-- Default: `[true]`
-- Meaning:
-  - `true`: users receive a path-length bound and the lower level is a
-    constrained shortest path problem.
-  - `false`: no path-length bound is generated and the lower level is an
-    unconstrained shortest path problem.
-
-### `user_parameter_mode`
-
-- Type: array of strings
-- Optional: yes
-- Default: `["shared"]`
-- Supported values:
-  - `"shared"`
-  - `"per_user"`
-- Meaning:
-  - `shared`: all users share the same arc cost, risk, and weight matrices.
-    Users differ only in origin, destination, and derived values such as the
-    path-length bound.
-  - `per_user`: each user gets its own randomly generated arc cost, risk, and
-    weight matrices.
-- Reasonable use:
-  - use `shared` when users move on the same physical network with common arc
-    parameters
-  - use `per_user` when users represent heterogeneous commodities or
-    user-specific valuations
-
-### `max_cost`
-
-- Type: integer
-- Optional: yes
-- Default: `100`
-- Meaning: upper bound for randomly generated follower arc costs.
-- Reasonable values: nonnegative integers such as `10`, `100`, `1000`.
-
-### `max_risk`
-
-- Type: integer
-- Optional: yes
-- Default: `100`
-- Meaning: upper bound for randomly generated risk or profit coefficients
-  before family-specific sign adjustments.
-- Reasonable values: nonnegative integers such as `10`, `100`, `1000`.
-
-### `max_weight`
-
-- Type: integer
-- Optional: yes
-- Default: `100`
-- Meaning: upper bound for randomly generated arc weights used in the
-  path-length constraint.
-- Reasonable values: nonnegative integers such as `10`, `100`, `1000`.
-
-### `construction_cost`
-
-- Type: integer
-- Optional: yes
-- Default: `0`
-- Meaning: upper bound for random first-level construction cost on decision
-  arcs. Values are drawn from `0:construction_cost`.
-- Reasonable values:
-  - `0` for no construction cost
-  - small or medium nonnegative integers such as `10`, `50`, `100`
-
-### `construction_cost_min`
-
-- Type: integer
-- Optional: yes
-- Default: `0`
-- Meaning: lower bound for random construction cost on decision arcs.
-- Current behavior:
-  - if omitted, the lower bound is `0`
-  - if present together with `construction_cost_max`, costs are drawn from the
-    inclusive range `[construction_cost_min, construction_cost_max]`
-
-### `construction_cost_max`
-
-- Type: integer
-- Optional: yes
-- Default: inherited from `construction_cost` when only that older field is used
-- Meaning: upper bound for random construction cost on decision arcs.
-
-### `availability_budget_fraction`
-
-- Type: array of numbers
-- Optional: yes
-- Default: `[1.0]`
-- Meaning: fraction of decision arcs that may be made available by the leader,
-  measured relative to the number of decision arcs in the generated instance.
-- Current behavior:
-  - for a generated decision-arc set `A`, the integer budget is
-    `floor(availability_budget_fraction * length(A))`
-  - the generator stores both the requested fraction and the realized integer
-    count in the instance metadata
-  - if omitted, the effective budget is all decision arcs
-  - specify `availability_budget_count` instead if the integer count should be
-    fixed directly
-
-### `availability_budget_count`
-
-- Type: integer
-- Optional: yes
-- Meaning: explicit integer budget on the number of selectable decision arcs.
-- Current behavior:
-  - may not be specified together with `availability_budget_fraction`
-  - must lie between `0` and the number of decision arcs
-  - the corresponding fraction is recorded as
-    `availability_budget_count / length(A)` in the metadata
-
-### `parameter_seeds`
-
-- Type: array of integers
-- Optional: yes
-- Meaning: local override of the top-level `parameter_seeds` for this instance
-  spec only.
-
-## Fields for `constrained_shortest_path`
-
-### `alpha`
-
-- Type: array of numbers
-- Optional: yes
-- Meaning: newer alias for `length_slack`.
-- Current behavior:
-  - if `alpha` is present, it is used instead of `length_slack`
-  - values are written to metadata as both `alpha` and `length_slack` when
-    `length_constrained = true`
-  - if `length_constrained = false`, additional alpha values are ignored because
-    no path-length bound is generated
-
-### `length_slack`
-
-- Type: array of numbers
-- Optional: yes
-- Default: `[1.0]`
-- Meaning: controls how loose the path-length bound is relative to the shortest
-  feasible path.
-- Interpretation:
-  - `0.0`: the bound is as tight as possible
-  - `1.0`: the bound is maximally relaxed under the current formula
-- Reasonable values: numbers in `[0, 1]`, commonly `0.0`, `0.1`, `0.25`,
-  `0.5`, `1.0`
-- Note: only relevant when `length_constrained = true`.
-
-### `two_stage`
-
-- Type: array of booleans
-- Optional: yes
-- Default: `[false]`
-- Meaning:
-  - `false`: risk and cost are generated independently
-  - `true`: risk is set equal to cost, so the two levels are aligned
-- Reasonable values: typically `[false]`; use `[true]` when testing a
-  cooperative or aligned-objective variant.
-
-## Fields for `competition`
-
-### `alpha`
-
-- Type: array of numbers
-- Optional: yes
-- Meaning: newer alias for `length_slack`, supported for layered competition,
-  `single_layer_k_competition`, and `single_layer_k_decision_only`.
-- Current behavior:
-  - if `alpha` is present, it is used instead of `length_slack`
-  - values are written to metadata as both `alpha` and `length_slack` when
-    `length_constrained = true`
-  - if `length_constrained = false`, additional alpha values are ignored because
-    no path-length bound is generated
-
-### `length_slack`
-
-- Type: array of numbers
-- Optional: yes
-- Default: `[1.0]`
-- Meaning: same meaning as for `constrained_shortest_path`, but applied to the
-  generated competition network.
-- Reasonable values: numbers in `[0, 1]`.
-
-### `beta`
-
-- Type: array of numbers
-- Optional: yes
-- Meaning: newer alias for `competitor_cost_factor`.
-- Current behavior:
-  - if `beta` is present, it is used instead of `competitor_cost_factor`
-  - values are written to metadata as both `beta` and `competitor_cost_factor`
-
-### `competitor_cost_factor`
-
-- Type: array of numbers
-- Optional: yes
-- Default: `[0.8]`
-- Meaning: multiplicative scaling applied to the user cost of decision arcs in
-  the operator-controlled layer for layered competition instances, and to the
-  sampled decision arcs in `single_layer_k_competition`.
-- Interpretation:
-  - values below `1.0` make those decision arcs cheaper for users
-  - value `1.0` leaves their cost unchanged
-  - values above `1.0` make them more expensive
-- Reasonable values: positive numbers such as `0.5`, `0.8`, `1.0`, `1.2`
-- Typical safe range: `(0, 2]`
-
-### `single_layer_arc_mode`
-
-- Type: array of strings
-- Optional: yes
-- Default: `["competition"]`
-- Relevant only when:
-  - `instance_type = "competition"`
-  - and the topology id does **not** start with `"layered_"`
-- Supported values:
-  - `"competition"`
-  - `"decision_only"`
-- Meaning:
-  - `"competition"`:
-    - exactly `k` arcs are sampled as decision arcs,
-    - the sampled arcs receive the `beta` cost scaling,
-    - and only those sampled arcs contribute operator-side risk
-  - `"decision_only"`:
-    - exactly `k` arcs are sampled as decision arcs,
-    - no `beta` scaling is applied,
-    - sampled arcs are only the controllable arcs,
-    - and operator risk remains on all arcs
-- Important sign convention:
-  - layered competition instances use negative operator-side coefficients on
-    relevant operator arcs to represent profit earned by the operator
-  - single-layer `"competition"` keeps nonzero operator-side coefficients only
-    on sampled decision arcs
-  - single-layer `"decision_only"` uses positive risk coefficients on all arcs
-
-### `decision_arc_count`
-
-- Type: array of integers
-- Optional: yes
-- Relevant only for single-layer competition instances
-- Meaning: number of arcs sampled into the leader-controlled set `edgeA`
-- Current behavior:
-  - if the requested value exceeds the number of arcs in the base graph, the
-    implementation clamps it to all arcs
-
-## Competition Graph Styles
-
-Generated competition metadata records:
-
-- `competition_graph_style = "two_layer"`
-  - for `layered_*` topologies
-- `competition_graph_style = "single_layer_k_competition"`
-  - for single-layer `k`-arc competition mode
-- `competition_graph_style = "single_layer_k_decision_only"`
-  - for single-layer `k`-arc decision-only mode
-
-Additional metadata flags include:
-
-- `layered_instance`
-- `base_topology_family`
-- `single_layer_arc_mode` for the single-layer competition family
-
-## Batch Expansion
-
-The generator creates one instance for every combination of the list-valued
-parameters in a spec.
-
-For example, if a spec contains:
-
-```json
-{
-  "nusers": [5, 10],
-  "length_constrained": [true, false],
-  "user_parameter_mode": ["shared", "per_user"]
-}
-```
-
-then this already gives `2 x 2 x 2 = 8` generated instances before considering
-seeds or other fields.
-
-## Example
-
-```json
-{
-  "instance_output": {
-    "folder": "examples/HNDP/generated_instances",
-    "graph_format": "gexf"
-  },
-  "parameter_seeds": [0, 1],
-  "instances": [
-    {
-      "name": "csp_sioux",
-      "instance_type": "constrained_shortest_path",
-      "topologies": ["sioux_falls"],
-      "nusers": [5, 10],
-      "length_constrained": [true, false],
-      "length_slack": [0.2],
-      "user_parameter_mode": ["shared"],
-      "two_stage": [false],
-      "max_cost": 100,
-      "max_risk": 100,
-      "max_weight": 100,
-      "construction_cost": 0
-    }
-  ]
-}
-```
-# Realistic multimodal instances
-
-`hndp_network_generation.jl` also supports two parameterized multimodal
-scenarios:
-
-- `multimodal_bike`: fixed car and station-service public-transport layers plus a bike layer.
-  The leader decides which high-degree stations to open; opening a station
-  enables both bike transfer arcs and is limited by `station_budget`.
-- `multimodal_expansion`: fixed car and station-service public-transport layers plus candidate
-  station-to-station expansion arcs on the public-transport layer. Set
-  `expansion_station_count` to control how many additional stations are introduced;
-  every directed service involving at least one additional station is a decision arc.
-  `arc_budget` can limit how many of those services are opened.
-
-Both scenarios read distance and capacity from the TNTP/SF network file. Car
-and bike speeds, budgets, costs, profits, and all generated arc coefficients
-are integer-valued. Travel times are stored in integer units controlled by
-`time_scale` (the default is 1000 units per hour). Fractional effects are
-specified in basis points: for example, `car_degree_penalty_bp=1500` means a
-maximum 15% penalty, and `transit_delta_min_bp=2000` means a 20% minimum
-transit improvement. Transit deltas are sampled as integer basis-point values.
-
-The car layer contains the original network topology. The public-transport
-layer contains only station-to-station services; it does not duplicate the
-original car arcs. The fixed public-transport layer is the complete directed
-subgraph on the selected base stations. Expansion stations are selected by the
-same degree-and-separation heuristic, and all directed services involving an
-expansion station are additional decision arcs. Defaults are exposed as integer
-parameters rather than treated as calibrated universal constants.
-
-## Multimodal generation parameters and formulas
-
-The generator is called through an instance specification. `topologies`
-selects `sioux_falls`, `anaheim`, `friedrichshain_center`,
-`berlin_mitte_center`, or `ema`; `instance_type` selects
-`multimodal_bike` or `multimodal_expansion`; `nusers` controls the number of
-sampled users; and `parameter_seed` controls reproducible station, transit,
-and OD sampling. OD pairs are sampled with replacement from pairs reachable
-in the original directed car network.
-
-The accepted generation parameters are:
-
-| Parameter | Meaning and computation |
-| --- | --- |
-| `station_limit` | Absolute number of base public-transport stations. |
-| `station_fraction_percent` | Alternative to `station_limit`: `floor(percent × number_of_nodes / 100)`, clamped to the number of nodes. |
-| `expansion_station_count` | Number of additional stations in the expansion scenario. |
-| `expansion_station_fraction_percent` | Alternative expansion count: `floor(percent × (nodes − base_stations) / 100)`. |
-| `station_budget` | Maximum number of bike stations that may be opened. |
-| `station_budget_fraction_percent` | Alternative bike budget: `floor(percent × base_stations / 100)`. |
-| `arc_budget` | Maximum number of expansion transit arcs that may be opened. |
-| `arc_budget_fraction_percent` | Alternative expansion budget: `floor(percent × candidate_arcs / 100)`. |
-| `car_speed_kmh` | Average car speed used in the base travel-time calculation. |
-| `bike_speed_kmh` | Average bicycle speed used on the bike copy of the original topology. |
-| `time_scale` | Integer multiplier for travel times; `1000` means one hour is represented by 1000 time units. |
-| `car_degree_penalty_bp` | Maximum car-time penalty in basis points, scaled by the average normalized degree of an arc's endpoints. `1500` means up to 15%. |
-| `car_capacity_boost_bp` | Maximum car-time reduction on high-capacity arcs. `1000` means up to 10%. |
-| `bike_low_capacity_boost_bp` | Maximum bike-time reduction on low-capacity arcs. |
-| `transit_delta_min_bp`, `transit_delta_max_bp` | Inclusive integer range for the transit improvement sampled independently for every service. `2000`–`5000` means 20%–50% faster than the car baseline. |
-| `bike_station_profit`, `bike_station_cost` | Integer leader profit and construction cost associated with each opened bike station. |
-| `expansion_arc_profit`, `expansion_arc_cost` | Integer leader profit and construction cost associated with each opened expansion transit arc. |
-
-Parameters ending in `_bp` are basis points in `[0,10000]`; legacy decimal
-names such as `car_degree_penalty` are still accepted and converted to basis
-points. Speeds, counts, budgets, costs, profits, sampled deltas, and generated
-arc coefficients are integer-valued. A generated travel time is rounded to a
-positive integer after applying the time scale.
-
-For an original arc `(i,j)`, let `d` be distance, `c` normalized capacity,
-and `q` the average normalized degree of its endpoints. Generated times are:
-
-```text
-car(i,j)  = round(time_scale*d/car_speed_kmh
-                 * (1 + car_degree_penalty_bp*q/10000)
-                 * (1 - car_capacity_boost_bp*c/10000))
-bike(i,j) = round(time_scale*d/bike_speed_kmh
-                 * (1 - bike_low_capacity_boost_bp*(1-c)/10000))
-```
-
-Both values are bounded below by one. Capacity is normalized between the
-minimum and maximum input capacity. Zero-distance connector arcs use their
-free-flow time, or one kilometre if that is also unavailable.
-
-Stations are selected by total directed degree. Candidates are shuffled only
-to break ties, then considered in descending degree order. The first pass
-greedily selects candidates that are not direct in- or out-neighbours of an
-already selected station, producing a high-degree independent-set-like spread.
-If that cannot provide the requested count, remaining stations are filled by
-degree. Expansion stations use the same heuristic while treating base
-stations as already selected.
-
-For every ordered pair of distinct base stations, the fixed public-transport
-layer contains one service. In expansion, every ordered pair with at least one
-additional station is a candidate service and is a decision arc. Each service
-uses the shortest car-network travel time between its endpoints as baseline,
-then applies `round(baseline × (10000 − delta_bp) / 10000)`. The car layer
-remains the original topology, while the transit layer contains only station
-services. Bike keeps the original topology as a third layer; its only
-decisions are the two transfer arcs at each possible bike station. Expansion
-has fixed transfers to all stations; only additional transit services are
-decisions.
-
-The reusable Sioux Falls multimodal example lives alongside the HNDP code in
-`multimodal_example.json`. It contains the bike and transit-expansion instance
-specifications, strong-duality model options, and solver parameters:
-
-```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/multimodal_example.json `
-  tmp_compare/hndp_multimodal_example
-```
-
-Add `--dry-run` to validate and generate the two example instances without
-solving. The general runner also accepts a directory containing `instances.json`,
-`models.json`, and `params.json` for custom experiments. Paper-specific manifests,
-seed-hunt handoffs, and reproduction batches are not distributed with these
-examples.
-
-For a construction-only check, run:
-
-```powershell
-julia --project=. examples/HNDP/multimodal_smoke.jl
-```
+This builds a tiny OSM/GTFS fixture locally and checks the renamed generation
+API, station groups, source filtering, and saved-instance round trips without
+network downloads or an optimization license. Small in-memory toy HNDP graphs
+remain solely as solver regression fixtures.

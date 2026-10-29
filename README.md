@@ -43,75 +43,34 @@ julia --project=. test/runtests.jl
 
 ---
 
-## Reproducing Results
+## OSM network experiments
 
-Paper reproduction manifests are stored in
-[`examples/HNDP/paper_manifests`](./examples/HNDP/paper_manifests). Each
-experiment is defined by three JSON files:
+This branch evaluates the path-based models on realistic OSM/GTFS networks.
+Start with the [source-data pipeline](examples/HNDP/OSM_GTFS_PIPELINE.md) and
+the [OSM generation guide](examples/HNDP/NETWORK_GENERATION.md). The entry point
+is `examples/HNDP/hndp_osm_network_generation.jl`.
 
-- `instances.json`: topology and instance-generation grid,
-- `models.json`: formulation or hybrid model choices,
-- `params.json`: runtime, threads, solver, and logging settings.
-
-The helper script
-[`examples/HNDP/run_hndp_manifest.jl`](./examples/HNDP/run_hndp_manifest.jl)
-loads such a manifest directory and calls the HNDP benchmark pipeline.
-
-Before launching a long run, validate that the manifest loads:
+With the source data cached under `data/osm/`, validate the supplied experiment:
 
 ```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/solvercomparison_layered_sioux_10min `
-  tmp_compare/runs/paper_solvercomparison_layered_sioux_10min `
-  --dry-run
+julia --project=. --threads=2 examples/HNDP/run_osm_hndp_manifest.jl `
+  examples/HNDP/osm_example.json tmp_compare/osm_example --dry-run
 ```
 
-To run the 10-minute Sioux Falls layered solver comparison:
+Remove `--dry-run` to compare path enumeration and strong duality. The runner
+supports saved JSON instances, resume, model configurations, and solver limits.
+The [archived city comparisons](examples/HNDP/aggregated_network_model_results/README.md)
+retain the realistic-network results and reproduction scripts.
+
+For a small offline generation and round-trip test:
 
 ```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/solvercomparison_layered_sioux_10min `
-  tmp_compare/runs/paper_solvercomparison_layered_sioux_10min
+julia --project=. examples/HNDP/osm_smoke.jl
 ```
 
-This sweep compares path enumeration, strong-duality formulations, and
-Benders-like cut formulations on layered Sioux Falls instances with a
-10-minute time limit per solve.
-
-To validate the 30-minute path and hybrid-SD manifest:
-
-```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/path_hybrid_sd_layered_sioux_ema_30min `
-  tmp_compare/runs/paper_path_hybrid_sd_layered_sioux_ema_30min `
-  --dry-run
-```
-
-To run it:
-
-```powershell
-julia --project=. examples/HNDP/run_hndp_manifest.jl `
-  examples/HNDP/paper_manifests/path_hybrid_sd_layered_sioux_ema_30min `
-  tmp_compare/runs/paper_path_hybrid_sd_layered_sioux_ema_30min
-```
-
-This sweep compares complete path enumeration with the hybrid strong-duality
-model. The hybrid model enumerates paths first and falls back to the
-strong-duality formulation when enumeration fails or when the enumerated path
-model would exceed the size of the arc-flow formulation.
-
-The benchmark pipeline appends partial results to
-`results/batch_summary.csv` after each completed instance and supports
-restarting with the same output folder. Per-instance debug logs are disabled in
-the supplied manifests, but the CSV and copied manifests are still written.
-
-Hint: running all paper reproduction experiments can take roughly one week
-on a typical workstation. The exact runtime depends strongly on CPU count,
-Julia thread configuration, Gurobi version, and license settings.
-
-The HNDP instances are randomly generated from the manifest seeds. Reruns should
-therefore show trends comparable to the paper, but concrete runtimes can vary
-with the generated instance structure.
+The source-format-specific experiments removed from this branch remain on
+`main`. Solver implementations and their small in-memory test fixtures remain
+available here.
 
 ---
 

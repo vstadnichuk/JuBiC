@@ -3,7 +3,9 @@ using JSON
 using Dates
 using SHA
 
-include("hndp_model_generation.jl")
+if !isdefined(@__MODULE__, :build_hndp_path_instance)
+    include("hndp_model_generation.jl")
+end
 
 """
     run_hndp_experiments!(
@@ -31,7 +33,7 @@ function run_hndp_experiments!(
     output_root::AbstractString,
     resume::Bool=true,
 )
-    instance_cfg = load_hndp_network_generation_config(String(instance_config_path))
+    instance_cfg = load_hndp_osm_config(String(instance_config_path))
     model_cfg = JSON.parsefile(String(model_config_path))
     param_cfg = JSON.parsefile(String(param_config_path))
 
@@ -50,7 +52,7 @@ function run_hndp_experiments!(
     completed_ids = resume ? JuBiC._read_completed_batch_ids(summary_csv_path) : Set{String}()
     results = Dict{String,JuBiC.RunStats}()
 
-    visit_hndp_networks(instance_cfg, generated_network -> begin
+    visit_hndp_osm_networks(instance_cfg, generated_network -> begin
         instance_metadata = deepcopy(generated_network.metadata)
         instance_name = String(instance_metadata["name"])
 

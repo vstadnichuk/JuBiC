@@ -22,7 +22,7 @@ version alongside any published experiment results.
 
 ## 2. Build the bounded road network
 
-`aachen_osm_gtfs_generation.jl` reads the Overpass JSON and:
+`hndp_osm_gtfs_generation.jl` reads the Overpass JSON and:
 
 - retains usable motor-vehicle roads for the car layer;
 - retains car-compatible and bicycle-designated roads for the bike layer;
@@ -45,7 +45,7 @@ endpoints are inside; external shortcuts are car-only.
 This is the current bounded-network entry point:
 
 ```julia
-include("examples/HNDP/aachen_osm_gtfs_generation.jl")
+include("examples/HNDP/hndp_osm_gtfs_generation.jl")
 instance = generate_aachen_buffered_osm_gtfs(
     osm_path="data/osm/aachen_buffer_highways.json",
     boundary_path="data/osm/aachen_boundary.json",

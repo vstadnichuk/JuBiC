@@ -3,7 +3,9 @@ using DataFrames
 using Graphs
 using JuBiC
 
-include(joinpath(@__DIR__, "aachen_osm_gtfs_generation.jl"))
+if !isdefined(@__MODULE__, :generate_osm_gtfs)
+    include(joinpath(@__DIR__, "..", "hndp_osm_gtfs_generation.jl"))
+end
 
 # Kept here rather than in the retired station-pair diagnostic script because
 # the balanced station selector needs these distances as a core dependency.

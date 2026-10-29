@@ -1,0 +1,29 @@
+{
+  "parameter_seeds": [
+    17
+  ],
+  "instances": [
+    {
+      "name": "aachen_osm",
+      "instance_type": "osm_gtfs",
+      "city_name": "aachen",
+      "city_center": [
+        50.775,
+        6.083
+      ],
+      "osm_path": "data/osm/aachen_buffer_highways.json",
+      "boundary_path": "data/osm/aachen_boundary.json",
+      "gtfs_dir": "data/osm/avv_gtfs",
+      "use_boundary_compression": true,
+      "nusers": [
+        2
+      ],
+      "bike_station_count": 4,
+      "bike_station_budget": 2
+    }
+  ],
+  "instance_output": {
+    "folder": "tmp_compare/osm_instances",
+    "graph_format": "json"
+  }
+}

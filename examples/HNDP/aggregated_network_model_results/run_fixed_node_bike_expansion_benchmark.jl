@@ -4,8 +4,10 @@ using Graphs
 using Random
 using JuBiC
 
-include(joinpath(@__DIR__, "hndp_experiment_runner.jl"))
-include(joinpath(@__DIR__, "aachen_osm_gtfs_generation.jl"))
+include(joinpath(@__DIR__, "hndp_osm_experiment_runner.jl"))
+if !isdefined(@__MODULE__, :generate_osm_gtfs)
+    include(joinpath(@__DIR__, "..", "hndp_osm_gtfs_generation.jl"))
+end
 
 const CITIES = [
     (name="aachen", osm="data/osm/aachen_buffer_highways.json", boundary="data/osm/aachen_boundary.json", gtfs="data/osm/avv_gtfs"),

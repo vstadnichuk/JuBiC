@@ -2,8 +2,8 @@
 
 JuBiC's `AStarSolver` interface lets an application solve routing followers
 without constructing a new JuMP MIP for every oracle call. The maintained
-[example3.jl](example3.jl) uses the HNDP implementation with two users on a
-small single-layer Sioux Falls network with nonnegative routing and operator
+[example3.jl](example3.jl) uses the HNDP implementation with one user on a
+small in-memory routing fixture with nonnegative routing and operator
 costs.
 
 ```sh

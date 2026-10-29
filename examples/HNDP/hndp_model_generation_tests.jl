@@ -556,59 +556,8 @@ function _run_hndp_gbc_weighted_subsolver_pair_test(hndp::HNDPwC, expected_opt::
     @test stats_astar.data["Opt"] ≈ expected_opt atol = 1e-6
 end
 
-function _build_small_sioux_falls_test_networks()
-    config = Dict{String,Any}(
-        "parameter_seeds" => [1],
-        "instances" => [
-            Dict{String,Any}(
-                "name" => "sioux_csp_test",
-                "instance_type" => "constrained_shortest_path",
-                "topologies" => ["sioux_falls"],
-                "nusers" => [1],
-                "length_constrained" => [false],
-                "two_stage" => [false],
-                "user_parameter_mode" => ["shared"],
-                "construction_cost" => 10,
-                "max_cost" => 20,
-                "max_risk" => 20,
-                "max_weight" => 20,
-            ),
-            Dict{String,Any}(
-                "name" => "sioux_competition_test",
-                "instance_type" => "competition",
-                "topologies" => ["layered_sioux_falls"],
-                "nusers" => [1],
-                "length_constrained" => [false],
-                "competitor_cost_factor" => [0.8],
-                "user_parameter_mode" => ["shared"],
-                "construction_cost" => 10,
-                "max_cost" => 20,
-                "max_risk" => 20,
-                "max_weight" => 20,
-            ),
-        ],
-    )
 
-    generated = generate_hndp_networks(config)
-    return Dict(gen.name => gen.instance for gen in generated)
-end
 
-function _instance_by_prefix(instances::Dict{String,HNDPwC}, prefix::String)
-    matches = sort([name for name in keys(instances) if startswith(name, prefix)])
-    length(matches) == 1 ||
-        throw(ArgumentError("Expected exactly one generated HNDP instance with prefix '$prefix', but found $(matches)."))
-    return instances[matches[1]]
-end
-
-function _run_hndp_mibs_sioux_test(hndp::HNDPwC)
-    solver = GurobiSolver()
-    mibs_instance = build_hndp_mibs_instance(hndp, solver)
-    @test mibs_instance.master isa MibSMaster
-    @test isnothing(mibs_instance.subproblems)
-    metadata = JuMP.object_dictionary(mibs_instance.master.model)[:hndp_model_size_metadata]
-    @test metadata["master_variable_count"] > 0
-    @test metadata["subproblem_first_level_variable_count_total"] == 0
-end
 
 """
     _run_hndp_mibs_toy_solve_test()
@@ -755,114 +704,6 @@ function build_toy_hndp_many_paths_user()
     return HNDPwC(graph, users, all_arcs, edge_price, nothing)
 end
 
-function _run_hndp_competition_topology_mode_test()
-    layered_topologies = [
-        ("layered_sioux_falls", "sioux_falls"),
-        ("layered_anaheim", "anaheim"),
-        ("layered_berlin_mitte_center", "berlin_mitte_center"),
-        ("layered_ema", "ema"),
-        ("layered_friedrichshain_center", "friedrichshain_center"),
-    ]
-
-    for (layered_id, base_id) in layered_topologies
-        generated = _build_competition_generated_network(
-            "competition_mode_test",
-            layered_id,
-            1,
-            1,
-            false,
-            1.0,
-            0.8,
-            "shared",
-            Dict{String,Any}(
-                "max_cost" => 20,
-                "max_risk" => 20,
-                "max_weight" => 20,
-                "construction_cost" => 0,
-            );
-            decision_arc_count=5,
-        )
-
-        base_graph = _load_named_base_graph(base_id)
-        @test generated.metadata["competition_graph_style"] == "two_layer"
-        @test generated.metadata["layered_instance"] == true
-        @test generated.metadata["base_topology_family"] == base_id
-        @test nv(generated.instance.mygraph) == 2 * nv(base_graph)
-        @test ne(generated.instance.mygraph) == 2 * ne(base_graph) + 2 * nv(base_graph)
-        @test length(generated.instance.edgeA) == ne(base_graph)
-        @test all(a[1] > nv(base_graph) && a[2] > nv(base_graph) for a in generated.instance.edgeA)
-        @test all(u.origin <= nv(base_graph) && u.destination <= nv(base_graph) for u in generated.instance.users)
-        @test !occursin("_K", generated.metadata["name"])
-    end
-
-    generated_k = _build_competition_generated_network(
-        "competition_mode_test",
-        "ema",
-        1,
-        1,
-        false,
-        1.0,
-        0.8,
-        "shared",
-        Dict{String,Any}(
-            "max_cost" => 20,
-            "max_risk" => 20,
-            "max_weight" => 20,
-            "construction_cost" => 0,
-        );
-        decision_arc_count=60,
-    )
-    generated_k_decision_only = _build_competition_generated_network(
-        "competition_mode_test",
-        "ema",
-        1,
-        1,
-        false,
-        1.0,
-        0.8,
-        "shared",
-        Dict{String,Any}(
-            "max_cost" => 20,
-            "max_risk" => 20,
-            "max_weight" => 20,
-            "construction_cost" => 0,
-            "single_layer_arc_mode" => "decision_only",
-        );
-        decision_arc_count=60,
-    )
-    base_graph = _load_named_base_graph("ema")
-    @test generated_k.metadata["competition_graph_style"] == "single_layer_k_competition"
-    @test generated_k.metadata["single_layer_arc_mode"] == "competition"
-    @test generated_k.metadata["layered_instance"] == false
-    @test generated_k.metadata["base_topology_family"] == "ema"
-    @test nv(generated_k.instance.mygraph) == nv(base_graph)
-    @test ne(generated_k.instance.mygraph) == ne(base_graph)
-    @test length(generated_k.instance.edgeA) == 60
-    @test occursin("_K60_", generated_k.metadata["name"])
-    @test occursin("_KCOMP_", generated_k.metadata["name"])
-
-    @test generated_k_decision_only.metadata["competition_graph_style"] == "single_layer_k_decision_only"
-    @test generated_k_decision_only.metadata["single_layer_arc_mode"] == "decision_only"
-    @test generated_k_decision_only.metadata["layered_instance"] == false
-    @test generated_k_decision_only.metadata["base_topology_family"] == "ema"
-    @test nv(generated_k_decision_only.instance.mygraph) == nv(base_graph)
-    @test ne(generated_k_decision_only.instance.mygraph) == ne(base_graph)
-    @test length(generated_k_decision_only.instance.edgeA) == 60
-    @test occursin("_K60_", generated_k_decision_only.metadata["name"])
-    @test occursin("_KDEC_", generated_k_decision_only.metadata["name"])
-
-    @test generated_k.instance.edgeA == generated_k_decision_only.instance.edgeA
-
-    decision_arc = generated_k.instance.edgeA[1]
-    decision_only_user = generated_k_decision_only.instance.users[1]
-    competition_user = generated_k.instance.users[1]
-    @test competition_user.mcost[decision_arc...] == round(Int, 0.8 * decision_only_user.mcost[decision_arc...])
-
-    decision_arc_set = Set(generated_k.instance.edgeA)
-    nondecision_arc = first([(src(e), dst(e)) for e in edges(base_graph) if !((src(e), dst(e)) in decision_arc_set)])
-    @test competition_user.mrisk[nondecision_arc...] == 0
-    @test decision_only_user.mrisk[nondecision_arc...] > 0
-end
 
 @testset "HNDP Model Generation Tests" begin
     @testset "Arc-Based Models" begin
@@ -904,16 +745,10 @@ end
         _run_hndp_hybrid_blc_all_fallback_test(build_toy_hndp_two_users_all_decision_arcs(), HNDP_BIGM_N_MINUS_ONE, TOY_ALL_DECISION_OPT)
     end
 
-    @testset "MibS Sioux Falls" begin
-        sioux_instances = _build_small_sioux_falls_test_networks()
-        _run_hndp_mibs_sioux_test(_instance_by_prefix(sioux_instances, "sioux_csp_test_sioux_falls_U1_S1_nolen"))
-        _run_hndp_mibs_sioux_test(_instance_by_prefix(sioux_instances, "sioux_competition_test_layered_sioux_falls_U1_S1_nolen"))
+    @testset "MibS toy fixtures" begin
         _run_hndp_mibs_toy_solve_test()
         _run_hndp_mibs_multi_follower_toy_solve_test()
         _run_hndp_mibs_runtime_toy_solve_test()
     end
 
-    @testset "Competition Topology Modes" begin
-        _run_hndp_competition_topology_mode_test()
-    end
 end

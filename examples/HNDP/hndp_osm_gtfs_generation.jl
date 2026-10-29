@@ -1,10 +1,9 @@
-"""Build a JuBiC multimodal instance from cached Aachen OSM and AVV GTFS data.
-
-This is intentionally a small, reproducible importer rather than a full traffic
-assignment pipeline. OSM ways are converted to directed arcs, bicycle-only OSM
-ways are retained only in the bike layer, and GTFS stop sequences become fixed
-transit services. Raw downloads belong in the ignored `data/osm/` directory.
-"""
+# Build a JuBiC multimodal instance from cached city OSM and GTFS data.
+# 
+# This is intentionally a small, reproducible importer rather than a full traffic
+# assignment pipeline. OSM ways are converted to directed arcs, bicycle-only OSM
+# ways are retained only in the bike layer, and GTFS stop sequences become fixed
+# transit services. Raw downloads belong in the ignored `data/osm/` directory.
 
 using CSV
 using Graphs
@@ -12,7 +11,9 @@ using JSON
 using Random
 using SparseArrays
 
-include("hndp_network_generation.jl")
+if !isdefined(@__MODULE__, :write_hndp_generated_networks)
+    include("hndp_osm_network_io.jl")
+end
 
 const AACHEN_BBOX = (50.75, 6.05, 50.82, 6.15)
 const AACHEN_BUFFER_BBOX = (50.68, 5.90, 50.88, 6.30)
@@ -376,7 +377,7 @@ function _reachable_pairs(graph, count, rng)
 end
 
 """Generate an Aachen bike/car/transit HNDP instance from cached files."""
-function generate_aachen_osm_gtfs(; osm_path="data/osm/aachen_highways.json",
+function generate_osm_gtfs(; osm_path="data/osm/aachen_highways.json",
     gtfs_dir="data/osm/avv_gtfs", nusers=100, seed=20260826,
     car_speed_kmh=35, bike_speed_kmh=16, transit_speed_kmh=25,
     bike_station_count=20, bike_station_budget=10,
@@ -395,7 +396,8 @@ function generate_aachen_osm_gtfs(; osm_path="data/osm/aachen_highways.json",
     car_local_parking_cost_cents_per_day=71,
     bike_access_time_seconds=60, bike_return_time_seconds=30,
     transit_service_window_hours=16, transit_wait_cap_seconds=600,
-    boundary_path="data/osm/aachen_boundary.json")
+    boundary_path="data/osm/aachen_boundary.json",
+    city_name="aachen", city_center=AACHEN_CENTER, source_bbox=nothing)
     transit_rides_per_month > 0 || error("transit_rides_per_month must be positive")
     transit_trip_cost_cents = round(Int, transit_monthly_cost_cents / transit_rides_per_month)
     coords, car_edges, bike_edges, walk_edges = _read_osm_ways(
@@ -478,7 +480,7 @@ function generate_aachen_osm_gtfs(; osm_path="data/osm/aachen_highways.json",
         cost[station,station+car_layer]=_mode_cost(
             car_entry_time_seconds, car_value_of_time_eur_per_hour, generalized_cost)
         parking = car_local_parking_cost_cents_per_day === nothing ?
-            (_haversine_km(AACHEN_CENTER..., coords[station]...) <= parking_inner_radius_km ?
+            (_haversine_km(city_center..., coords[station]...) <= parking_inner_radius_km ?
                 parking_inner_cost_cents : parking_outer_cost_cents) :
             car_local_parking_cost_cents_per_day
         cost[station+car_layer,station]=_mode_cost(
@@ -504,17 +506,20 @@ function generate_aachen_osm_gtfs(; osm_path="data/osm/aachen_highways.json",
     transit_nodes = unique(vcat(first.(transit_services), last.(transit_services)))
     transit_waits = [_transit_wait_seconds(stop_departures, node, transit_service_window_hours, transit_wait_cap_seconds) for node in transit_nodes]
     users=User[]
-    for (k,(o,d)) in enumerate(_reachable_pairs(car,nusers,rng)); push!(users,User("AachenU$(k)",o,d,risk,cost,nothing,nothing)); end
+    for (k,(o,d)) in enumerate(_reachable_pairs(car,nusers,rng)); push!(users,User("$(city_name)U$(k)",o,d,risk,cost,nothing,nothing)); end
     prices=Dict(a=>1 for a in decision_arcs)
     observed_service_count = length(transit_services)
     city_extract = basename(osm_path) == "aachen_city_highways.json"
     buffered_extract = basename(osm_path) == "aachen_buffer_highways.json"
-    instance_name = city_extract ? "aachen_city_boundary_osm_gtfs_bike" : buffered_extract ? "aachen_buffered_boundary_osm_gtfs_bike" : "aachen_osm_gtfs_bike"
-    extract_description = city_extract ? "OSM Aachen administrative boundary area" : buffered_extract ? "buffered OSM extract with Aachen-boundary external-road compression" : "rectangular OSM bounding box"
-    source_bbox = buffered_extract ? AACHEN_BUFFER_BBOX : AACHEN_BBOX
+    instance_name = city_name != "aachen" ? "$(city_name)_osm_gtfs_bike" : city_extract ? "aachen_city_boundary_osm_gtfs_bike" : buffered_extract ? "aachen_buffered_boundary_osm_gtfs_bike" : "aachen_osm_gtfs_bike"
+    extract_description = city_name != "aachen" ? (boundary_compression ? "buffered OSM extract with municipal-boundary external-road compression" : "rectangular OSM bounding box") : city_extract ? "OSM Aachen administrative boundary area" : buffered_extract ? "buffered OSM extract with Aachen-boundary external-road compression" : "rectangular OSM bounding box"
+    source_bbox = source_bbox === nothing ? (city_name == "aachen" ? (buffered_extract ? AACHEN_BUFFER_BBOX : AACHEN_BBOX) : nothing) : source_bbox
     meta=Dict{String,Any}("name"=>instance_name, "osm_path"=>osm_path, "gtfs_dir"=>gtfs_dir,
         "osm_extract"=>extract_description,
-        "layers"=>["physical/walk", "car", "transit", "bike"], "source_bbox"=>collect(source_bbox), "nnodes"=>4n, "coords"=>coords, "car_arcs"=>length(car_edges), "bike_arcs"=>length(bike_edges), "walk_arcs"=>length(walk_edges), "external_car_shortcuts"=>external_shortcut_count, "transit_services"=>length(transit_services), "transit_services_with_observed_times"=>observed_service_count, "transit_time_source"=>"median GTFS stop-time duration; boundary-spanning services included; untimed services omitted", "time_unit"=>"integer euro-cents generalized cost", "walk_speed_kmh"=>5, "car_entry_time_seconds"=>car_entry_time_seconds, "car_parking_search_time_seconds"=>car_parking_search_time_seconds, "car_signal_delay_seconds"=>car_signal_delay_seconds, "car_value_of_time_eur_per_hour"=>car_value_of_time_eur_per_hour, "transit_value_of_time_eur_per_hour"=>transit_value_of_time_eur_per_hour, "bike_value_of_time_eur_per_hour"=>bike_value_of_time_eur_per_hour, "walk_value_of_time_eur_per_hour"=>walk_value_of_time_eur_per_hour, "parking_inner_cost_cents"=>parking_inner_cost_cents, "parking_outer_cost_cents"=>parking_outer_cost_cents, "parking_inner_radius_km"=>parking_inner_radius_km, "bike_access_time_seconds"=>bike_access_time_seconds, "bike_return_time_seconds"=>bike_return_time_seconds, "transit_service_window_hours"=>transit_service_window_hours, "transit_wait_cap_seconds"=>transit_wait_cap_seconds, "transit_wait_seconds_min"=>(isempty(transit_waits) ? 0 : minimum(transit_waits)), "transit_wait_seconds_median"=>(isempty(transit_waits) ? 0 : _integer_median(transit_waits)), "transit_wait_seconds_mean"=>(isempty(transit_waits) ? 0.0 : sum(transit_waits)/length(transit_waits)), "transit_wait_seconds_max"=>(isempty(transit_waits) ? 0 : maximum(transit_waits)), "bike_entry_fee_cents"=>bike_entry_fee_cents, "bike_travel_fee_cents_per_minute"=>bike_travel_fee_cents_per_minute, "stations"=>stations, "nusers"=>nusers, "seed"=>seed)
+        "layers"=>["physical/walk", "car", "transit", "bike"], "source_bbox"=>(source_bbox === nothing ? nothing : collect(source_bbox)), "nnodes"=>4n, "coords"=>coords, "car_arcs"=>length(car_edges), "bike_arcs"=>length(bike_edges), "walk_arcs"=>length(walk_edges), "external_car_shortcuts"=>external_shortcut_count, "transit_services"=>length(transit_services), "transit_services_with_observed_times"=>observed_service_count, "transit_time_source"=>"median GTFS stop-time duration; boundary-spanning services included; untimed services omitted", "time_unit"=>"integer euro-cents generalized cost", "walk_speed_kmh"=>5, "car_entry_time_seconds"=>car_entry_time_seconds, "car_parking_search_time_seconds"=>car_parking_search_time_seconds, "car_signal_delay_seconds"=>car_signal_delay_seconds, "car_value_of_time_eur_per_hour"=>car_value_of_time_eur_per_hour, "transit_value_of_time_eur_per_hour"=>transit_value_of_time_eur_per_hour, "bike_value_of_time_eur_per_hour"=>bike_value_of_time_eur_per_hour, "walk_value_of_time_eur_per_hour"=>walk_value_of_time_eur_per_hour, "parking_inner_cost_cents"=>parking_inner_cost_cents, "parking_outer_cost_cents"=>parking_outer_cost_cents, "parking_inner_radius_km"=>parking_inner_radius_km, "bike_access_time_seconds"=>bike_access_time_seconds, "bike_return_time_seconds"=>bike_return_time_seconds, "transit_service_window_hours"=>transit_service_window_hours, "transit_wait_cap_seconds"=>transit_wait_cap_seconds, "transit_wait_seconds_min"=>(isempty(transit_waits) ? 0 : minimum(transit_waits)), "transit_wait_seconds_median"=>(isempty(transit_waits) ? 0 : _integer_median(transit_waits)), "transit_wait_seconds_mean"=>(isempty(transit_waits) ? 0.0 : sum(transit_waits)/length(transit_waits)), "transit_wait_seconds_max"=>(isempty(transit_waits) ? 0 : maximum(transit_waits)), "bike_entry_fee_cents"=>bike_entry_fee_cents, "bike_travel_fee_cents_per_minute"=>bike_travel_fee_cents_per_minute, "stations"=>stations, "nusers"=>nusers, "seed"=>seed)
+    meta["city"] = city_name
+    meta["city_center"] = collect(city_center)
+    meta["bike_station_budget"] = bike_station_budget
     meta["car_local_parking_cost_cents_per_day"] = car_local_parking_cost_cents_per_day
     meta["bike_daily_subscription_cost_cents"] = bike_daily_subscription_cost_cents
     meta["bike_entry_cost_cents"] = bike_entry_cost_cents
@@ -527,10 +532,13 @@ end
 
 """Generate the same instance using OSM's Aachen municipal boundary extract."""
 function generate_aachen_city_osm_gtfs(; kwargs...)
-    return generate_aachen_osm_gtfs(; osm_path="data/osm/aachen_city_highways.json", kwargs...)
+    return generate_osm_gtfs(; osm_path="data/osm/aachen_city_highways.json", kwargs...)
 end
 
 """Generate an Aachen instance from a buffered OSM extract with boundary compression."""
 function generate_aachen_buffered_osm_gtfs(; kwargs...)
-    return generate_aachen_osm_gtfs(; osm_path="data/osm/aachen_buffer_highways.json", kwargs...)
+    return generate_osm_gtfs(; osm_path="data/osm/aachen_buffer_highways.json", kwargs...)
 end
+
+# Aachen convenience entry point retained for existing OSM benchmark scripts.
+generate_aachen_osm_gtfs(; kwargs...) = generate_osm_gtfs(; kwargs...)

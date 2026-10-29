@@ -5,17 +5,17 @@ results must be preserved. It separates instance generation, model generation,
 and solver parameters into three JSON files (or one combined file) and streams
 one generated instance at a time.
 
-The central runner is `examples/HNDP/hndp_experiment_runner.jl`.
+The central runner is `examples/HNDP/hndp_osm_experiment_runner.jl`.
 
-## Run the supplied small example
+## Run the supplied OSM example
 
 From the repository root, with a working Gurobi installation/license:
 
 ```sh
-julia --project=. --threads=2 examples/HNDP/run_hndp_manifest.jl examples/HNDP/multimodal_example.json tmp_compare/hndp_multimodal_example
+julia --project=. --threads=2 examples/HNDP/run_osm_hndp_manifest.jl examples/HNDP/osm_example.json tmp_compare/osm_example
 ```
 
-Append `--dry-run` to construct the two instances and count jobs without solving;
+Append `--dry-run` to construct the configured OSM instances and count jobs without solving;
 append `--no-resume` to rerun completed jobs. The combined JSON contains
 `instances`, `models`, and `params`. The launcher also accepts a directory
 containing `instances.json`, `models.json`, and `params.json` for custom runs.
@@ -90,30 +90,12 @@ Experiment ids are generated from:
 
 ## Instance Configuration
 
-The instance config is passed to the network generator. A typical layered
-competition sweep looks like:
-
-```json
-{
-  "parameter_seeds": [42, 43, 44],
-  "instances": [
-    {
-      "name": "layered_path_screen",
-      "instance_type": "competition",
-      "topologies": ["layered_sioux_falls", "layered_ema"],
-      "nusers": [100, 200, 500, 1000],
-      "length_constrained": [false],
-      "alpha": [1.0],
-      "beta": [1.0, 0.8, 0.6],
-      "construction_cost_min": 0,
-      "construction_cost_max": 0,
-      "availability_budget_fraction": [0.05, 0.1, 0.25, 0.5]
-    }
-  ]
-}
-```
-
-The generator expands list-valued fields into a Cartesian product.
+The instance config is passed to the OSM generator. See the complete
+`examples/HNDP/osm_network_generation_example.json` example. Each entry names
+`osm_path`, `boundary_path`, and `gtfs_dir`, with `instance_type: "osm_gtfs"`.
+User counts and parameter seeds can be expanded into a grid. For other cities,
+supply their paths and geographic centre. `saved_instances` can instead name
+previously generated JSON networks.
 
 ## Model Configuration
 

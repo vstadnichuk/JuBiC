@@ -1,11 +1,11 @@
 using JSON
 
-include("hndp_experiment_runner.jl")
+include("hndp_osm_experiment_runner.jl")
 
 function _usage()
     return """
     Usage:
-      julia --project=. examples/HNDP/run_hndp_manifest.jl <config_file_or_manifest_dir> <output_root> [--dry-run] [--no-resume]
+      julia --project=. examples/HNDP/run_osm_hndp_manifest.jl <config_file_or_manifest_dir> <output_root> [--dry-run] [--no-resume]
 
     Supply one JSON file containing instances, models, and params, or a
     directory containing:
@@ -26,7 +26,7 @@ function _count_manifest_runs(config_path::AbstractString)
     instance_path, model_path, param_path = _manifest_paths(config_path)
 
     ninstances = 0
-    visit_hndp_networks(instance_path, _ -> begin
+    visit_hndp_osm_networks(instance_path, _ -> begin
         ninstances += 1
     end)
     model_cfg = JSON.parsefile(model_path)

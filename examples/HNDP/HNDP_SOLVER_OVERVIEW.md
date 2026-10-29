@@ -35,26 +35,26 @@ runner handles these differences and deducts path-generation time from the
 remaining solve budget. Full path enumeration is not a substitute for a
 completed generation phase; use a hybrid formulation when fallback is needed.
 
-See [NETWORK_GENERATION.md](NETWORK_GENERATION.md) for instance families,
-topologies, and construction examples. A weight constraint is present when a
+See [NETWORK_GENERATION.md](NETWORK_GENERATION.md) for OSM/GTFS inputs
+and construction examples. A weight constraint is present when a
 user's `weighlimit` is non-`nothing`; `length_constrained=false` omits it.
 
 ## Small runnable solve example
 
 Start Julia from the repository root with `julia --project=. --threads=2`.
-This constructs a small unconstrained competition instance and solves the
-explicit strong-duality model. A working Gurobi installation/license is required.
+This loads a cached OSM/GTFS city instance and solves the explicit strong-duality
+model. Cached source data and a working Gurobi installation/license are required.
 
 ```julia
 using JuBiC
 include("examples/HNDP/hndp_model_generation.jl")
 
-config = Dict{String,Any}("parameter_seeds" => [17], "instances" => [
-    Dict{String,Any}("name" => "small_competition", "instance_type" => "competition",
-        "topologies" => ["layered_sioux_falls"], "nusers" => [2],
-        "length_constrained" => [false])
-])
-generated = only(generate_hndp_networks(config))
+generated = generate_osm_gtfs(
+    osm_path="data/osm/aachen_buffer_highways.json",
+    boundary_path="data/osm/aachen_boundary.json",
+    gtfs_dir="data/osm/avv_gtfs", use_boundary_compression=true,
+    nusers=2, bike_station_count=4, bike_station_budget=2,
+)
 solver = GurobiSolver()
 instance = build_hndp_sd_instance(generated.instance, solver)
 mkpath("tmp/hndp_sd_example")
@@ -69,11 +69,11 @@ For GBC, use `build_hndp_gbc_instance` and `GBCparam` with the same arguments.
 Create the chosen output directory with `mkpath` before direct solver calls.
 The remaining builder signatures and options are documented below.
 
-To run the supplied bike and transit-expansion examples through the generic
-runner (or append `--dry-run` to construct them without optimization):
+To run the supplied OSM path and strong-duality comparison through the generic
+runner (or append `--dry-run` to generate the networks and count jobs):
 
 ```sh
-julia --project=. --threads=2 examples/HNDP/run_hndp_manifest.jl examples/HNDP/multimodal_example.json tmp_compare/hndp_multimodal_example
+julia --project=. --threads=2 examples/HNDP/run_osm_hndp_manifest.jl examples/HNDP/osm_example.json tmp_compare/osm_example
 ```
 
 The JSON contains `instances`, `models`, and `params`. Replace the model entry,
@@ -699,11 +699,11 @@ Common model / parameter combinations:
 
 ## Multimodal example
 
-The strong-duality example is configured in [multimodal_example.json](multimodal_example.json)
+The strong-duality example is configured in [osm_example.json](osm_example.json)
 alongside the HNDP implementation. From the repository root, run:
 
 ```sh
-julia --project=. examples/HNDP/run_hndp_manifest.jl examples/HNDP/multimodal_example.json tmp_compare/hndp_multimodal_example
+julia --project=. examples/HNDP/run_osm_hndp_manifest.jl examples/HNDP/osm_example.json tmp_compare/osm_example
 ```
 
 Add `--dry-run` to construct and validate the instances without solving.

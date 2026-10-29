@@ -3,7 +3,9 @@ using JSON
 using Dates
 using SHA
 
-include("hndp_model_generation.jl")
+if !isdefined(@__MODULE__, :build_hndp_path_instance)
+    include("hndp_model_generation.jl")
+end
 
 """
     run_hndp_experiments!(
@@ -32,7 +34,7 @@ function run_hndp_experiments!(
     resume::Bool=true,
     model_filter::Function=(generated_network, model_spec) -> true,
 )
-    instance_cfg = load_hndp_network_generation_config(String(instance_config_path))
+    instance_cfg = load_hndp_osm_config(String(instance_config_path))
     model_cfg = JSON.parsefile(String(model_config_path))
     param_cfg = JSON.parsefile(String(param_config_path))
 
@@ -67,7 +69,7 @@ function run_hndp_experiments!(
         @info "Resume scan retained $(length(candidate_paths)) of $(length(saved_paths)) saved HNDP instances for deserialization."
         visit_function = visitor -> visit_hndp_saved_instances(candidate_paths, visitor)
     else
-        visit_function = visitor -> visit_hndp_networks(instance_cfg, visitor)
+        visit_function = visitor -> visit_hndp_osm_networks(instance_cfg, visitor)
     end
 
     visit_function(generated_network -> begin

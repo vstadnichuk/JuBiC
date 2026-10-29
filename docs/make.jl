@@ -3,26 +3,28 @@ using JuBiC, Documenter
 # The detailed HNDP guides have one maintained source beside the example code.
 # Copy them into the site at build time and translate repository links for HTML.
 const REPO_URL = "https://github.com/vstadnichuk/JuBiC"
-const SOURCE_REF = get(ENV, "GITHUB_SHA", "v0.6")
+const SOURCE_REF = get(ENV, "GITHUB_SHA", "bilevel-feasible-paths-for-discrete-bilevel-network-design-problems")
 const HNDP_SOURCE = normpath(joinpath(@__DIR__, "..", "examples", "HNDP"))
 const HNDP_GENERATED = joinpath(@__DIR__, "src", "generated", "hndp")
 mkpath(HNDP_GENERATED)
 for (source, target) in [
     ("NETWORK_GENERATION.md", "generators.md"),
     ("HNDP_SOLVER_OVERVIEW.md", "formulations.md"),
+    ("OSM_GTFS_PIPELINE.md", "osm_pipeline.md"),
 ]
     text = read(joinpath(HNDP_SOURCE, source), String)
     text = replace(text,
         "](NETWORK_GENERATION.md)" => "](generators.md)",
+        "](OSM_GTFS_PIPELINE.md)" => "](osm_pipeline.md)",
         "](HNDP_SOLVER_OVERVIEW.md)" => "](formulations.md)",
-        "](hndp_network_generation.jl)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/hndp_network_generation.jl)",
+        "](hndp_osm_network_generation.jl)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/hndp_osm_network_generation.jl)",
         "](hndp_model_generation.jl)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/hndp_model_generation.jl)",
         "](../../src/solvers/solver_parameters.jl)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/src/solvers/solver_parameters.jl)",
     )
     metadata = "```@meta\nEditURL = \"$(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/$(source)\"\n```\n\n"
     write(joinpath(HNDP_GENERATED, target), metadata * text)
 end
-for name in ("multimodal_example.json", "network_generation_example.json")
+for name in ("osm_example.json", "osm_network_generation_example.json")
     cp(joinpath(HNDP_SOURCE, name), joinpath(HNDP_GENERATED, name); force=true)
 end
 
@@ -65,6 +67,7 @@ makedocs(
         "Bilevel Network Design" => [
             "Motivation" => joinpath("examples", "hndp", "motivation.md"),
             "Instances" => joinpath("examples", "hndp", "instances.md"),
+            "OSM and GTFS Pipeline" => "generated/hndp/osm_pipeline.md",
             "Generator Reference and Examples" => "generated/hndp/generators.md",
             "Solver Models" => joinpath("examples", "hndp", "solvers.md"),
             "Formulation and Parameter Reference" => "generated/hndp/formulations.md",
