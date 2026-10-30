@@ -1,0 +1,1206 @@
+{
+  "instance_type": "competition",
+  "users": [
+    {
+      "name": "U1",
+      "destination": 13,
+      "weight_limit": 545,
+      "origin": 12
+    },
+    {
+      "name": "U2",
+      "destination": 3,
+      "weight_limit": 607,
+      "origin": 15
+    },
+    {
+      "name": "U3",
+      "destination": 23,
+      "weight_limit": 673,
+      "origin": 2
+    },
+    {
+      "name": "U4",
+      "destination": 12,
+      "weight_limit": 520,
+      "origin": 13
+    },
+    {
+      "name": "U5",
+      "destination": 12,
+      "weight_limit": 604,
+      "origin": 8
+    },
+    {
+      "name": "U6",
+      "destination": 12,
+      "weight_limit": 581,
+      "origin": 9
+    },
+    {
+      "name": "U7",
+      "destination": 20,
+      "weight_limit": 607,
+      "origin": 11
+    },
+    {
+      "name": "U8",
+      "destination": 18,
+      "weight_limit": 614,
+      "origin": 14
+    },
+    {
+      "name": "U9",
+      "destination": 22,
+      "weight_limit": 597,
+      "origin": 16
+    },
+    {
+      "name": "U10",
+      "destination": 20,
+      "weight_limit": 653,
+      "origin": 13
+    },
+    {
+      "name": "U11",
+      "destination": 3,
+      "weight_limit": 550,
+      "origin": 2
+    },
+    {
+      "name": "U12",
+      "destination": 15,
+      "weight_limit": 510,
+      "origin": 21
+    },
+    {
+      "name": "U13",
+      "destination": 3,
+      "weight_limit": 649,
+      "origin": 20
+    },
+    {
+      "name": "U14",
+      "destination": 22,
+      "weight_limit": 606,
+      "origin": 17
+    },
+    {
+      "name": "U15",
+      "destination": 4,
+      "weight_limit": 555,
+      "origin": 8
+    },
+    {
+      "name": "U16",
+      "destination": 17,
+      "weight_limit": 486,
+      "origin": 18
+    },
+    {
+      "name": "U17",
+      "destination": 4,
+      "weight_limit": 551,
+      "origin": 6
+    },
+    {
+      "name": "U18",
+      "destination": 7,
+      "weight_limit": 598,
+      "origin": 1
+    },
+    {
+      "name": "U19",
+      "destination": 13,
+      "weight_limit": 627,
+      "origin": 15
+    },
+    {
+      "name": "U20",
+      "destination": 19,
+      "weight_limit": 593,
+      "origin": 24
+    },
+    {
+      "name": "U21",
+      "destination": 17,
+      "weight_limit": 496,
+      "origin": 10
+    },
+    {
+      "name": "U22",
+      "destination": 8,
+      "weight_limit": 580,
+      "origin": 3
+    },
+    {
+      "name": "U23",
+      "destination": 11,
+      "weight_limit": 554,
+      "origin": 22
+    },
+    {
+      "name": "U24",
+      "destination": 22,
+      "weight_limit": 633,
+      "origin": 7
+    },
+    {
+      "name": "U25",
+      "destination": 8,
+      "weight_limit": 651,
+      "origin": 24
+    },
+    {
+      "name": "U26",
+      "destination": 10,
+      "weight_limit": 521,
+      "origin": 5
+    },
+    {
+      "name": "U27",
+      "destination": 14,
+      "weight_limit": 593,
+      "origin": 2
+    },
+    {
+      "name": "U28",
+      "destination": 3,
+      "weight_limit": 600,
+      "origin": 21
+    },
+    {
+      "name": "U29",
+      "destination": 1,
+      "weight_limit": 616,
+      "origin": 15
+    },
+    {
+      "name": "U30",
+      "destination": 18,
+      "weight_limit": 564,
+      "origin": 6
+    },
+    {
+      "name": "U31",
+      "destination": 2,
+      "weight_limit": 647,
+      "origin": 14
+    },
+    {
+      "name": "U32",
+      "destination": 15,
+      "weight_limit": 582,
+      "origin": 8
+    },
+    {
+      "name": "U33",
+      "destination": 13,
+      "weight_limit": 664,
+      "origin": 18
+    },
+    {
+      "name": "U34",
+      "destination": 19,
+      "weight_limit": 644,
+      "origin": 13
+    },
+    {
+      "name": "U35",
+      "destination": 13,
+      "weight_limit": 616,
+      "origin": 3
+    },
+    {
+      "name": "U36",
+      "destination": 8,
+      "weight_limit": 569,
+      "origin": 17
+    },
+    {
+      "name": "U37",
+      "destination": 15,
+      "weight_limit": 608,
+      "origin": 6
+    },
+    {
+      "name": "U38",
+      "destination": 17,
+      "weight_limit": 537,
+      "origin": 5
+    },
+    {
+      "name": "U39",
+      "destination": 23,
+      "weight_limit": 673,
+      "origin": 2
+    },
+    {
+      "name": "U40",
+      "destination": 10,
+      "weight_limit": 540,
+      "origin": 22
+    },
+    {
+      "name": "U41",
+      "destination": 3,
+      "weight_limit": 649,
+      "origin": 20
+    },
+    {
+      "name": "U42",
+      "destination": 18,
+      "weight_limit": 524,
+      "origin": 22
+    },
+    {
+      "name": "U43",
+      "destination": 2,
+      "weight_limit": 537,
+      "origin": 1
+    },
+    {
+      "name": "U44",
+      "destination": 15,
+      "weight_limit": 582,
+      "origin": 8
+    },
+    {
+      "name": "U45",
+      "destination": 17,
+      "weight_limit": 580,
+      "origin": 4
+    },
+    {
+      "name": "U46",
+      "destination": 17,
+      "weight_limit": 602,
+      "origin": 3
+    },
+    {
+      "name": "U47",
+      "destination": 22,
+      "weight_limit": 606,
+      "origin": 17
+    },
+    {
+      "name": "U48",
+      "destination": 15,
+      "weight_limit": 559,
+      "origin": 9
+    },
+    {
+      "name": "U49",
+      "destination": 4,
+      "weight_limit": 634,
+      "origin": 19
+    },
+    {
+      "name": "U50",
+      "destination": 21,
+      "weight_limit": 739,
+      "origin": 1
+    },
+    {
+      "name": "U51",
+      "destination": 9,
+      "weight_limit": 497,
+      "origin": 10
+    },
+    {
+      "name": "U52",
+      "destination": 15,
+      "weight_limit": 590,
+      "origin": 16
+    },
+    {
+      "name": "U53",
+      "destination": 23,
+      "weight_limit": 638,
+      "origin": 18
+    },
+    {
+      "name": "U54",
+      "destination": 4,
+      "weight_limit": 514,
+      "origin": 3
+    },
+    {
+      "name": "U55",
+      "destination": 3,
+      "weight_limit": 649,
+      "origin": 20
+    },
+    {
+      "name": "U56",
+      "destination": 24,
+      "weight_limit": 640,
+      "origin": 18
+    },
+    {
+      "name": "U57",
+      "destination": 3,
+      "weight_limit": 580,
+      "origin": 14
+    },
+    {
+      "name": "U58",
+      "destination": 1,
+      "weight_limit": 574,
+      "origin": 7
+    },
+    {
+      "name": "U59",
+      "destination": 23,
+      "weight_limit": 660,
+      "origin": 16
+    },
+    {
+      "name": "U60",
+      "destination": 8,
+      "weight_limit": 616,
+      "origin": 19
+    },
+    {
+      "name": "U61",
+      "destination": 24,
+      "weight_limit": 632,
+      "origin": 9
+    },
+    {
+      "name": "U62",
+      "destination": 22,
+      "weight_limit": 626,
+      "origin": 13
+    },
+    {
+      "name": "U63",
+      "destination": 10,
+      "weight_limit": 529,
+      "origin": 8
+    },
+    {
+      "name": "U64",
+      "destination": 20,
+      "weight_limit": 640,
+      "origin": 12
+    },
+    {
+      "name": "U65",
+      "destination": 5,
+      "weight_limit": 619,
+      "origin": 14
+    },
+    {
+      "name": "U66",
+      "destination": 11,
+      "weight_limit": 574,
+      "origin": 18
+    },
+    {
+      "name": "U67",
+      "destination": 5,
+      "weight_limit": 600,
+      "origin": 22
+    },
+    {
+      "name": "U68",
+      "destination": 3,
+      "weight_limit": 630,
+      "origin": 16
+    },
+    {
+      "name": "U69",
+      "destination": 13,
+      "weight_limit": 545,
+      "origin": 12
+    },
+    {
+      "name": "U70",
+      "destination": 3,
+      "weight_limit": 540,
+      "origin": 11
+    },
+    {
+      "name": "U71",
+      "destination": 13,
+      "weight_limit": 620,
+      "origin": 10
+    },
+    {
+      "name": "U72",
+      "destination": 14,
+      "weight_limit": 496,
+      "origin": 23
+    },
+    {
+      "name": "U73",
+      "destination": 20,
+      "weight_limit": 610,
+      "origin": 9
+    },
+    {
+      "name": "U74",
+      "destination": 12,
+      "weight_limit": 607,
+      "origin": 1
+    },
+    {
+      "name": "U75",
+      "destination": 19,
+      "weight_limit": 589,
+      "origin": 5
+    },
+    {
+      "name": "U76",
+      "destination": 15,
+      "weight_limit": 574,
+      "origin": 5
+    },
+    {
+      "name": "U77",
+      "destination": 16,
+      "weight_limit": 575,
+      "origin": 23
+    },
+    {
+      "name": "U78",
+      "destination": 22,
+      "weight_limit": 626,
+      "origin": 13
+    },
+    {
+      "name": "U79",
+      "destination": 16,
+      "weight_limit": 558,
+      "origin": 11
+    },
+    {
+      "name": "U80",
+      "destination": 16,
+      "weight_limit": 484,
+      "origin": 18
+    },
+    {
+      "name": "U81",
+      "destination": 14,
+      "weight_limit": 593,
+      "origin": 2
+    },
+    {
+      "name": "U82",
+      "destination": 15,
+      "weight_limit": 510,
+      "origin": 21
+    },
+    {
+      "name": "U83",
+      "destination": 20,
+      "weight_limit": 598,
+      "origin": 14
+    },
+    {
+      "name": "U84",
+      "destination": 3,
+      "weight_limit": 577,
+      "origin": 6
+    },
+    {
+      "name": "U85",
+      "destination": 11,
+      "weight_limit": 544,
+      "origin": 5
+    },
+    {
+      "name": "U86",
+      "destination": 13,
+      "weight_limit": 553,
+      "origin": 21
+    },
+    {
+      "name": "U87",
+      "destination": 18,
+      "weight_limit": 571,
+      "origin": 2
+    },
+    {
+      "name": "U88",
+      "destination": 21,
+      "weight_limit": 548,
+      "origin": 24
+    },
+    {
+      "name": "U89",
+      "destination": 21,
+      "weight_limit": 629,
+      "origin": 16
+    },
+    {
+      "name": "U90",
+      "destination": 5,
+      "weight_limit": 600,
+      "origin": 22
+    },
+    {
+      "name": "U91",
+      "destination": 9,
+      "weight_limit": 582,
+      "origin": 19
+    },
+    {
+      "name": "U92",
+      "destination": 1,
+      "weight_limit": 609,
+      "origin": 18
+    },
+    {
+      "name": "U93",
+      "destination": 22,
+      "weight_limit": 606,
+      "origin": 17
+    },
+    {
+      "name": "U94",
+      "destination": 10,
+      "weight_limit": 540,
+      "origin": 22
+    },
+    {
+      "name": "U95",
+      "destination": 10,
+      "weight_limit": 529,
+      "origin": 8
+    },
+    {
+      "name": "U96",
+      "destination": 1,
+      "weight_limit": 526,
+      "origin": 8
+    },
+    {
+      "name": "U97",
+      "destination": 3,
+      "weight_limit": 527,
+      "origin": 13
+    },
+    {
+      "name": "U98",
+      "destination": 19,
+      "weight_limit": 644,
+      "origin": 13
+    },
+    {
+      "name": "U99",
+      "destination": 3,
+      "weight_limit": 638,
+      "origin": 19
+    },
+    {
+      "name": "U100",
+      "destination": 20,
+      "weight_limit": 612,
+      "origin": 2
+    },
+    {
+      "name": "U101",
+      "destination": 10,
+      "weight_limit": 540,
+      "origin": 22
+    },
+    {
+      "name": "U102",
+      "destination": 14,
+      "weight_limit": 496,
+      "origin": 23
+    },
+    {
+      "name": "U103",
+      "destination": 15,
+      "weight_limit": 574,
+      "origin": 5
+    },
+    {
+      "name": "U104",
+      "destination": 20,
+      "weight_limit": 657,
+      "origin": 4
+    },
+    {
+      "name": "U105",
+      "destination": 5,
+      "weight_limit": 594,
+      "origin": 15
+    },
+    {
+      "name": "U106",
+      "destination": 20,
+      "weight_limit": 625,
+      "origin": 5
+    },
+    {
+      "name": "U107",
+      "destination": 1,
+      "weight_limit": 623,
+      "origin": 22
+    },
+    {
+      "name": "U108",
+      "destination": 22,
+      "weight_limit": 504,
+      "origin": 21
+    },
+    {
+      "name": "U109",
+      "destination": 8,
+      "weight_limit": 655,
+      "origin": 23
+    },
+    {
+      "name": "U110",
+      "destination": 21,
+      "weight_limit": 649,
+      "origin": 8
+    },
+    {
+      "name": "U111",
+      "destination": 15,
+      "weight_limit": 566,
+      "origin": 18
+    },
+    {
+      "name": "U112",
+      "destination": 23,
+      "weight_limit": 632,
+      "origin": 5
+    },
+    {
+      "name": "U113",
+      "destination": 9,
+      "weight_limit": 593,
+      "origin": 1
+    },
+    {
+      "name": "U114",
+      "destination": 16,
+      "weight_limit": 536,
+      "origin": 19
+    },
+    {
+      "name": "U115",
+      "destination": 15,
+      "weight_limit": 533,
+      "origin": 10
+    },
+    {
+      "name": "U116",
+      "destination": 3,
+      "weight_limit": 649,
+      "origin": 20
+    },
+    {
+      "name": "U117",
+      "destination": 21,
+      "weight_limit": 586,
+      "origin": 19
+    },
+    {
+      "name": "U118",
+      "destination": 13,
+      "weight_limit": 695,
+      "origin": 17
+    },
+    {
+      "name": "U119",
+      "destination": 5,
+      "weight_limit": 578,
+      "origin": 11
+    },
+    {
+      "name": "U120",
+      "destination": 21,
+      "weight_limit": 682,
+      "origin": 2
+    },
+    {
+      "name": "U121",
+      "destination": 4,
+      "weight_limit": 585,
+      "origin": 24
+    },
+    {
+      "name": "U122",
+      "destination": 11,
+      "weight_limit": 577,
+      "origin": 21
+    },
+    {
+      "name": "U123",
+      "destination": 1,
+      "weight_limit": 490,
+      "origin": 3
+    },
+    {
+      "name": "U124",
+      "destination": 3,
+      "weight_limit": 562,
+      "origin": 10
+    },
+    {
+      "name": "U125",
+      "destination": 3,
+      "weight_limit": 607,
+      "origin": 15
+    },
+    {
+      "name": "U126",
+      "destination": 1,
+      "weight_limit": 536,
+      "origin": 4
+    },
+    {
+      "name": "U127",
+      "destination": 4,
+      "weight_limit": 603,
+      "origin": 15
+    },
+    {
+      "name": "U128",
+      "destination": 5,
+      "weight_limit": 523,
+      "origin": 4
+    },
+    {
+      "name": "U129",
+      "destination": 24,
+      "weight_limit": 656,
+      "origin": 8
+    },
+    {
+      "name": "U130",
+      "destination": 17,
+      "weight_limit": 538,
+      "origin": 19
+    },
+    {
+      "name": "U131",
+      "destination": 22,
+      "weight_limit": 560,
+      "origin": 18
+    },
+    {
+      "name": "U132",
+      "destination": 18,
+      "weight_limit": 548,
+      "origin": 15
+    },
+    {
+      "name": "U133",
+      "destination": 19,
+      "weight_limit": 621,
+      "origin": 4
+    },
+    {
+      "name": "U134",
+      "destination": 9,
+      "weight_limit": 578,
+      "origin": 12
+    },
+    {
+      "name": "U135",
+      "destination": 12,
+      "weight_limit": 630,
+      "origin": 17
+    },
+    {
+      "name": "U136",
+      "destination": 24,
+      "weight_limit": 574,
+      "origin": 22
+    },
+    {
+      "name": "U137",
+      "destination": 8,
+      "weight_limit": 513,
+      "origin": 2
+    },
+    {
+      "name": "U138",
+      "destination": 2,
+      "weight_limit": 589,
+      "origin": 10
+    },
+    {
+      "name": "U139",
+      "destination": 11,
+      "weight_limit": 554,
+      "origin": 22
+    },
+    {
+      "name": "U140",
+      "destination": 3,
+      "weight_limit": 562,
+      "origin": 10
+    },
+    {
+      "name": "U141",
+      "destination": 3,
+      "weight_limit": 607,
+      "origin": 15
+    },
+    {
+      "name": "U142",
+      "destination": 10,
+      "weight_limit": 548,
+      "origin": 16
+    },
+    {
+      "name": "U143",
+      "destination": 9,
+      "weight_limit": 572,
+      "origin": 17
+    },
+    {
+      "name": "U144",
+      "destination": 1,
+      "weight_limit": 606,
+      "origin": 16
+    },
+    {
+      "name": "U145",
+      "destination": 22,
+      "weight_limit": 528,
+      "origin": 23
+    },
+    {
+      "name": "U146",
+      "destination": 14,
+      "weight_limit": 593,
+      "origin": 2
+    },
+    {
+      "name": "U147",
+      "destination": 24,
+      "weight_limit": 724,
+      "origin": 1
+    },
+    {
+      "name": "U148",
+      "destination": 21,
+      "weight_limit": 592,
+      "origin": 18
+    },
+    {
+      "name": "U149",
+      "destination": 7,
+      "weight_limit": 604,
+      "origin": 4
+    },
+    {
+      "name": "U150",
+      "destination": 23,
+      "weight_limit": 617,
+      "origin": 9
+    },
+    {
+      "name": "U151",
+      "destination": 6,
+      "weight_limit": 562,
+      "origin": 10
+    },
+    {
+      "name": "U152",
+      "destination": 14,
+      "weight_limit": 537,
+      "origin": 9
+    },
+    {
+      "name": "U153",
+      "destination": 23,
+      "weight_limit": 620,
+      "origin": 4
+    },
+    {
+      "name": "U154",
+      "destination": 15,
+      "weight_limit": 672,
+      "origin": 1
+    },
+    {
+      "name": "U155",
+      "destination": 7,
+      "weight_limit": 608,
+      "origin": 3
+    },
+    {
+      "name": "U156",
+      "destination": 19,
+      "weight_limit": 540,
+      "origin": 20
+    },
+    {
+      "name": "U157",
+      "destination": 17,
+      "weight_limit": 538,
+      "origin": 19
+    },
+    {
+      "name": "U158",
+      "destination": 16,
+      "weight_limit": 536,
+      "origin": 19
+    },
+    {
+      "name": "U159",
+      "destination": 24,
+      "weight_limit": 704,
+      "origin": 7
+    },
+    {
+      "name": "U160",
+      "destination": 3,
+      "weight_limit": 562,
+      "origin": 10
+    },
+    {
+      "name": "U161",
+      "destination": 12,
+      "weight_limit": 574,
+      "origin": 14
+    },
+    {
+      "name": "U162",
+      "destination": 21,
+      "weight_limit": 652,
+      "origin": 11
+    },
+    {
+      "name": "U163",
+      "destination": 10,
+      "weight_limit": 574,
+      "origin": 14
+    },
+    {
+      "name": "U164",
+      "destination": 6,
+      "weight_limit": 545,
+      "origin": 9
+    },
+    {
+      "name": "U165",
+      "destination": 19,
+      "weight_limit": 593,
+      "origin": 24
+    },
+    {
+      "name": "U166",
+      "destination": 2,
+      "weight_limit": 512,
+      "origin": 8
+    },
+    {
+      "name": "U167",
+      "destination": 23,
+      "weight_limit": 620,
+      "origin": 4
+    },
+    {
+      "name": "U168",
+      "destination": 14,
+      "weight_limit": 489,
+      "origin": 11
+    },
+    {
+      "name": "U169",
+      "destination": 13,
+      "weight_limit": 598,
+      "origin": 11
+    },
+    {
+      "name": "U170",
+      "destination": 14,
+      "weight_limit": 573,
+      "origin": 3
+    },
+    {
+      "name": "U171",
+      "destination": 13,
+      "weight_limit": 695,
+      "origin": 17
+    },
+    {
+      "name": "U172",
+      "destination": 6,
+      "weight_limit": 545,
+      "origin": 9
+    },
+    {
+      "name": "U173",
+      "destination": 8,
+      "weight_limit": 586,
+      "origin": 12
+    },
+    {
+      "name": "U174",
+      "destination": 22,
+      "weight_limit": 518,
+      "origin": 20
+    },
+    {
+      "name": "U175",
+      "destination": 11,
+      "weight_limit": 564,
+      "origin": 3
+    },
+    {
+      "name": "U176",
+      "destination": 4,
+      "weight_limit": 634,
+      "origin": 19
+    },
+    {
+      "name": "U177",
+      "destination": 20,
+      "weight_limit": 657,
+      "origin": 4
+    },
+    {
+      "name": "U178",
+      "destination": 16,
+      "weight_limit": 526,
+      "origin": 6
+    },
+    {
+      "name": "U179",
+      "destination": 4,
+      "weight_limit": 634,
+      "origin": 19
+    },
+    {
+      "name": "U180",
+      "destination": 24,
+      "weight_limit": 640,
+      "origin": 18
+    },
+    {
+      "name": "U181",
+      "destination": 12,
+      "weight_limit": 632,
+      "origin": 19
+    },
+    {
+      "name": "U182",
+      "destination": 16,
+      "weight_limit": 536,
+      "origin": 19
+    },
+    {
+      "name": "U183",
+      "destination": 6,
+      "weight_limit": 562,
+      "origin": 10
+    },
+    {
+      "name": "U184",
+      "destination": 22,
+      "weight_limit": 600,
+      "origin": 14
+    },
+    {
+      "name": "U185",
+      "destination": 1,
+      "weight_limit": 587,
+      "origin": 9
+    },
+    {
+      "name": "U186",
+      "destination": 3,
+      "weight_limit": 540,
+      "origin": 11
+    },
+    {
+      "name": "U187",
+      "destination": 11,
+      "weight_limit": 521,
+      "origin": 14
+    },
+    {
+      "name": "U188",
+      "destination": 10,
+      "weight_limit": 540,
+      "origin": 22
+    },
+    {
+      "name": "U189",
+      "destination": 15,
+      "weight_limit": 630,
+      "origin": 7
+    },
+    {
+      "name": "U190",
+      "destination": 5,
+      "weight_limit": 582,
+      "origin": 7
+    },
+    {
+      "name": "U191",
+      "destination": 14,
+      "weight_limit": 512,
+      "origin": 10
+    },
+    {
+      "name": "U192",
+      "destination": 1,
+      "weight_limit": 549,
+      "origin": 11
+    },
+    {
+      "name": "U193",
+      "destination": 22,
+      "weight_limit": 643,
+      "origin": 12
+    },
+    {
+      "name": "U194",
+      "destination": 15,
+      "weight_limit": 608,
+      "origin": 6
+    },
+    {
+      "name": "U195",
+      "destination": 7,
+      "weight_limit": 604,
+      "origin": 4
+    },
+    {
+      "name": "U196",
+      "destination": 13,
+      "weight_limit": 672,
+      "origin": 1
+    },
+    {
+      "name": "U197",
+      "destination": 16,
+      "weight_limit": 618,
+      "origin": 24
+    },
+    {
+      "name": "U198",
+      "destination": 7,
+      "weight_limit": 579,
+      "origin": 22
+    },
+    {
+      "name": "U199",
+      "destination": 4,
+      "weight_limit": 558,
+      "origin": 10
+    },
+    {
+      "name": "U200",
+      "destination": 22,
+      "weight_limit": 617,
+      "origin": 8
+    }
+  ],
+  "instance_name": "positive_risk_alpha02_sioux_falls_U200_S3_len_LS0.2_CCF1.0_K76_KCOMP_B1.0_shared"
+}

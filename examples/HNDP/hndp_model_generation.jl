@@ -551,7 +551,12 @@ end
 
 function _attach_hndp_model_size_metadata!(instance::Instance)
     master_model = _hndp_master_model(instance)
-    if !isnothing(master_model)
+    # JuMP.Model exposes `ext` for lightweight metadata.  A
+    # BilevelJuMP.BilevelModel does not; MiBS uses that model type after the
+    # GBC-to-MiBS transformation.  The runner obtains the same metadata
+    # directly from `hndp_model_size_metadata`, so there is nothing to attach
+    # to the BilevelJuMP model here.
+    if !isnothing(master_model) && hasproperty(master_model, :ext)
         master_model.ext[:hndp_model_size_metadata] = hndp_model_size_metadata(instance)
     end
     return instance
