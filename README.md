@@ -78,11 +78,10 @@ python ../network_generation/osm_transit_arc_lengths.py --raw-root study/source_
    GTFS shapes.
 
 The paper uses the OSM data of 24 October 2026 and the GTFS feeds downloaded on
-28 October 2026; the registry records the checksums of these files. From exactly these
-files, the scripts reproduce the paper's networks and arc lengths. The providers only
+28 October 2026. Note that the registry records the checksums of these files. The providers only
 serve their current data, so a new download yields networks that reflect the current OSM
-and timetable data; `study/source_data/download_report.json` records which files differ
-from the paper's snapshot. The results then differ from the paper accordingly.
+and timetable data. You will find the records which files differ
+from the paper's snapshot in `study/source_data/download_report.json`.
 
 ## Step 2: Prepare the instances
 

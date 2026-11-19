@@ -3,7 +3,7 @@ using JuBiC, Documenter
 # The detailed HNDP guides have one maintained source beside the example code.
 # Copy them into the site at build time and translate repository links for HTML.
 const REPO_URL = "https://github.com/vstadnichuk/JuBiC"
-const SOURCE_REF = get(ENV, "GITHUB_SHA", "bilevel-feasible-paths-for-discrete-bilevel-network-design-problems")
+const SOURCE_REF = get(ENV, "GITHUB_SHA", "bilevel-feasible-paths-for-the-station-location-problem")
 const HNDP_SOURCE = normpath(joinpath(@__DIR__, "..", "examples", "HNDP"))
 const HNDP_GENERATED = joinpath(@__DIR__, "src", "generated", "hndp")
 rm(HNDP_GENERATED; force=true, recursive=true)  # drop copies of renamed or removed guides
