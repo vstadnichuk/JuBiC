@@ -1,11 +1,11 @@
 # Building and Publishing the Documentation
 
 The HTML site is built with Documenter.jl from the Markdown sources in
-`docs/src/`. The detailed HNDP generator and solver guides are maintained in
-`examples/HNDP/NETWORK_GENERATION.md` and
-`examples/HNDP/HNDP_SOLVER_OVERVIEW.md`. `docs/make.jl` incorporates them and their
-JSON examples automatically, so fixes appear in both the repository guides and
-the website without maintaining two copies.
+`docs/src/`. The guides of the station location paper are maintained in
+`examples/HNDP/` (`README.md`, `OSM_NETWORKS.md`, `DEMAND_AND_AGGREGATION.md` and
+`STATION_PATH_MODEL.md`). `docs/make.jl` copies them into the site automatically,
+so fixes appear in both the repository guides and the website without
+maintaining two copies.
 
 ## Local build
 

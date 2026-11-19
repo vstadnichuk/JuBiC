@@ -6,26 +6,34 @@ const REPO_URL = "https://github.com/vstadnichuk/JuBiC"
 const SOURCE_REF = get(ENV, "GITHUB_SHA", "bilevel-feasible-paths-for-discrete-bilevel-network-design-problems")
 const HNDP_SOURCE = normpath(joinpath(@__DIR__, "..", "examples", "HNDP"))
 const HNDP_GENERATED = joinpath(@__DIR__, "src", "generated", "hndp")
+rm(HNDP_GENERATED; force=true, recursive=true)  # drop copies of renamed or removed guides
 mkpath(HNDP_GENERATED)
 for (source, target) in [
-    ("NETWORK_GENERATION.md", "generators.md"),
-    ("HNDP_SOLVER_OVERVIEW.md", "formulations.md"),
-    ("OSM_GTFS_PIPELINE.md", "osm_pipeline.md"),
+    ("README.md", "overview.md"),
+    ("OSM_NETWORKS.md", "osm_networks.md"),
+    ("DEMAND_AND_AGGREGATION.md", "demand_and_aggregation.md"),
+    ("STATION_PATH_MODEL.md", "station_path_model.md"),
 ]
     text = read(joinpath(HNDP_SOURCE, source), String)
     text = replace(text,
-        "](NETWORK_GENERATION.md)" => "](generators.md)",
-        "](OSM_GTFS_PIPELINE.md)" => "](osm_pipeline.md)",
-        "](HNDP_SOLVER_OVERVIEW.md)" => "](formulations.md)",
-        "](hndp_osm_network_generation.jl)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/hndp_osm_network_generation.jl)",
-        "](hndp_model_generation.jl)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/hndp_model_generation.jl)",
+        # Guides link to each other, also to a heading (`](OSM_NETWORKS.md#sources)`).
+        "](README.md" => "](overview.md",
+        "](OSM_NETWORKS.md" => "](osm_networks.md",
+        "](DEMAND_AND_AGGREGATION.md" => "](demand_and_aggregation.md",
+        "](STATION_PATH_MODEL.md" => "](station_path_model.md",
+        # Code and data files live in subfolders of examples/HNDP; link them on GitHub.
+        "](models/" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/models/",
+        "](network_generation/" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/network_generation/",
+        "](demand/" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/demand/",
+        "](experiments/" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/experiments/",
+        "](sources/" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/sources/",
+        "](tests/" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/tests/",
         "](../../src/solvers/solver_parameters.jl)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/src/solvers/solver_parameters.jl)",
+        "](station_location_paper/" => "]($(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/station_location_paper/",
+        "](../../README.md)" => "]($(REPO_URL)/blob/$(SOURCE_REF)/README.md)",
     )
     metadata = "```@meta\nEditURL = \"$(REPO_URL)/blob/$(SOURCE_REF)/examples/HNDP/$(source)\"\n```\n\n"
     write(joinpath(HNDP_GENERATED, target), metadata * text)
-end
-for name in ("osm_example.json", "osm_network_generation_example.json")
-    cp(joinpath(HNDP_SOURCE, name), joinpath(HNDP_GENERATED, name); force=true)
 end
 
 makedocs(
@@ -67,10 +75,12 @@ makedocs(
         "Bilevel Network Design" => [
             "Motivation" => joinpath("examples", "hndp", "motivation.md"),
             "Instances" => joinpath("examples", "hndp", "instances.md"),
-            "OSM and GTFS Pipeline" => "generated/hndp/osm_pipeline.md",
-            "Generator Reference and Examples" => "generated/hndp/generators.md",
+            "Station Location Paper" => "generated/hndp/overview.md",
+            "City Networks from OSM and GTFS" => "generated/hndp/osm_networks.md",
+            "Demand and Aggregation" => "generated/hndp/demand_and_aggregation.md",
+            "Station-Based Path Model" => "generated/hndp/station_path_model.md",
             "Solver Models" => joinpath("examples", "hndp", "solvers.md"),
-            "Formulation and Parameter Reference" => "generated/hndp/formulations.md",
+            "Formulation and Parameter Reference" => joinpath("examples", "hndp", "formulations.md"),
             "A* Subsolver Tutorial" => joinpath("examples", "hndp", "astar.md"),
             "Benchmark Pipeline" => joinpath("examples", "hndp", "benchmarks.md"),
         ],

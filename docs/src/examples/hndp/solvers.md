@@ -8,14 +8,15 @@ entry point:
 stats = solve_instance!(instance, params)
 ```
 
-The main bridge is `examples/HNDP/hndp_model_generation.jl`.
+The main bridge is `examples/HNDP/models/hndp_model_generation.jl`.
 
 ## Formulation overview and examples
 
-The [formulation and parameter reference](../../generated/hndp/formulations.md)
+The [formulation and parameter reference](formulations.md)
 compares all eight runner-selectable formulations and the experimental automated
 strong-duality API. It includes builder/parameter pairings and a small runnable
-solve example. This reference is generated from the guide beside the HNDP code.
+solve example. The paper's station-based path model is described in
+[Station-Based Path Model](../../generated/hndp/station_path_model.md).
 
 ## JuBiC Decomposition Solvers
 

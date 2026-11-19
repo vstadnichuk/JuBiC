@@ -35,11 +35,11 @@ the new setting.
 
 The core files worth inspecting are:
 
-- `examples/HNDP/hndp_instances.jl`
-- `examples/HNDP/hndp_osm_network_generation.jl`
-- `examples/HNDP/hndp_model_generation.jl`
-- `examples/HNDP/hndp_astar_wrapper.jl`
-- `examples/HNDP/hndp_osm_experiment_runner.jl`
+- `examples/HNDP/models/hndp_instances.jl`
+- `examples/HNDP/network_generation/hndp_osm_network_generation.jl`
+- `examples/HNDP/models/hndp_model_generation.jl`
+- `examples/HNDP/models/hndp_astar_wrapper.jl`
+- `examples/HNDP/experiments/hndp_osm_experiment_runner.jl`
 
 ## Developer Perspective
 

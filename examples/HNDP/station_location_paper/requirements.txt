@@ -1,0 +1,3 @@
+osmium==4.3.2   # prepare_sources.py (reads the OSM .pbf extracts)
+numpy           # osm_transit_arc_lengths.py
+reportlab==4.4.9  # figures

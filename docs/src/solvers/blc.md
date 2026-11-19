@@ -179,4 +179,4 @@ For JSON-driven runs, `branching_rule` is `"default"`, `"linking_first"`, or
 the configuration loader. For direct API use, set
 `params.stats.data["branching_rule"]` to the selected string before solving.
 See [Numerics and Status Codes](../numerics_and_status.md) and the
-[HNDP parameter reference](../generated/hndp/formulations.md).
+[HNDP parameter reference](../examples/hndp/formulations.md).

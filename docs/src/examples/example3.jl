@@ -1,5 +1,5 @@
 using JuBiC
-include(joinpath(@__DIR__, "..", "..", "..", "examples", "HNDP", "hndp_model_generation.jl"))
+include(joinpath(@__DIR__, "..", "..", "..", "examples", "HNDP", "models", "hndp_model_generation.jl"))
 
 # A tiny in-memory routing fixture keeps this solver illustration offline.
 hndp = build_toy_HNDPwC()

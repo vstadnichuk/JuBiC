@@ -23,4 +23,4 @@ generator configuration with nonnegative operator costs.
 For implementing your own states, resource transitions, costs, and dominance
 rules, follow the [HNDP A* tutorial](hndp/astar.md) and the
 [subsolver interface](../sub_solvers.md). The application implementation is in
-`examples/HNDP/hndp_astar_wrapper.jl`.
+`examples/HNDP/models/hndp_astar_wrapper.jl`.

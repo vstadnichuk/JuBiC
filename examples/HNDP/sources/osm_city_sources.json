@@ -1,0 +1,308 @@
+{
+  "download_date": "2026-10-28",
+  "osm_snapshot_utc": "2026-10-24T00:00:00Z",
+  "buffer_rule": "municipal bounding rectangle expanded by 5 km per side",
+  "cities": [
+    {
+      "city": "aachen",
+      "relation_id": 62564,
+      "boundary_url": "https://api.openstreetmap.org/api/0.6/relation/62564/full.json",
+      "buffer_km": 5,
+      "bbox": [
+        50.61691871335214,
+        5.903816809705206,
+        50.90245598664786,
+        6.289112490294794
+      ],
+      "bbbike": "Aachen",
+      "bbbike_covers_buffer": true,
+      "pbf_url": "https://download.bbbike.org/osm/bbbike/Aachen/Aachen.osm.pbf",
+      "centre": [
+        50.776351,
+        6.083862
+      ],
+      "osm_snapshot_utc": "2026-10-24T00:00:00Z",
+      "downloaded_files": [
+        {
+          "file": "sources/aachen/gtfs.zip",
+          "url": "https://opendata.avv.de/current_GTFS/AVV_GTFS_Masten_mit_SPNV.zip",
+          "downloaded_at_utc": "2026-10-28T16:59:43.491088+00:00",
+          "bytes": 19050283,
+          "sha256": "8af96b7ae1ec77960af48444e2ae357b24622eb742d8d21ea7643609b5fb9a9b"
+        },
+        {
+          "file": "sources/aachen/roads.osm.pbf",
+          "url": "https://download.bbbike.org/osm/bbbike/Aachen/Aachen.osm.pbf",
+          "downloaded_at_utc": "2026-10-28T16:56:27.646808+00:00",
+          "sha256": "56d5c3b7f4c399d8362677bc093351e6e0df30fc50211459540178eb9ce7b305",
+          "bytes": 77605905,
+          "headers": {
+            "Content-Type": "application/x-pbf",
+            "ETag": "\"2623912809\"",
+            "Last-Modified": "Sat, 24 Oct 2026 16:42:17 GMT",
+            "Content-Length": "77605905",
+            "Accept-Ranges": "bytes",
+            "Connection": "close",
+            "Date": "Wed, 28 Oct 2026 16:56:23 GMT",
+            "Server": "httpd/1.4.x dev2 Alexandria (Unix)"
+          }
+        }
+      ]
+    },
+    {
+      "city": "cologne",
+      "relation_id": 62578,
+      "boundary_url": "https://api.openstreetmap.org/api/0.6/relation/62578/full.json",
+      "buffer_km": 5,
+      "bbox": [
+        50.785221313352146,
+        6.701223749991563,
+        51.130192886647855,
+        7.233334550008437
+      ],
+      "bbbike": "Koeln",
+      "bbbike_covers_buffer": true,
+      "pbf_url": "https://download.bbbike.org/osm/bbbike/Koeln/Koeln.osm.pbf",
+      "centre": [
+        50.938361,
+        6.959974
+      ],
+      "osm_snapshot_utc": "2026-10-24T00:00:00Z",
+      "downloaded_files": [
+        {
+          "file": "sources/cologne/gtfs.zip",
+          "url": "https://www.vrs.de/fileadmin/05_Zukunftsmobilitaet/Fuer_Unternehmen/GTFS_VRS_mit_SPNV.zip",
+          "downloaded_at_utc": "2026-10-28T16:56:33.100963+00:00",
+          "sha256": "d0e2f61a1cf644c61a3aa6d3177315a4eae41c4e1ed78b8e6bd2f64f0c44f3b8",
+          "bytes": 16376069,
+          "headers": {
+            "Date": "Wed, 28 Oct 2026 16:56:30 GMT",
+            "Server": "Apache",
+            "Strict-Transport-Security": "max-age=63072000",
+            "Upgrade": "h2,h2c",
+            "Connection": "Upgrade, close",
+            "Last-Modified": "Wed, 15 Jan 2025 11:16:59 GMT",
+            "Accept-Ranges": "bytes",
+            "Content-Length": "16376069",
+            "Cache-Control": "max-age=2592000",
+            "Expires": "Fri, 27 Nov 2026 16:56:30 GMT",
+            "X-UA-Compatible": "IE=edge",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'self'; script-src 'none'; style-src 'none'; object-src 'none';",
+            "Content-Type": "application/zip"
+          }
+        },
+        {
+          "file": "sources/cologne/roads.osm.pbf",
+          "url": "https://download.bbbike.org/osm/bbbike/Koeln/Koeln.osm.pbf",
+          "downloaded_at_utc": "2026-10-28T16:56:28.734699+00:00",
+          "sha256": "9d28e9e220bb3aa5932eccd91f4bdb8e9d34a22d6945ff7d9210b2ce5b6770ef",
+          "bytes": 128106460,
+          "headers": {
+            "Content-Type": "application/x-pbf",
+            "ETag": "\"419397748\"",
+            "Last-Modified": "Sat, 24 Oct 2026 16:52:07 GMT",
+            "Content-Length": "128106460",
+            "Accept-Ranges": "bytes",
+            "Connection": "close",
+            "Date": "Wed, 28 Oct 2026 16:56:23 GMT",
+            "Server": "httpd/1.4.x dev2 Alexandria (Unix)"
+          }
+        }
+      ]
+    },
+    {
+      "city": "heidelberg",
+      "relation_id": 62487,
+      "boundary_url": "https://api.openstreetmap.org/api/0.6/relation/62487/full.json",
+      "buffer_km": 5,
+      "bbox": [
+        49.306784313352146,
+        8.504151928705557,
+        49.504911286647854,
+        8.863013171294444
+      ],
+      "bbbike": "Mannheim",
+      "bbbike_covers_buffer": true,
+      "pbf_url": "https://download.bbbike.org/osm/bbbike/Mannheim/Mannheim.osm.pbf",
+      "centre": [
+        49.4093582,
+        8.694724
+      ],
+      "osm_snapshot_utc": "2026-10-24T00:00:00Z",
+      "downloaded_files": [
+        {
+          "file": "sources/heidelberg/gtfs.zip",
+          "url": "https://geoportal.vrn.de/services/sharing/rest/content/items/4ec4b1d131eb46a6bb8e216ce9b90eff/data",
+          "downloaded_at_utc": "2026-10-28T16:59:47.096785+00:00",
+          "bytes": 157854440,
+          "sha256": "177b19e46146169a0e262d5e2929f6379f5b173508937446e306cbde9eba75ed"
+        },
+        {
+          "file": "sources/heidelberg/roads.osm.pbf",
+          "url": "https://download.bbbike.org/osm/bbbike/Mannheim/Mannheim.osm.pbf",
+          "downloaded_at_utc": "2026-10-28T16:56:29.244414+00:00",
+          "sha256": "c47dfc5a454b3925d8f0ce53d5c3318b46fc10d9d257d855f453a5576be0a84d",
+          "bytes": 111454229,
+          "headers": {
+            "Content-Type": "application/x-pbf",
+            "ETag": "\"2856548113\"",
+            "Last-Modified": "Sat, 24 Oct 2026 16:51:28 GMT",
+            "Content-Length": "111454229",
+            "Accept-Ranges": "bytes",
+            "Connection": "close",
+            "Date": "Wed, 28 Oct 2026 16:56:23 GMT",
+            "Server": "httpd/1.4.x dev2 Alexandria (Unix)"
+          }
+        }
+      ]
+    },
+    {
+      "city": "karlsruhe",
+      "relation_id": 62518,
+      "boundary_url": "https://api.openstreetmap.org/api/0.6/relation/62518/full.json",
+      "buffer_km": 5,
+      "bbox": [
+        48.89522951335214,
+        8.208948902432807,
+        49.136502386647855,
+        8.610214397567193
+      ],
+      "bbbike": "Karlsruhe",
+      "bbbike_covers_buffer": true,
+      "pbf_url": "https://download.bbbike.org/osm/bbbike/Karlsruhe/Karlsruhe.osm.pbf",
+      "centre": [
+        49.0068705,
+        8.4034195
+      ],
+      "osm_snapshot_utc": "2026-10-24T00:00:00Z",
+      "downloaded_files": [
+        {
+          "file": "sources/karlsruhe/gtfs.zip",
+          "url": "https://projekte.kvv-efa.de/GTFS/google_transit.zip",
+          "downloaded_at_utc": "2026-10-28T16:56:35.207556+00:00",
+          "sha256": "40825666c1fd944b605198124df96d359b4de32eac033fa9c0187aaec9a9fc99",
+          "bytes": 28060608,
+          "headers": {
+            "server": "EFAController/10.6.33.3/EFA14",
+            "date": "Wed, 28 Oct 2026 16:56:33 GMT",
+            "content-type": "application/zip",
+            "accept-ranges": "none",
+            "content-length": "28060608",
+            "last-modified": "Tue, 27 Oct 2026 15:07:08 GMT",
+            "strict-transport-security": "max-age=300",
+            "set-cookie": "HASESSIONID=F; path=/; HttpOnly; Secure",
+            "cache-control": "private",
+            "connection": "close"
+          }
+        },
+        {
+          "file": "sources/karlsruhe/roads.osm.pbf",
+          "url": "https://download.bbbike.org/osm/bbbike/Karlsruhe/Karlsruhe.osm.pbf",
+          "downloaded_at_utc": "2026-10-28T16:56:36.352588+00:00",
+          "sha256": "35867a4adee69568156d48334cc4810e24b9f9bc745a06a46b0c1621b3f13070",
+          "bytes": 96931485,
+          "headers": {
+            "Content-Type": "application/x-pbf",
+            "ETag": "\"4064142679\"",
+            "Last-Modified": "Sat, 24 Oct 2026 16:55:06 GMT",
+            "Content-Length": "96931485",
+            "Accept-Ranges": "bytes",
+            "Connection": "close",
+            "Date": "Wed, 28 Oct 2026 16:56:27 GMT",
+            "Server": "httpd/1.4.x dev2 Alexandria (Unix)"
+          }
+        }
+      ]
+    },
+    {
+      "city": "nuremberg",
+      "relation_id": 62780,
+      "boundary_url": "https://api.openstreetmap.org/api/0.6/relation/62780/full.json",
+      "buffer_km": 5,
+      "bbox": [
+        49.286215313352145,
+        10.91966317047265,
+        49.585971986647856,
+        11.351665129527351
+      ],
+      "bbbike": "Nuernberg",
+      "bbbike_covers_buffer": true,
+      "pbf_url": "https://download.bbbike.org/osm/bbbike/Nuernberg/Nuernberg.osm.pbf",
+      "centre": [
+        49.453872,
+        11.077298
+      ],
+      "osm_snapshot_utc": "2026-10-24T00:00:00Z",
+      "downloaded_files": [
+        {
+          "file": "sources/nuremberg/gtfs.zip",
+          "url": "https://www.vgn.de/opendata/GTFS.zip",
+          "downloaded_at_utc": "2026-10-28T17:00:43.432036+00:00",
+          "bytes": 15261462,
+          "sha256": "be766b5b9606acc73d959e109a9b6f00c04ae639b2de6f61c9948e7126b18b5b"
+        },
+        {
+          "file": "sources/nuremberg/roads.osm.pbf",
+          "url": "https://download.bbbike.org/osm/bbbike/Nuernberg/Nuernberg.osm.pbf",
+          "downloaded_at_utc": "2026-10-28T16:59:44.662353+00:00",
+          "bytes": 88986003,
+          "sha256": "e07ecb194beccf12ba79f3ba4a571f4619e383aa8f3658831ca30b5f8b8332aa"
+        }
+      ]
+    },
+    {
+      "city": "dresden",
+      "relation_id": 191645,
+      "boundary_url": "https://api.openstreetmap.org/api/0.6/relation/191645/full.json",
+      "buffer_km": 5,
+      "bbox": [
+        50.92971311335214,
+        13.507834529732953,
+        51.222904986647855,
+        14.037551770267047
+      ],
+      "bbbike": "Dresden",
+      "bbbike_covers_buffer": true,
+      "pbf_url": "https://download.bbbike.org/osm/bbbike/Dresden/Dresden.osm.pbf",
+      "centre": [
+        51.0493286,
+        13.7381437
+      ],
+      "osm_snapshot_utc": "2026-10-24T00:00:00Z",
+      "downloaded_files": [
+        {
+          "file": "sources/dresden/gtfs.zip",
+          "url": "https://download.gtfs.de/germany/nv_free/latest.zip",
+          "downloaded_at_utc": "2026-10-28T17:00:47.526261+00:00",
+          "bytes": 276829000,
+          "sha256": "56696f84d5ead71fad7cdf27d54c3e4706cfe4dbba00f31587eaeb8683d2acac"
+        },
+        {
+          "file": "sources/dresden/regional_gtfs.zip",
+          "url": "https://download.gtfs.de/germany/rv_free/latest.zip",
+          "downloaded_at_utc": "2026-10-28T17:00:43.151470+00:00",
+          "bytes": 11812165,
+          "sha256": "fb6f3cc47dd315865d4948df2b5915b5b8786d6f2fa63d56c7531b2646a2040c"
+        },
+        {
+          "file": "sources/dresden/roads.osm.pbf",
+          "url": "https://download.bbbike.org/osm/bbbike/Dresden/Dresden.osm.pbf",
+          "downloaded_at_utc": "2026-10-28T16:56:30.789619+00:00",
+          "sha256": "d129bbd19ea45dff3dd599dded9731ed9404e8f52fc4d9089badb508588ecb80",
+          "bytes": 64382409,
+          "headers": {
+            "Content-Type": "application/x-pbf",
+            "ETag": "\"1736859600\"",
+            "Last-Modified": "Sat, 24 Oct 2026 16:58:41 GMT",
+            "Content-Length": "64382409",
+            "Accept-Ranges": "bytes",
+            "Connection": "close",
+            "Date": "Wed, 28 Oct 2026 16:56:28 GMT",
+            "Server": "httpd/1.4.x dev2 Alexandria (Unix)"
+          }
+        }
+      ]
+    }
+  ]
+}

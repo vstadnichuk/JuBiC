@@ -1,0 +1,55 @@
+{
+  "basis": "households_with_at_least_one_car",
+  "interpretation": "Household possession used as the scenario car-availability probability for each OD; not individual ownership or cars per capita. Exact to published precision.",
+  "checked_date": "2026-10-30",
+  "cities": [
+    {
+      "city": "aachen",
+      "numerator": 64,
+      "denominator": 100,
+      "year": 2023,
+      "source_note": "MiD 2023: 36% of households without a car; slide 5",
+      "source_url": "https://www.aachen.de/in-aachen-leben/mobilitaet-verkehr/mobilitaetskonzepte/mobilitaetsdaten/mid-ergebnisse-aachen-2023.pdf?cid=qst"
+    },
+    {
+      "city": "cologne",
+      "numerator": 71,
+      "denominator": 100,
+      "year": 2022,
+      "source_note": "71% of households own at least one car; printed page 21",
+      "source_url": "https://www.stadt-koeln.de/mediaasset/content/pdf68/mobilitaetsbericht-10-11-2022.pdf"
+    },
+    {
+      "city": "heidelberg",
+      "numerator": 632,
+      "denominator": 1000,
+      "year": 2023,
+      "source_note": "SrV 2023: 36.8% of households without a car",
+      "source_url": "https://www.heidelberg.de/7071_33301_34293_34309_5598781_5598581.html"
+    },
+    {
+      "city": "karlsruhe",
+      "numerator": 71,
+      "denominator": 100,
+      "year": 2023,
+      "source_note": "SrV 2023: 29% of households without a car; presentation 20 February 2026, slide 8",
+      "source_url": "https://www.karlsruhe.de/fileadmin/user_upload/05_Mobilitaet_Stadtbild/052_Stadtplanung/1_Bebauungsplanung/Stellplatzsatzung/Rechtskraft/Praesentation_Stellplatzsatzung_20.02.2026.pdf"
+    },
+    {
+      "city": "nuremberg",
+      "numerator": 70,
+      "denominator": 100,
+      "year": 2023,
+      "source_note": "Leben in Nuernberg household survey 2023: 70% own at least one car; January 2025 report",
+      "source_url": "https://www.nuernberg.de/imperia/md/statistik/dokumente/veroeffentlichungen/berichte/monatsberichte/2025/sus2025_01_m553_wh23_verkehrmobilitat_online.pdf"
+    },
+    {
+      "city": "dresden",
+      "numerator": 63,
+      "denominator": 100,
+      "year": 2023,
+      "source_note": "SrV 2023: 63% of households with a car; brochure page 11, chart visually checked",
+      "source_url": "https://www.dvb.de/-/media/files/die-dvb/srv-2023-broschuere.pdf"
+    }
+  ]
+}

@@ -4,7 +4,7 @@ The HNDP example uses JuBiC's generic [`AStarSolver`](../../subsolvers/astar.md)
 wrapper to implement a graph-specific follower oracle. This page explains the
 HNDP implementation.
 
-The implementation is in `examples/HNDP/hndp_astar_wrapper.jl`.
+The implementation is in `examples/HNDP/models/hndp_astar_wrapper.jl`.
 
 ## When This Pattern Applies
 

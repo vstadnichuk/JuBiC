@@ -1,0 +1,142 @@
+{
+  "accessed": "2026-10-30",
+  "cities": [
+    {
+      "city": "aachen",
+      "year": 2023,
+      "basis": "local MiD resident trips; coarse bands",
+      "proxy": false,
+      "upper_bounds_km": [
+        5,
+        10
+      ],
+      "mass_units": [
+        70,
+        15,
+        15
+      ],
+      "url": "https://www.aachen.de/in-aachen-leben/mobilitaet-verkehr/mobilitaetskonzepte/mobilitaetskennzahlen/",
+      "locator": "70% max 5km; further 15% 5-10km; 15% longer than 10km"
+    },
+    {
+      "city": "cologne",
+      "year": 2022,
+      "basis": "local resident trips, all modes",
+      "proxy": false,
+      "upper_bounds_km": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "mass_units": [
+        277,
+        142,
+        89,
+        76,
+        73,
+        52,
+        34,
+        33,
+        16,
+        35,
+        173
+      ],
+      "url": "https://www.stadt-koeln.de/mediaasset/content/pdf68/mobilitaetsbericht-10-11-2022.pdf",
+      "locator": "page 56, Figure 43, Gesamt column; tenths of a percentage point"
+    },
+    {
+      "city": "heidelberg",
+      "year": 2023,
+      "basis": "local SrV resident trips, mean weekday",
+      "proxy": false,
+      "upper_bounds_km": [
+        1,
+        3,
+        5,
+        10
+      ],
+      "mass_units": [
+        33,
+        29,
+        16,
+        11,
+        11
+      ],
+      "url": "https://www.heidelberg.de/site/Heidelberg2021/get/params_E1777105250/5598773/13_PDF_31jan_srv_Befragung_Steckbrief.pdf",
+      "locator": "page 4, Weganteil Entfernung row"
+    },
+    {
+      "city": "karlsruhe",
+      "year": 2023,
+      "basis": "local SrV resident trips, mean weekday, whole city",
+      "proxy": false,
+      "upper_bounds_km": [
+        1,
+        3,
+        5,
+        10
+      ],
+      "mass_units": [
+        33,
+        28,
+        15,
+        14,
+        10
+      ],
+      "url": "https://www.karlsruhe.de/fileadmin/user_upload/05_Mobilitaet_Stadtbild/051_Mobilitaet/8_Verkehrsplanung_Konzepte/Mobilitaetsverhalten_in_Karlsruhe/SrV_2023/SrV_2023_Mobilitaetssteckbrief_fuer_Karlsruhe.pdf",
+      "locator": "page 4, Weganteil Entfernung row"
+    },
+    {
+      "city": "nuremberg",
+      "year": 2023,
+      "basis": "PROXY: pooled large SrV comparison cities; NOT measured Nuremberg distribution",
+      "proxy": true,
+      "upper_bounds_km": [
+        1,
+        3,
+        5,
+        10
+      ],
+      "mass_units": [
+        31,
+        27,
+        14,
+        16,
+        13
+      ],
+      "url": "https://tu-dresden.de/bu/verkehr/ivs/srv/ressourcen/dateien/SrV2023_Steckbrief_GrosseSrV-Vergleichsstaedte.pdf",
+      "locator": "page 4, Weganteil Entfernung; rounded percentages sum to 101, normalized by 101",
+      "local_source_checked": "https://www.vag.de/ihre-vag/publikationen/mobilitaetsfakten"
+    },
+    {
+      "city": "dresden",
+      "year": 2023,
+      "basis": "PROXY: pooled large SrV comparison cities; NOT measured Dresden distribution",
+      "proxy": true,
+      "upper_bounds_km": [
+        1,
+        3,
+        5,
+        10
+      ],
+      "mass_units": [
+        31,
+        27,
+        14,
+        16,
+        13
+      ],
+      "url": "https://tu-dresden.de/bu/verkehr/ivs/srv/ressourcen/dateien/SrV2023_Steckbrief_GrosseSrV-Vergleichsstaedte.pdf",
+      "locator": "page 4, Weganteil Entfernung; rounded percentages sum to 101, normalized by 101",
+      "local_source_checked": "https://www.dvb.de/-/media/files/die-dvb/srv-2023-broschuere.pdf"
+    }
+  ],
+  "distance_reference": "Physical length of class-specific full fixed-network minimum-generalized-cost paths; car EUR0.22/km, sharing closed; aggregate demand afterwards"
+}

@@ -1,0 +1,62 @@
+{
+  "cities": [
+    "aachen",
+    "cologne",
+    "heidelberg",
+    "karlsruhe",
+    "nuremberg",
+    "dresden"
+  ],
+  "targets": [
+    50,
+    75,
+    100,
+    200,
+    300,
+    400
+  ],
+  "aggregation_candidates": 20,
+  "aggregation_budget": 10,
+  "budget_study_locations": 300,
+  "candidate_counts": [
+    20,
+    80,
+    140
+  ],
+  "budget_fractions": [
+    0.25,
+    0.5,
+    0.75
+  ],
+  "scaling_candidate_counts": [
+    20,
+    40,
+    80,
+    100,
+    120,
+    140,
+    160,
+    180,
+    200,
+    220,
+    240,
+    260,
+    280,
+    300
+  ],
+  "scaling_budget_fraction": 0.25,
+  "car_eur_per_km": 0.22,
+  "car_tagged_speed_factor": 0.5,
+  "car_untagged_kmh": 20,
+  "vot_eur_hour": 13,
+  "signal_seconds": 0,
+  "construction_cost": 0,
+  "total_case_seconds": 3600,
+  "threads": 8,
+  "memory_guard_gib": 16,
+  "selection_reference": "Full original multimodal graph with car and all existing sharing candidates available; cheaper-direction symmetry",
+  "candidate_order": "Network medoid then farthest-point full-network cost coverage; nested sets",
+  "demand": "Class-specific fixed-only full-network minimum-cost routes; physical lengths for distance bands; directed nearest-location cost assignment; retain diagonal",
+  "stop_rule": "Aggregation: skip larger sizes in a city after first timeout/memory failure. Budget and scaling studies: skip larger pools only for the same city and budget fraction after a failure.",
+  "station_selection_reference": "Full original multimodal graph with car and all existing sharing candidates available; cheaper-direction symmetry"
+}

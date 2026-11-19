@@ -39,6 +39,7 @@ export extra_cuts_benderslike_JuMP
 export build_strong_duality_mip_instance
 export GBCparam, BLCparam, BlCLagparam, MIPparam, MibSparam, SolverParam, CostStructure, AStarSolver, get_next_optimizer, new_stat!, add_stat!, get_stats, output_file_path, should_debbug_print
 export GurobiSolver, SolverWrapper
+export mip_solution_values
 export solve_instance!
 export solve_batch!
 export output_GBC_solver_instance, read_GBC_solver_instance

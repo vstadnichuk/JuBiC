@@ -44,8 +44,12 @@ function solve_with_MIP!(inst::Instance, param::MIPparam)
 
             # print solution to file
             if should_write_output_logs(param)
-                solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(mipm.mymip))
+                solution = mip_solution_values(mipm.mymip)
                 write(param.output_folder_path*"/solution.json", JSON.json(solution))
+                exporter = get(mipm.mymip.ext, :solution_reconstruction_export, nothing)
+                if !isnothing(exporter)
+                    write(joinpath(param.output_folder_path, "reconstructed_solution.json"), JSON.json(exporter(mipm.mymip)))
+                end
             end
         end
 
@@ -69,4 +73,21 @@ function solve_with_MIP!(inst::Instance, param::MIPparam)
     catch
         new_stat!(param.stats, "BNodes", Inf)
     end
+end
+
+
+"""Return MIP solution values including constants eliminated by a model builder.
+
+Model builders may store reconstructed variable-name/value pairs under
+`model.ext[:constant_solution_values]`. These are reporting values, not solver
+variables. Requires an incumbent and rejects collisions with actual variables.
+"""
+function mip_solution_values(model::JuMP.Model)
+    has_values(model) || throw(ArgumentError("No feasible incumbent exists to export."))
+    solution = Dict(JuMP.name(x) => JuMP.value(x) for x in all_variables(model))
+    for (key, value) in get(model.ext, :constant_solution_values, Dict{String,Float64}())
+        haskey(solution, key) && throw(ArgumentError("Reconstructed value conflicts with model variable $key."))
+        solution[key] = Float64(value)
+    end
+    return solution
 end

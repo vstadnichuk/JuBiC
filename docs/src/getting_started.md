@@ -18,7 +18,7 @@ repository root:
 ```sh
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
 julia --project=. test/runtests.jl
-julia --project=. examples/HNDP/hndp_model_generation_tests.jl
+julia --project=. examples/HNDP/tests/hndp_model_generation_tests.jl
 ```
 
 The solver tests require a working Gurobi installation/license and MiBS. The

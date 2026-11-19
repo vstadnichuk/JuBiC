@@ -5,14 +5,14 @@ results must be preserved. It separates instance generation, model generation,
 and solver parameters into three JSON files (or one combined file) and streams
 one generated instance at a time.
 
-The central runner is `examples/HNDP/hndp_osm_experiment_runner.jl`.
+The central runner is `examples/HNDP/experiments/hndp_osm_experiment_runner.jl`.
 
 ## Run the supplied OSM example
 
 From the repository root, with a working Gurobi installation/license:
 
 ```sh
-julia --project=. --threads=2 examples/HNDP/run_osm_hndp_manifest.jl examples/HNDP/osm_example.json tmp_compare/osm_example
+julia --project=. --threads=2 examples/HNDP/experiments/run_osm_hndp_manifest.jl examples/HNDP/experiments/osm_example.json tmp_compare/osm_example
 ```
 
 Append `--dry-run` to construct the configured OSM instances and count jobs without solving;
@@ -91,7 +91,7 @@ Experiment ids are generated from:
 ## Instance Configuration
 
 The instance config is passed to the OSM generator. See the complete
-`examples/HNDP/osm_network_generation_example.json` example. Each entry names
+`examples/HNDP/experiments/osm_network_generation_example.json` example. Each entry names
 `osm_path`, `boundary_path`, and `gtfs_dir`, with `instance_type: "osm_gtfs"`.
 User counts and parameter seeds can be expanded into a grid. For other cities,
 supply their paths and geographic centre. `saved_instances` can instead name
@@ -180,5 +180,5 @@ builder, and solver configuration.
 For GBC, BlC, and BlCLag, `branching_rule` selects `"default"`, `"linking_first"`,
 or `"fixed_linking_order"`. `parallel_subsolvers` controls follower worker count
 separately from the per-model thread limits. Use fixed seeds and fixed thread
-counts when comparing formulations. The [parameter reference](../../generated/hndp/formulations.md)
+counts when comparing formulations. The [parameter reference](formulations.md)
 describes big-M callbacks, integer-cut stabilization, and `connector_s_bound`.
