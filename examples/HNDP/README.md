@@ -9,6 +9,7 @@ reproduce the paper are in [station_location_paper/scripts/](station_location_pa
 
 | Guide | Content |
 |---|---|
+| [INSTANCE_GENERATOR.pdf](INSTANCE_GENERATOR.pdf) | Description of the instance generator as in the paper: arc costs, demand, maps of the six cities, comparison with observed modal splits |
 | [OSM_NETWORKS.md](OSM_NETWORKS.md) | Sources, network construction, arc costs and physical arc lengths of the six city networks |
 | [DEMAND_AND_AGGREGATION.md](DEMAND_AND_AGGREGATION.md) | Full-network demand, aggregation to 50–400 locations, potential stations and budgets, benchmark instances |
 | [STATION_PATH_MODEL.md](STATION_PATH_MODEL.md) | Formulation, enumeration of bilevel feasible paths, experiment cases and the dominance audit |

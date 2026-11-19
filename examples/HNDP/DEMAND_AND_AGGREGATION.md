@@ -26,7 +26,7 @@ has its own reference network on the full graph:
 
 `full_network_city_profiles.jl` builds the all-pairs cost and length caches
 (`study/work/fixed_reference_cache/`, about 30 GB) and reports the users and the
-modal split with all candidate stations open (Tables 2 and 6). The implementation is
+modal split with all candidate stations open (Table 2 of the paper and Table 2 of [INSTANCE_GENERATOR.pdf](INSTANCE_GENERATOR.pdf)). The implementation is
 [osm_fixed_network_demand.jl](demand/osm_fixed_network_demand.jl).
 
 ## Aggregation

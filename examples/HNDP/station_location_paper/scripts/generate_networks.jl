@@ -8,7 +8,7 @@
 #         <study>/inputs/geometry/road_lengths/<city>.csv                        (physical OSM arc lengths)
 #         <study>/source_data/graphs/<city>/metadata.json   (node coordinates before the walking cleanup,
 #                                                           used by osm_transit_arc_lengths.py)
-# All cost parameters are the defaults of generate_osm_gtfs (Appendix F of the paper).
+# All cost parameters are the defaults of generate_osm_gtfs (see examples/HNDP/INSTANCE_GENERATOR.pdf).
 using CSV, JSON, Graphs, SparseArrays, SHA, Dates
 include(joinpath(@__DIR__, "paths.jl"))
 include(joinpath(SRC, "network_generation", "hndp_osm_network_generation.jl"))

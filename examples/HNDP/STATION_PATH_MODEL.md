@@ -86,8 +86,8 @@ user of the 50-location instances three times:
 - **legacy:** dominance on individual decision arcs instead of stations, for reference.
 
 It checks that every path removed by station dominance has a retained witness that is
-cheaper and needs a subset of its stations. Tables 3 and 4 and the dominance times in
-the appendix come from this audit.
+cheaper and needs a subset of its stations. Table 3 of the paper and the dominance times
+in Table EC.1 of the e-companion come from this audit.
 
 ## Tests
 

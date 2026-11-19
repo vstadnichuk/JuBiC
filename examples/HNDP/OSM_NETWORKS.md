@@ -1,7 +1,9 @@
 # City networks from OSM and GTFS
 
 This guide describes how the six full city networks of the paper are built
-(Section 5 and Appendix F of the paper).
+(Section 5 of the paper). A self-contained description of the generator, with maps of
+the six networks and a comparison with observed modal splits, is given in
+[INSTANCE_GENERATOR.pdf](INSTANCE_GENERATOR.pdf).
 
 ## Sources
 
