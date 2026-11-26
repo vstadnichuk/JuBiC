@@ -2,7 +2,7 @@
 
 Reads data/aggregation/ (written by analyze_aggregation.py) and
 data/station_full_network_design_replay.csv (written by replay_designs_full_network.jl) and writes
-  figures/aggregation_paths_per_user.pdf   paths and paths per user for 50-400 locations
+  figures/aggregation_paths_per_user.pdf   paths per user for 50-400 locations
   figures/aggregation_modal.pdf            modal split, aggregated (A) vs. full network (F)
 """
 from pathlib import Path
@@ -73,7 +73,7 @@ def aggregation_paths_figure(cases):
     with (D/'aggregation_paths_per_user.csv').open('w',newline='') as f:
         writer=csv.DictWriter(f,list(rows[0]));writer.writeheader();writer.writerows(rows)
     # Title and subtitle are given in the manuscript caption, not in the figure.
-    d=Drawing(510,232);ink=HexColor('#1f3445')
+    d=Drawing(380,232);ink=HexColor('#1f3445')
     def text(x,y,s,size=8,bold=False,anchor='start'):
         d.add(String(x,y,str(s),fontName='Helvetica-Bold' if bold else 'Helvetica',
                      fontSize=size,fillColor=ink,textAnchor=anchor))
@@ -87,28 +87,28 @@ def aggregation_paths_figure(cases):
         elif i==3:d.add(Polygon([x,y+2.8,x-2.5,y,x,y-2.8,x+2.5,y],**style))
         elif i==4:line(x-2.6,y,x+2.6,y,color,1.3);line(x,y-2.6,x,y+2.6,color,1.3)
         else:line(x-2,y-2,x+2,y+2,color,1.3);line(x-2,y+2,x+2,y-2,color,1.3)
-    panels=[(46,202,50,400,.99,1.40,[1,1.1,1.2,1.3,1.4],[50,75,100,200,300,400]),
-            (305,190,50,400,0,340000,[0,100000,200000,300000],[50,75,100,200,300,400])]
-    for panel,(x0,width,kmin,kmax,lo,hi,ticks,kticks) in enumerate(panels):
-        y0,h=65,144
-        def xy(k,v):return x0+(k-kmin)/(kmax-kmin)*width,y0+(v-lo)/(hi-lo)*h
-        text(x0,220,'Paths per user' if panel==0 else 'Total enumerated paths',8.5,True)
-        for v in ticks:
-            y=xy(kmin,v)[1]
-            if panel==1 or v!=1:line(x0,y,x0+width,y)
-            text(x0-6,y-2.5,f'{v:.1f}' if panel==0 else f'{v:,.0f}',7,anchor='end')
-        for k in kticks:text(xy(k,lo)[0],50,k,7,anchor='middle')
-        text(x0+width/2,35,'Retained locations',8,anchor='middle')
-        for i,city in enumerate(CITIES):
-            points=sorted((r['locations'],r['paths_per_user' if panel==0 else 'paths']) for r in rows if r['city']==city and kmin<=r['locations']<=kmax)
-            for a,z in zip(points,points[1:]):line(*xy(*a),*xy(*z),COLORS[i],1.2)
-            for k,v in points:marker(*xy(k,v),i,COLORS[i])
-        # Same lower bound in two units: one per user, or U paths in total.
-        # Draw last so the bound stays visible when city counts are close to it.
-        bound=[(k,1 if panel==0 else 2*k*(k-1)) for k in kticks]
-        for a,z in zip(bound,bound[1:]):line(*xy(*a),*xy(*z),'#263746',1,[4,3])
+    # Paths per user only; the total path count grows with the user count and is
+    # reported in the CSV written above.
+    x0,width,kmin,kmax,lo,hi=46,316,50,400,.99,1.40
+    ticks,kticks=[1,1.1,1.2,1.3,1.4],[50,75,100,200,300,400]
+    y0,h=65,144
+    def xy(k,v):return x0+(k-kmin)/(kmax-kmin)*width,y0+(v-lo)/(hi-lo)*h
+    text(x0,220,'Paths per user',8.5,True)
+    for v in ticks:
+        y=xy(kmin,v)[1]
+        if v!=1:line(x0,y,x0+width,y)
+        text(x0-6,y-2.5,f'{v:.1f}',7,anchor='end')
+    for k in kticks:text(xy(k,lo)[0],50,k,7,anchor='middle')
+    text(x0+width/2,35,'Retained locations',8,anchor='middle')
     for i,city in enumerate(CITIES):
-        x=12+i*83;line(x,13,x+10,13,COLORS[i],1.2);marker(x+5,13,i,COLORS[i]);text(x+15,10,city.title(),7.5)
+        points=sorted((r['locations'],r['paths_per_user']) for r in rows if r['city']==city and kmin<=r['locations']<=kmax)
+        for a,z in zip(points,points[1:]):line(*xy(*a),*xy(*z),COLORS[i],1.2)
+        for k,v in points:marker(*xy(k,v),i,COLORS[i])
+    # Lower bound of one path per user; drawn last so it stays visible when city counts are close to it.
+    bound=[(k,1) for k in kticks]
+    for a,z in zip(bound,bound[1:]):line(*xy(*a),*xy(*z),'#263746',1,[4,3])
+    for i,city in enumerate(CITIES):
+        x=12+i*61;line(x,13,x+10,13,COLORS[i],1.2);marker(x+5,13,i,COLORS[i]);text(x+15,10,city.title(),7.5)
     renderPDF.drawToFile(d,str(F/'aggregation_paths_per_user.pdf'))
     renderSVG.drawToFile(d,str(F/'aggregation_paths_per_user.svg'))
 

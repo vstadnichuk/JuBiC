@@ -136,6 +136,7 @@ python scripts/network_topology.py
 python scripts/figures_aggregation.py
 python scripts/figures_scaling.py
 python scripts/figure_network_maps.py
+julia --project=../../.. --threads=8 scripts/mode_distance_profiles.jl study/data/mode_distance
 ```
 
 | Paper | Source in `study/` |
@@ -148,6 +149,7 @@ python scripts/figure_network_maps.py
 | Figure 3 (runtime grid) | `figures/candidate_runtime.pdf` |
 | Figure 4 (station scaling) | `figures/station_scaling.pdf`, data in `data/scaling/station_scaling.csv` |
 | Section 6.3 statistics (enumeration share, per-user times) | `data/scaling/solver_cases.csv`, `data/scaling/user_enumeration_summary.csv` |
+| Figure 2 and Table 4 of `INSTANCE_GENERATOR.pdf` (trip distances by mode) | `data/mode_distance/modal_split_by_distance*.csv`, `data/mode_distance/mode_distance_summary.csv` |
 | Figure 1 of `INSTANCE_GENERATOR.pdf` (network maps) | `figures/network_maps.pdf` |
 
 ---
