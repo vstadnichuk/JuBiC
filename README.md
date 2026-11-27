@@ -46,7 +46,7 @@ We would like to thank **Cedrick Wieber**, who contributed significantly to the 
 
 ## Paper-Specific Branches
 
-The following branches contain code associated with three papers:
+The following branches contain the code and reproduction scripts associated with four papers:
 
 - [*Solving Multi-Follower Mixed-Integer Bilevel Problems with Binary Linking Variables*](https://optimization-online.org/2024/12/solving-multi-follower-mixed-integer-bilevel-problems-with-binary-linking-variables/) (2024):
   [`solving-multi-follower-mixed-integer-bilevel-problems-with-binary-linking-variables`](https://github.com/vstadnichuk/JuBiC/tree/solving-multi-follower-mixed-integer-bilevel-problems-with-binary-linking-variables).
@@ -54,6 +54,9 @@ The following branches contain code associated with three papers:
   [`automated-benders-like-cut-generation-and-its-application-to-the-bilevel-network-design-problem`](https://github.com/vstadnichuk/JuBiC/tree/automated-benders-like-cut-generation-and-its-application-to-the-bilevel-network-design-problem).
 - [*A Catalog of Formulations for the Multi-Follower Discrete Bilevel Network Design Problem*](https://optimization-online.org/2026/06/a-catalog-of-formulations-for-the-multi-follower-discrete-bilevel-network-design-problem/) (2026):
   [`catalog-formulations-multi-follower-discrete-bilevel-network-design`](https://github.com/vstadnichuk/JuBiC/tree/catalog-formulations-multi-follower-discrete-bilevel-network-design).
+- *Bilevel Feasible Paths for the Station Location Problem* (2026, under review; draft available on request):
+  [`bilevel-feasible-paths-for-the-station-location-problem`](https://github.com/vstadnichuk/JuBiC/tree/bilevel-feasible-paths-for-the-station-location-problem).
+  This branch also contains the OSM/GTFS-based multimodal network instance generator, which is not part of `main` as of v0.6.
 
 ---
 
